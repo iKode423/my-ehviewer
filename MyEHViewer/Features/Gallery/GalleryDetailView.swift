@@ -199,17 +199,30 @@ struct GalleryDetailView: View {
                 }
 
                 if viewModel.canLoadMorePageLinks {
-                    Button {
-                        Task { await viewModel.loadMorePageLinks() }
-                    } label: {
-                        if viewModel.isLoadingMorePageLinks {
-                            Label(AppCopy.galleryLoadingMorePages, systemImage: "hourglass")
-                        } else {
-                            Label(AppCopy.galleryLoadMorePages, systemImage: "rectangle.stack.badge.plus")
+                    HStack {
+                        Button {
+                            Task { await viewModel.loadMorePageLinks() }
+                        } label: {
+                            if viewModel.isLoadingMorePageLinks {
+                                Label(AppCopy.galleryLoadingMorePages, systemImage: "hourglass")
+                            } else {
+                                Label(AppCopy.galleryLoadMorePages, systemImage: "rectangle.stack.badge.plus")
+                            }
                         }
+                        .disabled(viewModel.isLoadingMorePageLinks || viewModel.isLoadingAllPageLinks)
+
+                        Button {
+                            Task { await viewModel.loadAllPageLinks() }
+                        } label: {
+                            if viewModel.isLoadingAllPageLinks {
+                                Label(AppCopy.galleryLoadingAllPages, systemImage: "hourglass")
+                            } else {
+                                Label(AppCopy.galleryLoadAllPages, systemImage: "square.stack.3d.up")
+                            }
+                        }
+                        .disabled(viewModel.isLoadingMorePageLinks || viewModel.isLoadingAllPageLinks)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(viewModel.isLoadingMorePageLinks)
                 }
             }
         }

@@ -50,6 +50,8 @@ enum AppCopy {
     static let galleryNoPages = "暂无页面"
     static let galleryLoadMorePages = "加载更多页面"
     static let galleryLoadingMorePages = "正在加载更多页面"
+    static let galleryLoadAllPages = "加载全部页面"
+    static let galleryLoadingAllPages = "正在加载全部页面"
     static let readerLoadingTitle = "正在加载图片"
     static let readerRetry = "重试"
     static let readerPreviousPage = "上一页"

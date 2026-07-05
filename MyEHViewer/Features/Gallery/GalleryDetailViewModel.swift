@@ -7,6 +7,7 @@ final class GalleryDetailViewModel: ObservableObject {
     @Published private(set) var detail: EHGalleryDetail?
     @Published private(set) var isLoading = false
     @Published private(set) var isLoadingMorePageLinks = false
+    @Published private(set) var isLoadingAllPageLinks = false
     @Published private(set) var errorMessage: String?
 
     private let pageURL: URL
@@ -55,8 +56,9 @@ final class GalleryDetailViewModel: ObservableObject {
     func loadMorePageLinks() async {
         guard
             !isLoadingMorePageLinks,
+            !isLoadingAllPageLinks,
             let nextURL = remainingThumbnailPageURLs.first,
-            let currentDetail = detail
+            detail != nil
         else {
             return
         }
@@ -66,10 +68,26 @@ final class GalleryDetailViewModel: ObservableObject {
         defer { isLoadingMorePageLinks = false }
 
         do {
-            let response = try await client.get(nextURL)
-            let incomingDetail = try parser.parse(response.body, sourceURL: response.url)
-            loadedThumbnailPageURLStrings.insert(response.url.absoluteString)
-            detail = mergedDetail(currentDetail, with: incomingDetail)
+            try await loadThumbnailPage(nextURL)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Loads every known thumbnail page sequentially and merges reader links.
+    func loadAllPageLinks() async {
+        guard !isLoadingMorePageLinks, !isLoadingAllPageLinks, detail != nil else {
+            return
+        }
+
+        isLoadingAllPageLinks = true
+        errorMessage = nil
+        defer { isLoadingAllPageLinks = false }
+
+        do {
+            while let nextURL = remainingThumbnailPageURLs.first {
+                try await loadThumbnailPage(nextURL)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -78,6 +96,15 @@ final class GalleryDetailViewModel: ObservableObject {
     /// Returns thumbnail page URLs that have not been fetched yet.
     private var remainingThumbnailPageURLs: [URL] {
         detail?.thumbnailPageURLs.filter { !loadedThumbnailPageURLStrings.contains($0.absoluteString) } ?? []
+    }
+
+    /// Fetches and merges one thumbnail page.
+    private func loadThumbnailPage(_ url: URL) async throws {
+        guard let currentDetail = detail else { return }
+        let response = try await client.get(url)
+        let incomingDetail = try parser.parse(response.body, sourceURL: response.url)
+        loadedThumbnailPageURLStrings.insert(response.url.absoluteString)
+        detail = mergedDetail(currentDetail, with: incomingDetail)
     }
 
     /// Combines reader links and pagination URLs while preserving primary metadata.

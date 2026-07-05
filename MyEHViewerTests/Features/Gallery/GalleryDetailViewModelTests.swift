@@ -38,6 +38,27 @@ final class GalleryDetailViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.canLoadMorePageLinks)
     }
 
+    /// Confirms all known thumbnail pages can be loaded in sequence.
+    func testLoadAllPageLinksMergesEveryThumbnailPage() async {
+        let firstURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
+        let secondURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/?p=1")!
+        let thirdURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/?p=2")!
+        let viewModel = GalleryDetailViewModel(
+            pageURL: firstURL,
+            client: GalleryMockHTTPClient(responses: [
+                firstURL: Self.multiPageDetailHTML,
+                secondURL: Self.multiPageSecondThumbnailPageHTML,
+                thirdURL: Self.multiPageThirdThumbnailPageHTML
+            ])
+        )
+
+        await viewModel.reload()
+        await viewModel.loadAllPageLinks()
+
+        XCTAssertEqual(viewModel.detail?.pageLinks.map(\.pageNumber), [1, 2, 3])
+        XCTAssertFalse(viewModel.canLoadMorePageLinks)
+    }
+
     /// Confirms loading errors are exposed as user-facing messages.
     func testReloadStoresErrorMessage() async {
         let url = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
@@ -74,6 +95,45 @@ final class GalleryDetailViewModelTests: XCTestCase {
     <div id="taglist"><table><tr><td class="tc">artist:</td><td><div class="gt"><a id="ta_artist:sample_artist" href="#">sample artist</a></div></td></tr></table></div>
     <table class="ptt"><tr><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=1">2</a></td></tr></table>
     <div id="gdt"><a href="https://e-hentai.org/s/ddddeeeeff/100-2"><div title="2"></div></a></div>
+    """
+
+    private static let multiPageDetailHTML = """
+    <div id="gleft"><div id="gd1"><div style="background: transparent url(https://example.test/cover.jpg) 0 0 no-repeat"></div></div></div>
+    <div id="gd2"><h1 id="gn">Sample Gallery</h1><h1 id="gj">Sample JP</h1></div>
+    <div id="gd3">
+      <div id="gdc"><div class="cs ct2">Manga</div></div>
+      <div id="gdn"><a href="https://e-hentai.org/uploader/demo">demo</a></div>
+      <div id="gdd"><table><tr><td class="gdt1">Length:</td><td class="gdt2">3 pages</td></tr></table></div>
+    </div>
+    <div id="taglist"><table><tr><td class="tc">artist:</td><td><div class="gt"><a id="ta_artist:sample_artist" href="#">sample artist</a></div></td></tr></table></div>
+    <table class="ptt"><tr><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=1">2</a></td><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=2">3</a></td></tr></table>
+    <div id="gdt"><a href="https://e-hentai.org/s/aaaabbbbcc/100-1"><div title="1"></div></a></div>
+    """
+
+    private static let multiPageSecondThumbnailPageHTML = """
+    <div id="gleft"><div id="gd1"><div style="background: transparent url(https://example.test/cover.jpg) 0 0 no-repeat"></div></div></div>
+    <div id="gd2"><h1 id="gn">Sample Gallery</h1><h1 id="gj">Sample JP</h1></div>
+    <div id="gd3">
+      <div id="gdc"><div class="cs ct2">Manga</div></div>
+      <div id="gdn"><a href="https://e-hentai.org/uploader/demo">demo</a></div>
+      <div id="gdd"><table><tr><td class="gdt1">Length:</td><td class="gdt2">3 pages</td></tr></table></div>
+    </div>
+    <div id="taglist"><table><tr><td class="tc">artist:</td><td><div class="gt"><a id="ta_artist:sample_artist" href="#">sample artist</a></div></td></tr></table></div>
+    <table class="ptt"><tr><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=1">2</a></td><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=2">3</a></td></tr></table>
+    <div id="gdt"><a href="https://e-hentai.org/s/ddddeeeeff/100-2"><div title="2"></div></a></div>
+    """
+
+    private static let multiPageThirdThumbnailPageHTML = """
+    <div id="gleft"><div id="gd1"><div style="background: transparent url(https://example.test/cover.jpg) 0 0 no-repeat"></div></div></div>
+    <div id="gd2"><h1 id="gn">Sample Gallery</h1><h1 id="gj">Sample JP</h1></div>
+    <div id="gd3">
+      <div id="gdc"><div class="cs ct2">Manga</div></div>
+      <div id="gdn"><a href="https://e-hentai.org/uploader/demo">demo</a></div>
+      <div id="gdd"><table><tr><td class="gdt1">Length:</td><td class="gdt2">3 pages</td></tr></table></div>
+    </div>
+    <div id="taglist"><table><tr><td class="tc">artist:</td><td><div class="gt"><a id="ta_artist:sample_artist" href="#">sample artist</a></div></td></tr></table></div>
+    <table class="ptt"><tr><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=1">2</a></td><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=2">3</a></td></tr></table>
+    <div id="gdt"><a href="https://e-hentai.org/s/gggghhhhii/100-3"><div title="3"></div></a></div>
     """
 }
 
