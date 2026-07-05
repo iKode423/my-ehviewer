@@ -49,6 +49,22 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(restored.history.first?.lastReadPageURL?.absoluteString, "https://e-hentai.org/s/ddddeeeeff/100-2")
     }
 
+    /// Confirms local state can be fully removed from persistence.
+    func testRemoveAllClearsPersistedState() {
+        let userDefaults = makeUserDefaults()
+        let store = LibraryStore(userDefaults: userDefaults, storageKey: "library-remove-test")
+        let detail = makeDetail()
+
+        store.record(detail: detail, fallback: makeSearchResult())
+        store.toggleFavorite(detail: detail, fallback: makeSearchResult())
+        store.removeAll()
+
+        let restored = LibraryStore(userDefaults: userDefaults, storageKey: "library-remove-test")
+
+        XCTAssertTrue(restored.history.isEmpty)
+        XCTAssertTrue(restored.favorites.isEmpty)
+    }
+
     /// Creates isolated defaults for each test run.
     private func makeUserDefaults() -> UserDefaults {
         let suiteName = "MyEHViewerTests.\(UUID().uuidString)"
@@ -90,4 +106,3 @@ final class LibraryStoreTests: XCTestCase {
         )
     }
 }
-
