@@ -105,7 +105,7 @@ struct ReaderView: View {
     private func readerContent(for imagePage: EHImagePage) -> some View {
         VStack(spacing: 0) {
             HStack {
-                Text(String(format: AppCopy.readerPageFormat, String(imagePage.pageNumber)))
+                Text(pageStatusText(for: imagePage))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(readerForegroundStyle)
 
@@ -169,6 +169,18 @@ struct ReaderView: View {
         image
             .resizable()
             .scaledToFit()
+    }
+
+    /// Builds the visible page progress text from loaded reader state.
+    private func pageStatusText(for imagePage: EHImagePage) -> String {
+        if let knownLastPageNumber = viewModel.knownLastPageNumber {
+            return String(
+                format: AppCopy.readerPageKnownFormat,
+                String(imagePage.pageNumber),
+                String(knownLastPageNumber)
+            )
+        }
+        return String(format: AppCopy.readerPageFormat, String(imagePage.pageNumber))
     }
 
     /// Calculates the rendered image width for the current fit and zoom preferences.

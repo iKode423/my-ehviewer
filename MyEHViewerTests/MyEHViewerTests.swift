@@ -25,6 +25,7 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(ReaderBackgroundMode.dark.title, "深色")
         XCTAssertEqual(ReaderBackgroundMode.paper.title, "纸色")
         XCTAssertEqual(AppCopy.readerZoomMode, "缩放倍率")
+        XCTAssertEqual(AppCopy.readerPageKnownFormat, "第 %@ 页 · 已知到 %@ 页")
     }
 
     /// Confirms reader zoom persistence resolves unknown values safely.

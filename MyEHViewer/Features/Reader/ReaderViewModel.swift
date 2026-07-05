@@ -19,6 +19,11 @@ final class ReaderViewModel: ObservableObject {
         pageLinks.sorted { $0.pageNumber < $1.pageNumber }
     }
 
+    /// Returns the highest page number currently known from gallery page links.
+    var knownLastPageNumber: Int? {
+        sortedPageLinks.map(\.pageNumber).max()
+    }
+
     var canLoadPreviousPage: Bool {
         guard let previousPageURL = imagePage?.previousPageURL else { return false }
         return previousPageURL != currentPageURL

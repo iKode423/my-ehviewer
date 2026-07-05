@@ -60,6 +60,7 @@ final class ReaderViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
         XCTAssertEqual(viewModel.sortedPageLinks.map(\.pageNumber), [1, 2])
+        XCTAssertEqual(viewModel.knownLastPageNumber, 2)
     }
 
     /// Confirms loading a restored progress URL does not require known page links.

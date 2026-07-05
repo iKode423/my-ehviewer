@@ -76,6 +76,7 @@ enum AppCopy {
     static let readerBackgroundPaper = "纸色"
     static let readerOriginalImage = "原图"
     static let readerPageFormat = "第 %@ 页"
+    static let readerPageKnownFormat = "第 %@ 页 · 已知到 %@ 页"
     static let readerEmptyTitle = "尚未打开图库"
     static let readerEmptyMessage = "从搜索结果或图库详情进入阅读器后，这里会显示图片页面。"
     static let settingsReaderPreferencesTitle = "阅读偏好"

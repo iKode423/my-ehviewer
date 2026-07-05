@@ -8,7 +8,7 @@
 xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
-结果：通过。覆盖搜索解析与分页、首页/热门/关注/收藏来源 URL、保留筛选参数的搜索重试、初始关键词搜索、图库详情、标签继续搜索、缩略图分页、阅读器翻页与跳页、阅读器缩放偏好、本地书架持久化、最近搜索、站点 Cookie 存储和中文文案。
+结果：通过。覆盖搜索解析与分页、首页/热门/关注/收藏来源 URL、保留筛选参数的搜索重试、初始关键词搜索、图库详情、标签继续搜索、缩略图分页、阅读器翻页与跳页、阅读器已知页码范围、阅读器缩放偏好、本地书架持久化、最近搜索、站点 Cookie 存储和中文文案。
 
 ### 构建验证
 
