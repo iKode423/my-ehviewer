@@ -214,16 +214,9 @@ struct GalleryDetailView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 8)], alignment: .leading, spacing: 8) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], alignment: .leading, spacing: 10) {
                     ForEach(detail.pageLinks) { pageLink in
-                        NavigationLink {
-                            ReaderView(initialPageURL: pageLink.pageURL, pageLinks: detail.pageLinks)
-                        } label: {
-                            Text(String(format: AppCopy.galleryOpenPage, String(pageLink.pageNumber)))
-                                .font(.caption.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
+                        pageLinkTile(pageLink, allPageLinks: detail.pageLinks)
                     }
                 }
 
@@ -255,6 +248,52 @@ struct GalleryDetailView: View {
                 }
             }
         }
+    }
+
+    /// Shows one readable page thumbnail and opens it in the reader.
+    private func pageLinkTile(_ pageLink: EHGalleryPageLink, allPageLinks: [EHGalleryPageLink]) -> some View {
+        NavigationLink {
+            ReaderView(initialPageURL: pageLink.pageURL, pageLinks: allPageLinks)
+        } label: {
+            VStack(spacing: 6) {
+                pageThumbnail(url: pageLink.thumbnailURL)
+
+                Text(String(format: AppCopy.galleryOpenPage, String(pageLink.pageNumber)))
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+            }
+            .padding(6)
+            .frame(maxWidth: .infinity)
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Shows a stable thumbnail frame for one reader page.
+    private func pageThumbnail(url: URL?) -> some View {
+        AsyncImage(url: url) { phase in
+            switch phase {
+            case .success(let image):
+                image
+                    .resizable()
+                    .scaledToFill()
+            case .failure:
+                Image(systemName: "photo")
+                    .foregroundStyle(.secondary)
+            case .empty:
+                ProgressView()
+            @unknown default:
+                Image(systemName: "photo")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(0.72, contentMode: .fit)
+        .background(Color.secondary.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .clipped()
     }
 }
 

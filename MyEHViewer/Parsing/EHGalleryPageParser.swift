@@ -121,14 +121,25 @@ struct EHGalleryPageParser {
         guard let gdt = EHHTMLParsing.element(in: html, id: "gdt") else { return [] }
         return EHHTMLParsing.matches(
             in: gdt,
-            pattern: #"href="(https://e-hentai\.org/s/[a-z0-9]+/[0-9]+-([0-9]+))""#
+            pattern: #"<a\b[^>]*href="(https://e-hentai\.org/s/[a-z0-9]+/[0-9]+-([0-9]+))"[^>]*>(.*?)</a>"#
         )
         .compactMap { match in
-            guard match.count >= 3, let url = URL(string: match[1]), let pageNumber = Int(match[2]) else {
+            guard match.count >= 4, let url = URL(string: match[1]), let pageNumber = Int(match[2]) else {
                 return nil
             }
-            return EHGalleryPageLink(pageNumber: pageNumber, pageURL: url)
+            return EHGalleryPageLink(pageNumber: pageNumber, pageURL: url, thumbnailURL: thumbnailURL(in: match[3]))
         }
+    }
+
+    /// Picks the thumbnail URL from one gallery page link.
+    private func thumbnailURL(in html: String) -> URL? {
+        guard let image = EHHTMLParsing.firstMatch(in: html, pattern: #"<img\b[^>]*>"#)?.first else {
+            return nil
+        }
+
+        let lazyURL = EHHTMLParsing.attribute("data-src", in: image)
+        let srcURL = EHHTMLParsing.attribute("src", in: image)
+        return EHHTMLParsing.url(from: lazyURL) ?? EHHTMLParsing.url(from: srcURL)
     }
 
     /// Parses thumbnail pagination URLs from the top and bottom pagination bars.
@@ -143,4 +154,3 @@ struct EHGalleryPageParser {
         return Array(Set(urls)).sorted { $0.absoluteString < $1.absoluteString }
     }
 }
-

@@ -18,7 +18,7 @@ MyEHViewer 会按以下边界逐步建设：
 
 搜索界面由 `SearchViewModel` 负责浏览来源、筛选状态、请求、解析、分页、初始关键词搜索、最近搜索、失败重试 URL 和错误状态，`SearchView` 只负责 SwiftUI 展示与用户输入，并可在根页面或详情页导航栈内复用。首页、热门、关注和站点收藏来源都通过 `EHSearchRequest` 生成 URL，再复用同一解析流程。
 
-图库详情页由 `GalleryDetailViewModel` 负责详情请求、解析和缩略图分页合并，`GalleryDetailView` 展示封面、元信息、可继续搜索的标签、阅读页入口和失败重试操作。
+图库详情页由 `GalleryDetailViewModel` 负责详情请求、解析和缩略图分页合并，`GalleryDetailView` 展示封面、元信息、可继续搜索的标签、带缩略图的阅读页入口和失败重试操作。
 
 阅读器由 `ReaderViewModel` 负责图片页请求、解析、翻页、已知页码范围和已知页面入口跳转状态，`ReaderView` 展示当前图片、页码、上一页、下一页、页码输入跳转、缩放控制、显示偏好和原图入口。
 

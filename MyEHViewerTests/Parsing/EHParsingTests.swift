@@ -48,7 +48,10 @@ final class EHParsingTests: XCTestCase {
           <tr><td class="tc">artist:</td><td><div class="gt"><a id="ta_artist:sample_artist" href="#">sample artist</a></div></td></tr>
         </table></div>
         <table class="ptt"><tr><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=1">2</a></td></tr></table>
-        <div id="gdt"><a href="https://e-hentai.org/s/aaaabbbbcc/100-1"><div title="1"></div></a><a href="https://e-hentai.org/s/ddddeeeeff/100-2"><div title="2"></div></a></div>
+        <div id="gdt">
+          <a href="https://e-hentai.org/s/aaaabbbbcc/100-1"><img data-src="https://example.test/page-1.webp" /><div title="1"></div></a>
+          <a href="https://e-hentai.org/s/ddddeeeeff/100-2"><img src="https://example.test/page-2.webp" /><div title="2"></div></a>
+        </div>
         """
 
         let detail = try EHGalleryPageParser().parse(
@@ -65,6 +68,7 @@ final class EHParsingTests: XCTestCase {
         XCTAssertEqual(detail.ratingCount, "2 ratings")
         XCTAssertEqual(detail.tags.first?.displayName, "artist:sample artist")
         XCTAssertEqual(detail.pageLinks.map(\.pageNumber), [1, 2])
+        XCTAssertEqual(detail.pageLinks.map { $0.thumbnailURL?.absoluteString }, ["https://example.test/page-1.webp", "https://example.test/page-2.webp"])
         XCTAssertEqual(detail.thumbnailPageURLs.count, 1)
     }
 

@@ -140,8 +140,16 @@ struct EHSearchPage: Hashable, Codable {
 struct EHGalleryPageLink: Hashable, Codable, Identifiable {
     let pageNumber: Int
     let pageURL: URL
+    let thumbnailURL: URL?
 
     var id: Int { pageNumber }
+
+    /// Creates a reader page link with an optional thumbnail image.
+    init(pageNumber: Int, pageURL: URL, thumbnailURL: URL? = nil) {
+        self.pageNumber = pageNumber
+        self.pageURL = pageURL
+        self.thumbnailURL = thumbnailURL
+    }
 }
 
 /// Contains parsed gallery detail metadata and thumbnail page links.

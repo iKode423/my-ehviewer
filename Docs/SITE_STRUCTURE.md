@@ -43,6 +43,7 @@
 - 标签：`#taglist a[id^="ta_"]`
 - 标签搜索：使用标签命名空间和值回填 `f_search`
 - 缩略图阅读入口：`#gdt a[href^="https://e-hentai.org/s/"]`
+- 页面缩略图：阅读入口内的 `img[src]` 或 `img[data-src]`
 - 缩略图分页：`.ptt a[href*="?p="]`、`.ptb a[href*="?p="]`
 
 ## 图片阅读页
