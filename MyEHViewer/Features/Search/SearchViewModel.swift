@@ -32,11 +32,13 @@ final class SearchViewModel: ObservableObject {
 
     /// Creates a view model with injectable dependencies for tests.
     init(
+        initialQuery: String = "",
         client: EHHTTPClient = URLSessionEHHTTPClient(),
         parser: EHSearchPageParser = EHSearchPageParser(),
         userDefaults: UserDefaults = .standard,
         recentQueriesKey: String = "Search.recentQueries"
     ) {
+        self.query = initialQuery
         self.client = client
         self.parser = parser
         self.userDefaults = userDefaults
@@ -50,6 +52,12 @@ final class SearchViewModel: ObservableObject {
         if await load(currentRequest(trimmedQuery: trimmedQuery).url()) {
             recordRecentQuery(trimmedQuery)
         }
+    }
+
+    /// Starts searching only once when a view opens from a prefilled query.
+    func searchIfNeeded() async {
+        guard !hasSearched else { return }
+        await search()
     }
 
     /// Reuses a previous query and starts a new search.

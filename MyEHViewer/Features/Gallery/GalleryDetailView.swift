@@ -160,12 +160,28 @@ struct GalleryDetailView: View {
 
             FlowLayout(spacing: 8) {
                 ForEach(detail.tags) { tag in
-                    Text(tag.displayName)
+                    NavigationLink {
+                        SearchView(
+                            viewModel: SearchViewModel(initialQuery: tag.searchQuery),
+                            embedsInNavigationStack: false,
+                            searchesOnAppear: true
+                        )
+                    } label: {
+                        Label {
+                            Text(tag.displayName)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .frame(maxWidth: 220)
+                        } icon: {
+                            Image(systemName: "magnifyingglass")
+                        }
                         .font(.caption)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(Color.secondary.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }

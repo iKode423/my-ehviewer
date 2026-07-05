@@ -1,11 +1,13 @@
 # 站点结构记录
 
-本文档记录 2026-07-05 查证到的 `https://e-hentai.org/` 搜索、详情和阅读相关结构。解析层只依赖这些公开页面结构，不在仓库保存真实站点内容。
+本文档记录 2026-07-05 查证到的 `https://e-hentai.org/` 搜索、详情和阅读相关结构，并在 2026-07-06 复核公开搜索表单字段。解析层只依赖这些公开页面结构，不在仓库保存真实站点内容。
 
 ## 搜索页
 
 - 请求入口：`https://e-hentai.org/`
 - 热门入口：`https://e-hentai.org/popular`
+- 关注入口：`https://e-hentai.org/watched`
+- 收藏入口：`https://e-hentai.org/favorites.php`
 - 关键词参数：`f_search`
 - 分类隐藏字段：`f_cats`
 - 下一页游标：`next`
@@ -39,6 +41,7 @@
 - 评分文案：`#rating_label`
 - 评分数量：`#rating_count`
 - 标签：`#taglist a[id^="ta_"]`
+- 标签搜索：使用标签命名空间和值回填 `f_search`
 - 缩略图阅读入口：`#gdt a[href^="https://e-hentai.org/s/"]`
 - 缩略图分页：`.ptt a[href*="?p="]`、`.ptb a[href*="?p="]`
 

@@ -32,4 +32,11 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(ReaderZoomLevel.x1.doubleTapTarget, .x2)
         XCTAssertEqual(ReaderZoomLevel.x2.doubleTapTarget, .x1)
     }
+
+    /// Confirms tag search query text keeps namespace and quotes spaced names.
+    func testTagSearchQuery() {
+        XCTAssertEqual(EHTag(namespace: "group", name: "sample").searchQuery, "group:sample")
+        XCTAssertEqual(EHTag(namespace: "group", name: "sample tag").searchQuery, "group:\"sample tag\"")
+        XCTAssertEqual(EHTag(namespace: "", name: "sample tag").searchQuery, "\"sample tag\"")
+    }
 }

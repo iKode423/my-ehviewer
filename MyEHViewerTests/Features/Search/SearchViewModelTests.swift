@@ -67,6 +67,25 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(restored.recentQueries, ["sample"])
     }
 
+    /// Confirms an initial query can auto-search exactly once.
+    func testSearchIfNeededUsesInitialQueryOnce() async {
+        let recorder = SearchRequestRecorder()
+        let viewModel = SearchViewModel(
+            initialQuery: "group:sample",
+            client: MockHTTPClient(body: Self.searchHTML, recorder: recorder),
+            userDefaults: makeUserDefaults()
+        )
+
+        await viewModel.searchIfNeeded()
+        await viewModel.searchIfNeeded()
+
+        XCTAssertEqual(recorder.requestedURLs.count, 1)
+        let queryItems = URLComponents(url: recorder.requestedURLs[0], resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let queryByName = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
+        XCTAssertEqual(queryByName["f_search"], "group:sample")
+        XCTAssertEqual(viewModel.results.count, 1)
+    }
+
     /// Confirms recent queries can be cleared from local persistence.
     func testClearRecentQueriesRemovesPersistedState() async {
         let defaults = makeUserDefaults()

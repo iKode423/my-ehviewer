@@ -3,33 +3,55 @@ import SwiftUI
 /// Displays the live search entry point and result list.
 struct SearchView: View {
     @StateObject private var viewModel: SearchViewModel
+    private let embedsInNavigationStack: Bool
+    private let searchesOnAppear: Bool
 
     /// Creates a search view with an injectable view model for previews and tests.
-    init(viewModel: SearchViewModel = SearchViewModel()) {
+    init(
+        viewModel: SearchViewModel = SearchViewModel(),
+        embedsInNavigationStack: Bool = true,
+        searchesOnAppear: Bool = false
+    ) {
         _viewModel = StateObject(wrappedValue: viewModel)
+        self.embedsInNavigationStack = embedsInNavigationStack
+        self.searchesOnAppear = searchesOnAppear
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                searchBar
-                    .padding([.horizontal, .top])
-
-                sourcePicker
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-
-                recentQueries
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-
-                filterPanel
-                    .padding(.horizontal)
-                    .padding(.top, 12)
-
-                content
+        if embedsInNavigationStack {
+            NavigationStack {
+                searchContent
             }
-            .navigationTitle(AppCopy.searchTitle)
+        } else {
+            searchContent
+        }
+    }
+
+    /// Composes the reusable search screen content.
+    private var searchContent: some View {
+        VStack(spacing: 0) {
+            searchBar
+                .padding([.horizontal, .top])
+
+            sourcePicker
+                .padding(.horizontal)
+                .padding(.top, 8)
+
+            recentQueries
+                .padding(.horizontal)
+                .padding(.top, 8)
+
+            filterPanel
+                .padding(.horizontal)
+                .padding(.top, 12)
+
+            content
+        }
+        .navigationTitle(AppCopy.searchTitle)
+        .task {
+            if searchesOnAppear {
+                await viewModel.searchIfNeeded()
+            }
         }
     }
 

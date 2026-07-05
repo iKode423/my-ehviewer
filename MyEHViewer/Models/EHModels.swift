@@ -98,6 +98,12 @@ struct EHTag: Hashable, Codable, Identifiable {
     var displayName: String {
         namespace.isEmpty ? name : "\(namespace):\(name)"
     }
+
+    /// Builds the query text used when searching for this tag.
+    var searchQuery: String {
+        let queryName = name.rangeOfCharacter(from: .whitespacesAndNewlines) == nil ? name : "\"\(name)\""
+        return namespace.isEmpty ? queryName : "\(namespace):\(queryName)"
+    }
 }
 
 /// Stores one metadata row from a gallery detail page.

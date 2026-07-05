@@ -16,9 +16,9 @@ MyEHViewer 会按以下边界逐步建设：
 
 当前仓库包含工程骨架、领域模型、HTTP 客户端、基础解析层、搜索界面闭环、图库详情页、基础阅读器和本地书架。解析层已覆盖搜索列表、图库详情和阅读图片页的核心结构，并使用中性 HTML fixture 测试。
 
-搜索界面由 `SearchViewModel` 负责请求、解析、分页、最近搜索、失败重试 URL 和错误状态，`SearchView` 只负责 SwiftUI 展示与用户输入。
+搜索界面由 `SearchViewModel` 负责请求、解析、分页、初始关键词搜索、最近搜索、失败重试 URL 和错误状态，`SearchView` 只负责 SwiftUI 展示与用户输入，并可在根页面或详情页导航栈内复用。
 
-图库详情页由 `GalleryDetailViewModel` 负责详情请求、解析和缩略图分页合并，`GalleryDetailView` 展示封面、元信息、标签、阅读页入口和失败重试操作。
+图库详情页由 `GalleryDetailViewModel` 负责详情请求、解析和缩略图分页合并，`GalleryDetailView` 展示封面、元信息、可继续搜索的标签、阅读页入口和失败重试操作。
 
 阅读器由 `ReaderViewModel` 负责图片页请求、解析、翻页和已知页面入口跳转状态，`ReaderView` 展示当前图片、页码、上一页、下一页、跳页、缩放控制、显示偏好和原图入口。
 
