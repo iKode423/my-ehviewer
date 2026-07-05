@@ -197,6 +197,20 @@ struct GalleryDetailView: View {
                         .buttonStyle(.bordered)
                     }
                 }
+
+                if viewModel.canLoadMorePageLinks {
+                    Button {
+                        Task { await viewModel.loadMorePageLinks() }
+                    } label: {
+                        if viewModel.isLoadingMorePageLinks {
+                            Label(AppCopy.galleryLoadingMorePages, systemImage: "hourglass")
+                        } else {
+                            Label(AppCopy.galleryLoadMorePages, systemImage: "rectangle.stack.badge.plus")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.isLoadingMorePageLinks)
+                }
             }
         }
     }
