@@ -86,6 +86,43 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.results.count, 1)
     }
 
+    /// Confirms filter reset keeps the query and browse source unchanged.
+    func testResetFiltersKeepsQueryAndSource() {
+        let viewModel = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML), userDefaults: makeUserDefaults())
+        viewModel.source = .popular
+        viewModel.query = "sample"
+        viewModel.excludedCategories = [.misc, .western]
+        viewModel.browseExpunged = true
+        viewModel.requireTorrent = true
+        viewModel.minimumPagesText = "10"
+        viewModel.maximumPagesText = "20"
+        viewModel.minimumRating = 4
+        viewModel.disableLanguageFilter = true
+        viewModel.disableUploaderFilter = true
+        viewModel.disableTagFilter = true
+
+        XCTAssertTrue(viewModel.hasActiveFilters)
+
+        viewModel.resetFilters()
+
+        XCTAssertFalse(viewModel.hasActiveFilters)
+        XCTAssertEqual(viewModel.source, .popular)
+        XCTAssertEqual(viewModel.query, "sample")
+        XCTAssertTrue(viewModel.excludedCategories.isEmpty)
+        XCTAssertEqual(viewModel.minimumPagesText, "")
+        XCTAssertEqual(viewModel.maximumPagesText, "")
+        XCTAssertEqual(viewModel.minimumRating, 0)
+    }
+
+    /// Confirms empty whitespace page fields are not treated as active filters.
+    func testHasActiveFiltersIgnoresWhitespacePageFields() {
+        let viewModel = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML), userDefaults: makeUserDefaults())
+        viewModel.minimumPagesText = " "
+        viewModel.maximumPagesText = "\n"
+
+        XCTAssertFalse(viewModel.hasActiveFilters)
+    }
+
     /// Confirms recent queries can be cleared from local persistence.
     func testClearRecentQueriesRemovesPersistedState() async {
         let defaults = makeUserDefaults()

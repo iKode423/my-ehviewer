@@ -134,10 +134,26 @@ struct SearchView: View {
     private var filterPanel: some View {
         DisclosureGroup(AppCopy.searchFiltersTitle) {
             VStack(alignment: .leading, spacing: 16) {
+                filterActions
                 categoryFilterGrid
                 advancedFilters
             }
             .padding(.top, 12)
+        }
+    }
+
+    /// Shows filter-level actions that do not change the search query.
+    private var filterActions: some View {
+        HStack {
+            Spacer()
+
+            Button {
+                viewModel.resetFilters()
+            } label: {
+                Label(AppCopy.searchResetFilters, systemImage: "arrow.counterclockwise")
+            }
+            .buttonStyle(.bordered)
+            .disabled(!viewModel.hasActiveFilters || viewModel.isLoading)
         }
     }
 

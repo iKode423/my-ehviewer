@@ -23,6 +23,19 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var hasSearched = false
     @Published private(set) var recentQueries: [String] = []
 
+    /// Returns true when any category or advanced filter is enabled.
+    var hasActiveFilters: Bool {
+        !excludedCategories.isEmpty ||
+            browseExpunged ||
+            requireTorrent ||
+            !minimumPagesText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !maximumPagesText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            minimumRating != 0 ||
+            disableLanguageFilter ||
+            disableUploaderFilter ||
+            disableTagFilter
+    }
+
     private let client: EHHTTPClient
     private let parser: EHSearchPageParser
     private let userDefaults: UserDefaults
@@ -70,6 +83,19 @@ final class SearchViewModel: ObservableObject {
     func clearRecentQueries() {
         recentQueries = []
         userDefaults.removeObject(forKey: recentQueriesKey)
+    }
+
+    /// Clears filter controls without changing the query or browse source.
+    func resetFilters() {
+        excludedCategories = []
+        browseExpunged = false
+        requireTorrent = false
+        minimumPagesText = ""
+        maximumPagesText = ""
+        minimumRating = 0
+        disableLanguageFilter = false
+        disableUploaderFilter = false
+        disableTagFilter = false
     }
 
     /// Reloads the last successful request, or starts a new search if needed.

@@ -30,6 +30,7 @@ enum AppCopy {
     static let searchEmptyMessage = "输入关键词，或直接搜索浏览首页结果。"
     static let searchLoadingTitle = "正在加载"
     static let searchFiltersTitle = "筛选"
+    static let searchResetFilters = "重置筛选"
     static let searchHiddenCategoriesTitle = "隐藏分类"
     static let searchAdvancedTitle = "高级搜索"
     static let searchBrowseExpunged = "包含已清退图库"
