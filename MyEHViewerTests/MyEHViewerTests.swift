@@ -29,6 +29,8 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.readerPageKnownFormat, "第 %@ 页 · 已知到 %@ 页")
         XCTAssertEqual(AppCopy.readerJumpPageTitle, "跳到页码")
         XCTAssertEqual(AppCopy.readerJumpPageConfirm, "跳转")
+        XCTAssertEqual(AppCopy.readerImageLoadFailed, "图片加载失败")
+        XCTAssertEqual(AppCopy.readerImageRetry, "重新加载图片")
     }
 
     /// Confirms reader zoom persistence resolves unknown values safely.

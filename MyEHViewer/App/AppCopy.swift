@@ -61,6 +61,8 @@ enum AppCopy {
     static let galleryLoadingAllPages = "正在加载全部页面"
     static let readerLoadingTitle = "正在加载图片"
     static let readerRetry = "重试"
+    static let readerImageLoadFailed = "图片加载失败"
+    static let readerImageRetry = "重新加载图片"
     static let readerPreviousPage = "上一页"
     static let readerNextPage = "下一页"
     static let readerJumpPage = "跳页"

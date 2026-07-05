@@ -10,6 +10,7 @@ final class ReaderViewModel: ObservableObject {
     @Published private(set) var imagePage: EHImagePage?
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var imageReloadToken = 0
 
     private let client: EHHTTPClient
     private let parser: EHImagePageParser
@@ -77,6 +78,12 @@ final class ReaderViewModel: ObservableObject {
         await load(pageLink.pageURL)
     }
 
+    /// Requests a fresh load of the current image resource.
+    func reloadImage() {
+        guard imagePage != nil else { return }
+        imageReloadToken += 1
+    }
+
     /// Loads a known gallery page by its page number.
     @discardableResult
     func loadPageNumber(_ pageNumber: Int) async -> Bool {
@@ -105,6 +112,7 @@ final class ReaderViewModel: ObservableObject {
         do {
             let response = try await client.get(url)
             imagePage = try parser.parse(response.body, sourceURL: response.url)
+            imageReloadToken += 1
             currentPageURL = response.url
         } catch {
             errorMessage = error.localizedDescription

@@ -102,6 +102,23 @@ final class ReaderViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.sortedPageLinks.isEmpty)
     }
 
+    /// Confirms retrying the current image advances the view reload token.
+    func testReloadImageAdvancesRetryToken() async {
+        let firstURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
+        let client = ReaderMockHTTPClient(responses: [firstURL: Self.firstPageHTML])
+        let viewModel = ReaderViewModel(initialPageURL: firstURL, client: client)
+
+        viewModel.reloadImage()
+        XCTAssertEqual(viewModel.imageReloadToken, 0)
+
+        await viewModel.loadIfNeeded()
+        let loadedToken = viewModel.imageReloadToken
+
+        viewModel.reloadImage()
+
+        XCTAssertEqual(viewModel.imageReloadToken, loadedToken + 1)
+    }
+
     /// Confirms loading errors are exposed as Chinese messages.
     func testLoadStoresErrorMessage() async {
         let firstURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!

@@ -150,16 +150,15 @@ struct ReaderView: View {
                                         toggleReaderZoom()
                                     }
                             case .failure:
-                                ContentUnavailableView(AppCopy.readerRetry, systemImage: "photo")
-                                    .frame(minHeight: 320)
+                                imageLoadFailureView
                             case .empty:
                                 ProgressView()
                                     .frame(maxWidth: .infinity, minHeight: 320)
                             @unknown default:
-                                ContentUnavailableView(AppCopy.readerRetry, systemImage: "photo")
-                                    .frame(minHeight: 320)
+                                imageLoadFailureView
                             }
                         }
+                        .id(viewModel.imageReloadToken)
                         .frame(width: readerImageWidth(availableWidth: geometry.size.width))
                         .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: zoomLevelRaw)
 
@@ -183,6 +182,28 @@ struct ReaderView: View {
         image
             .resizable()
             .scaledToFit()
+    }
+
+    /// Shows an inline retry action when the image resource fails to load.
+    private var imageLoadFailureView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "photo")
+                .font(.largeTitle)
+                .foregroundStyle(readerForegroundStyle.opacity(0.72))
+                .accessibilityHidden(true)
+
+            Text(AppCopy.readerImageLoadFailed)
+                .font(.headline)
+                .foregroundStyle(readerForegroundStyle)
+
+            Button {
+                viewModel.reloadImage()
+            } label: {
+                Label(AppCopy.readerImageRetry, systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, minHeight: 320)
     }
 
     /// Builds the visible page progress text from loaded reader state.
