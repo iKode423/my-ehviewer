@@ -23,6 +23,9 @@
 		0A1000010000000000000006 /* EHGalleryPageParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1000020000000000000006 /* EHGalleryPageParser.swift */; };
 		0A1000010000000000000007 /* EHImagePageParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1000020000000000000007 /* EHImagePageParser.swift */; };
 		0A1000010000000000000008 /* EHParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1000020000000000000008 /* EHParsingTests.swift */; };
+		0A1100010000000000000001 /* SearchResultRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1100020000000000000001 /* SearchResultRow.swift */; };
+		0A1100010000000000000002 /* SearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1100020000000000000002 /* SearchViewModel.swift */; };
+		0A1100010000000000000003 /* SearchViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1100020000000000000003 /* SearchViewModelTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -55,6 +58,9 @@
 		0A1000020000000000000006 /* EHGalleryPageParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHGalleryPageParser.swift; sourceTree = "<group>"; };
 		0A1000020000000000000007 /* EHImagePageParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHImagePageParser.swift; sourceTree = "<group>"; };
 		0A1000020000000000000008 /* EHParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHParsingTests.swift; sourceTree = "<group>"; };
+		0A1100020000000000000001 /* SearchResultRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultRow.swift; sourceTree = "<group>"; };
+		0A1100020000000000000002 /* SearchViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchViewModel.swift; sourceTree = "<group>"; };
+		0A1100020000000000000003 /* SearchViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchViewModelTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -121,7 +127,9 @@
 		0A0000040000000000000005 /* Search */ = {
 			isa = PBXGroup;
 			children = (
+				0A1100020000000000000001 /* SearchResultRow.swift */,
 				0A0000020000000000000005 /* SearchView.swift */,
+				0A1100020000000000000002 /* SearchViewModel.swift */,
 			);
 			path = Search;
 			sourceTree = "<group>";
@@ -146,6 +154,7 @@
 			isa = PBXGroup;
 			children = (
 				0A0000020000000000000008 /* MyEHViewerTests.swift */,
+				0A1100040000000000000001 /* Features */,
 				0A1000040000000000000004 /* Parsing */,
 			);
 			path = MyEHViewerTests;
@@ -194,6 +203,22 @@
 				0A1000020000000000000008 /* EHParsingTests.swift */,
 			);
 			path = Parsing;
+			sourceTree = "<group>";
+		};
+		0A1100040000000000000001 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				0A1100040000000000000002 /* Search */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		0A1100040000000000000002 /* Search */ = {
+			isa = PBXGroup;
+			children = (
+				0A1100020000000000000003 /* SearchViewModelTests.swift */,
+			);
+			path = Search;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -308,7 +333,9 @@
 				0A0000010000000000000001 /* MyEHViewerApp.swift in Sources */,
 				0A0000010000000000000004 /* SettingsView.swift in Sources */,
 				0A0000010000000000000006 /* ReaderView.swift in Sources */,
+				0A1100010000000000000001 /* SearchResultRow.swift in Sources */,
 				0A0000010000000000000005 /* SearchView.swift in Sources */,
+				0A1100010000000000000002 /* SearchViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -318,6 +345,7 @@
 			files = (
 				0A1000010000000000000008 /* EHParsingTests.swift in Sources */,
 				0A0000010000000000000008 /* MyEHViewerTests.swift in Sources */,
+				0A1100010000000000000003 /* SearchViewModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

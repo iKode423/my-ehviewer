@@ -35,6 +35,23 @@ enum EHGalleryCategory: Int, CaseIterable, Identifiable, Codable {
         case .misc: "其他"
         }
     }
+
+    /// Maps a site category label into the app's Chinese display label.
+    static func displayName(forSiteLabel label: String) -> String {
+        switch label.lowercased() {
+        case "doujinshi": EHGalleryCategory.doujinshi.displayName
+        case "manga": EHGalleryCategory.manga.displayName
+        case "artist cg": EHGalleryCategory.artistCG.displayName
+        case "game cg": EHGalleryCategory.gameCG.displayName
+        case "western": EHGalleryCategory.western.displayName
+        case "non-h": EHGalleryCategory.nonH.displayName
+        case "image set": EHGalleryCategory.imageSet.displayName
+        case "cosplay": EHGalleryCategory.cosplay.displayName
+        case "asian porn": EHGalleryCategory.asianPorn.displayName
+        case "misc": EHGalleryCategory.misc.displayName
+        default: label
+        }
+    }
 }
 
 /// Identifies a gallery by the numeric id and token used by the site URL.
@@ -211,4 +228,3 @@ enum EHSearchCursor: Hashable, Codable {
     case next(Int)
     case previous(Int)
 }
-

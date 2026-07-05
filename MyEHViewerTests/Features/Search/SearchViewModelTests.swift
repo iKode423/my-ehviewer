@@ -1,0 +1,71 @@
+import XCTest
+@testable import MyEHViewer
+
+/// Verifies the search view model without touching the network.
+@MainActor
+final class SearchViewModelTests: XCTestCase {
+    /// Confirms a successful search populates result and pagination state.
+    func testSearchLoadsParsedResults() async {
+        let viewModel = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML))
+        viewModel.query = "sample"
+
+        await viewModel.search()
+
+        XCTAssertTrue(viewModel.hasSearched)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.results.count, 1)
+        XCTAssertEqual(viewModel.results.first?.title, "Sample Gallery")
+        XCTAssertEqual(viewModel.nextPageURL?.absoluteString, "https://e-hentai.org/?next=100")
+    }
+
+    /// Confirms network errors become Chinese user-facing messages.
+    func testSearchStoresErrorMessage() async {
+        let viewModel = SearchViewModel(client: MockHTTPClient(error: EHNetworkError.unacceptableStatusCode(503)))
+
+        await viewModel.search()
+
+        XCTAssertTrue(viewModel.hasSearched)
+        XCTAssertTrue(viewModel.results.isEmpty)
+        XCTAssertEqual(viewModel.errorMessage, "服务器返回状态码 503。")
+    }
+
+    private static let searchHTML = """
+    <table class="itg gltc">
+      <tr>
+        <td class="gl1c glcat"><div class="cn ct2">Manga</div></td>
+        <td class="gl2c"><div class="glthumb"><img data-src="https://example.test/thumb.webp" /></div></td>
+        <td class="gl3c glname"><a href="https://e-hentai.org/g/100/abcdef1234/"><div class="glink">Sample Gallery</div></a></td>
+        <td class="gl4c glhide"><div><a href="https://e-hentai.org/uploader/demo">demo</a></div><div>12 pages</div></td>
+      </tr>
+    </table>
+    <a id="unext" href="https://e-hentai.org/?next=100">Next</a>
+    """
+}
+
+/// Provides deterministic HTML or error responses for view-model tests.
+private struct MockHTTPClient: EHHTTPClient {
+    let body: String
+    let error: Error?
+
+    /// Creates a successful mock response.
+    init(body: String) {
+        self.body = body
+        self.error = nil
+    }
+
+    /// Creates a failing mock response.
+    init(error: Error) {
+        self.body = ""
+        self.error = error
+    }
+
+    /// Returns the configured mock response.
+    func get(_ url: URL) async throws -> EHHTTPResponse {
+        if let error {
+            throw error
+        }
+        return EHHTTPResponse(url: url, statusCode: 200, body: body)
+    }
+}
+

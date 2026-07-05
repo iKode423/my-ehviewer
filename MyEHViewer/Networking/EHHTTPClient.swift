@@ -26,12 +26,14 @@ enum EHNetworkError: LocalizedError, Equatable {
 }
 
 /// Loads public HTML pages while preserving cookies in the shared URL session.
+@MainActor
 protocol EHHTTPClient {
     /// Sends a GET request and returns the decoded HTML body.
     func get(_ url: URL) async throws -> EHHTTPResponse
 }
 
 /// Default URLSession-backed HTTP client used by the app.
+@MainActor
 final class URLSessionEHHTTPClient: EHHTTPClient {
     private let session: URLSession
 
@@ -63,4 +65,3 @@ final class URLSessionEHHTTPClient: EHHTTPClient {
         throw EHNetworkError.undecodableBody
     }
 }
-
