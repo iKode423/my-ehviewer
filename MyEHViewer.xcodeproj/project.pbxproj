@@ -15,6 +15,14 @@
 		0A0000010000000000000006 /* ReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000020000000000000006 /* ReaderView.swift */; };
 		0A0000010000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0A0000020000000000000007 /* Assets.xcassets */; };
 		0A0000010000000000000008 /* MyEHViewerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000020000000000000008 /* MyEHViewerTests.swift */; };
+		0A1000010000000000000001 /* EHModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1000020000000000000001 /* EHModels.swift */; };
+		0A1000010000000000000002 /* EHHTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1000020000000000000002 /* EHHTTPClient.swift */; };
+		0A1000010000000000000003 /* EHHTMLParsing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1000020000000000000003 /* EHHTMLParsing.swift */; };
+		0A1000010000000000000004 /* EHParseError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1000020000000000000004 /* EHParseError.swift */; };
+		0A1000010000000000000005 /* EHSearchPageParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1000020000000000000005 /* EHSearchPageParser.swift */; };
+		0A1000010000000000000006 /* EHGalleryPageParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1000020000000000000006 /* EHGalleryPageParser.swift */; };
+		0A1000010000000000000007 /* EHImagePageParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1000020000000000000007 /* EHImagePageParser.swift */; };
+		0A1000010000000000000008 /* EHParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1000020000000000000008 /* EHParsingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -39,6 +47,14 @@
 		0A0000020000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		0A000002000000000000000A /* MyEHViewer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyEHViewer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A000002000000000000000B /* MyEHViewerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MyEHViewerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0A1000020000000000000001 /* EHModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHModels.swift; sourceTree = "<group>"; };
+		0A1000020000000000000002 /* EHHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHHTTPClient.swift; sourceTree = "<group>"; };
+		0A1000020000000000000003 /* EHHTMLParsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHHTMLParsing.swift; sourceTree = "<group>"; };
+		0A1000020000000000000004 /* EHParseError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHParseError.swift; sourceTree = "<group>"; };
+		0A1000020000000000000005 /* EHSearchPageParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHSearchPageParser.swift; sourceTree = "<group>"; };
+		0A1000020000000000000006 /* EHGalleryPageParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHGalleryPageParser.swift; sourceTree = "<group>"; };
+		0A1000020000000000000007 /* EHImagePageParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHImagePageParser.swift; sourceTree = "<group>"; };
+		0A1000020000000000000008 /* EHParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHParsingTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -73,6 +89,9 @@
 			children = (
 				0A0000040000000000000003 /* App */,
 				0A0000040000000000000004 /* Features */,
+				0A1000040000000000000001 /* Models */,
+				0A1000040000000000000002 /* Networking */,
+				0A1000040000000000000003 /* Parsing */,
 				0A0000040000000000000007 /* Resources */,
 			);
 			path = MyEHViewer;
@@ -127,6 +146,7 @@
 			isa = PBXGroup;
 			children = (
 				0A0000020000000000000008 /* MyEHViewerTests.swift */,
+				0A1000040000000000000004 /* Parsing */,
 			);
 			path = MyEHViewerTests;
 			sourceTree = "<group>";
@@ -138,6 +158,42 @@
 				0A000002000000000000000B /* MyEHViewerTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		0A1000040000000000000001 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				0A1000020000000000000001 /* EHModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		0A1000040000000000000002 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				0A1000020000000000000002 /* EHHTTPClient.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		0A1000040000000000000003 /* Parsing */ = {
+			isa = PBXGroup;
+			children = (
+				0A1000020000000000000006 /* EHGalleryPageParser.swift */,
+				0A1000020000000000000003 /* EHHTMLParsing.swift */,
+				0A1000020000000000000007 /* EHImagePageParser.swift */,
+				0A1000020000000000000004 /* EHParseError.swift */,
+				0A1000020000000000000005 /* EHSearchPageParser.swift */,
+			);
+			path = Parsing;
+			sourceTree = "<group>";
+		};
+		0A1000040000000000000004 /* Parsing */ = {
+			isa = PBXGroup;
+			children = (
+				0A1000020000000000000008 /* EHParsingTests.swift */,
+			);
+			path = Parsing;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -242,6 +298,13 @@
 			files = (
 				0A0000010000000000000003 /* AppCopy.swift in Sources */,
 				0A0000010000000000000002 /* ContentView.swift in Sources */,
+				0A1000010000000000000006 /* EHGalleryPageParser.swift in Sources */,
+				0A1000010000000000000003 /* EHHTMLParsing.swift in Sources */,
+				0A1000010000000000000002 /* EHHTTPClient.swift in Sources */,
+				0A1000010000000000000007 /* EHImagePageParser.swift in Sources */,
+				0A1000010000000000000001 /* EHModels.swift in Sources */,
+				0A1000010000000000000004 /* EHParseError.swift in Sources */,
+				0A1000010000000000000005 /* EHSearchPageParser.swift in Sources */,
 				0A0000010000000000000001 /* MyEHViewerApp.swift in Sources */,
 				0A0000010000000000000004 /* SettingsView.swift in Sources */,
 				0A0000010000000000000006 /* ReaderView.swift in Sources */,
@@ -253,6 +316,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0A1000010000000000000008 /* EHParsingTests.swift in Sources */,
 				0A0000010000000000000008 /* MyEHViewerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -517,4 +581,3 @@
 	};
 	rootObject = 0A00000B0000000000000001 /* Project object */;
 }
-
