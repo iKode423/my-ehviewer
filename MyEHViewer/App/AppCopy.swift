@@ -6,6 +6,7 @@ enum AppCopy {
     static let searchTitle = "搜索"
     static let readerTitle = "阅读"
     static let settingsTitle = "设置"
+    static let commonRetry = "重试"
     static let searchPlaceholder = "输入关键词"
     static let searchButtonTitle = "搜索"
     static let searchSourceTitle = "浏览来源"

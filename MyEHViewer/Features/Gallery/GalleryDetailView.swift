@@ -19,8 +19,21 @@ struct GalleryDetailView: View {
                     ContentUnavailableView(AppCopy.galleryLoadingTitle, systemImage: "hourglass")
                         .frame(maxWidth: .infinity, minHeight: 280)
                 } else if let errorMessage = viewModel.errorMessage, viewModel.detail == nil {
-                    ContentUnavailableView(errorMessage, systemImage: "exclamationmark.triangle")
-                        .frame(maxWidth: .infinity, minHeight: 280)
+                    VStack(spacing: 16) {
+                        ContentUnavailableView(errorMessage, systemImage: "exclamationmark.triangle")
+
+                        Button {
+                            Task {
+                                await viewModel.reload()
+                                recordLoadedDetail()
+                            }
+                        } label: {
+                            Label(AppCopy.commonRetry, systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(viewModel.isLoading)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 280)
                 } else if let detail = viewModel.detail {
                     header(for: detail)
                     metadataSection(for: detail)

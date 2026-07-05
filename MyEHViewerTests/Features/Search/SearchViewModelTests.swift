@@ -30,6 +30,31 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.errorMessage, "服务器返回状态码 503。")
     }
 
+    /// Confirms retry keeps the full failed URL including advanced filters.
+    func testRetryKeepsFailedFilteredRequest() async {
+        let recorder = SearchRequestRecorder()
+        let viewModel = SearchViewModel(
+            client: MockHTTPClient(error: EHNetworkError.unacceptableStatusCode(503), recorder: recorder),
+            userDefaults: makeUserDefaults()
+        )
+        viewModel.query = "sample"
+        viewModel.minimumPagesText = "10"
+        viewModel.disableTagFilter = true
+
+        await viewModel.search()
+        await viewModel.retry()
+
+        XCTAssertEqual(recorder.requestedURLs.count, 2)
+        XCTAssertEqual(recorder.requestedURLs[0], recorder.requestedURLs[1])
+
+        let queryItems = URLComponents(url: recorder.requestedURLs[1], resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let queryByName = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
+        XCTAssertEqual(queryByName["f_search"], "sample")
+        XCTAssertEqual(queryByName["advsearch"], "1")
+        XCTAssertEqual(queryByName["f_spf"], "10")
+        XCTAssertEqual(queryByName["f_sft"], "on")
+    }
+
     /// Confirms successful non-empty queries are persisted as recent searches.
     func testSuccessfulSearchRecordsRecentQuery() async {
         let defaults = makeUserDefaults()
@@ -80,24 +105,38 @@ final class SearchViewModelTests: XCTestCase {
 private struct MockHTTPClient: EHHTTPClient {
     let body: String
     let error: Error?
+    let recorder: SearchRequestRecorder?
 
     /// Creates a successful mock response.
-    init(body: String) {
+    init(body: String, recorder: SearchRequestRecorder? = nil) {
         self.body = body
         self.error = nil
+        self.recorder = recorder
     }
 
     /// Creates a failing mock response.
-    init(error: Error) {
+    init(error: Error, recorder: SearchRequestRecorder? = nil) {
         self.body = ""
         self.error = error
+        self.recorder = recorder
     }
 
     /// Returns the configured mock response.
     func get(_ url: URL) async throws -> EHHTTPResponse {
+        recorder?.append(url)
         if let error {
             throw error
         }
         return EHHTTPResponse(url: url, statusCode: 200, body: body)
+    }
+}
+
+/// Records requested URLs across async mock client calls.
+private final class SearchRequestRecorder: @unchecked Sendable {
+    private(set) var requestedURLs: [URL] = []
+
+    /// Appends one requested URL.
+    func append(_ url: URL) {
+        requestedURLs.append(url)
     }
 }

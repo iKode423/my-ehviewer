@@ -176,8 +176,18 @@ struct SearchView: View {
             ContentUnavailableView(AppCopy.searchLoadingTitle, systemImage: "hourglass")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let errorMessage = viewModel.errorMessage, viewModel.results.isEmpty {
-            ContentUnavailableView(errorMessage, systemImage: "exclamationmark.triangle")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 16) {
+                ContentUnavailableView(errorMessage, systemImage: "exclamationmark.triangle")
+
+                Button {
+                    Task { await viewModel.retry() }
+                } label: {
+                    Label(AppCopy.commonRetry, systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.isLoading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if viewModel.hasSearched && viewModel.results.isEmpty {
             ContentUnavailableView(
                 AppCopy.searchNoResultsTitle,

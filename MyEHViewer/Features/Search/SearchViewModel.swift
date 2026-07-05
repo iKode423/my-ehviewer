@@ -28,6 +28,7 @@ final class SearchViewModel: ObservableObject {
     private let userDefaults: UserDefaults
     private let recentQueriesKey: String
     private var lastURL: URL?
+    private var lastRequestedURL: URL?
 
     /// Creates a view model with injectable dependencies for tests.
     init(
@@ -46,20 +47,7 @@ final class SearchViewModel: ObservableObject {
     /// Loads the first page for the current query and filter state.
     func search() async {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let request = EHSearchRequest(
-            source: source,
-            keyword: trimmedQuery,
-            excludedCategories: excludedCategories,
-            browseExpunged: browseExpunged,
-            requireTorrent: requireTorrent,
-            minimumPages: Int(minimumPagesText),
-            maximumPages: Int(maximumPagesText),
-            minimumRating: minimumRating == 0 ? nil : minimumRating,
-            disableLanguageFilter: disableLanguageFilter,
-            disableUploaderFilter: disableUploaderFilter,
-            disableTagFilter: disableTagFilter
-        )
-        if await load(request.url()) {
+        if await load(currentRequest(trimmedQuery: trimmedQuery).url()) {
             recordRecentQuery(trimmedQuery)
         }
     }
@@ -78,7 +66,15 @@ final class SearchViewModel: ObservableObject {
 
     /// Reloads the last successful request, or starts a new search if needed.
     func refresh() async {
-        await load(lastURL ?? EHSearchRequest(source: source, keyword: query).url())
+        await load(lastURL ?? lastRequestedURL ?? currentRequest().url())
+    }
+
+    /// Retries the most recent attempted request.
+    func retry() async {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if await load(lastRequestedURL ?? currentRequest(trimmedQuery: trimmedQuery).url()) {
+            recordRecentQuery(trimmedQuery)
+        }
     }
 
     /// Loads the next cursor page when the site exposes one.
@@ -100,6 +96,7 @@ final class SearchViewModel: ObservableObject {
         isLoading = true
         errorMessage = nil
         hasSearched = true
+        lastRequestedURL = url
         defer { isLoading = false }
 
         do {
@@ -124,5 +121,22 @@ final class SearchViewModel: ObservableObject {
         recentQueries.insert(recentQuery, at: 0)
         recentQueries = Array(recentQueries.prefix(10))
         userDefaults.set(recentQueries, forKey: recentQueriesKey)
+    }
+
+    /// Builds a request from the current search controls.
+    private func currentRequest(trimmedQuery: String? = nil) -> EHSearchRequest {
+        EHSearchRequest(
+            source: source,
+            keyword: trimmedQuery ?? query.trimmingCharacters(in: .whitespacesAndNewlines),
+            excludedCategories: excludedCategories,
+            browseExpunged: browseExpunged,
+            requireTorrent: requireTorrent,
+            minimumPages: Int(minimumPagesText),
+            maximumPages: Int(maximumPagesText),
+            minimumRating: minimumRating == 0 ? nil : minimumRating,
+            disableLanguageFilter: disableLanguageFilter,
+            disableUploaderFilter: disableUploaderFilter,
+            disableTagFilter: disableTagFilter
+        )
     }
 }
