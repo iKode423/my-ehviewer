@@ -46,6 +46,10 @@ struct GalleryDetailView: View {
         .navigationTitle(AppCopy.galleryTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            Link(destination: result.pageURL) {
+                Label(AppCopy.galleryOpenInBrowser, systemImage: "safari")
+            }
+
             if let detail = viewModel.detail {
                 Button {
                     libraryStore.toggleFavorite(detail: detail, fallback: result)

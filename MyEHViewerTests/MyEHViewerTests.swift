@@ -14,6 +14,7 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(EHSearchSource.watched.title, "关注")
         XCTAssertEqual(EHSearchSource.favorites.title, "收藏")
         XCTAssertEqual(AppCopy.libraryContinueReadingPage, "继续阅读第 %@ 页")
+        XCTAssertEqual(AppCopy.galleryOpenInBrowser, "网页")
         XCTAssertEqual(AppCopy.searchResetFilters, "重置筛选")
     }
 
@@ -30,6 +31,9 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.readerPageKnownFormat, "第 %@ 页 · 已知到 %@ 页")
         XCTAssertEqual(AppCopy.readerPageGrid, "目录")
         XCTAssertEqual(AppCopy.readerPageGridTitle, "页面目录")
+        XCTAssertEqual(AppCopy.readerLinksMenu, "链接")
+        XCTAssertEqual(AppCopy.readerCurrentPage, "当前页")
+        XCTAssertEqual(AppCopy.readerGalleryPage, "图库页")
         XCTAssertEqual(AppCopy.readerJumpPageTitle, "跳到页码")
         XCTAssertEqual(AppCopy.readerJumpPageConfirm, "跳转")
         XCTAssertEqual(AppCopy.readerImageLoadFailed, "图片加载失败")

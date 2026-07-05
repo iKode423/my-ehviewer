@@ -37,10 +37,8 @@ struct ReaderView: View {
 
                 displayMenu
 
-                if let originalImageURL = viewModel.imagePage?.originalImageURL {
-                    Link(destination: originalImageURL) {
-                        Label(AppCopy.readerOriginalImage, systemImage: "arrow.up.right.square")
-                    }
+                if let imagePage = viewModel.imagePage {
+                    readerLinksMenu(for: imagePage)
                 }
             }
         }
@@ -438,6 +436,29 @@ struct ReaderView: View {
             }
         } label: {
             Label(AppCopy.readerDisplayMenu, systemImage: "textformat.size")
+        }
+    }
+
+    /// Exposes useful source links for the loaded reader page.
+    private func readerLinksMenu(for imagePage: EHImagePage) -> some View {
+        Menu {
+            Link(destination: imagePage.pageURL) {
+                Label(AppCopy.readerCurrentPage, systemImage: "doc")
+            }
+
+            if let galleryURL = imagePage.galleryURL {
+                Link(destination: galleryURL) {
+                    Label(AppCopy.readerGalleryPage, systemImage: "rectangle.stack")
+                }
+            }
+
+            if let originalImageURL = imagePage.originalImageURL {
+                Link(destination: originalImageURL) {
+                    Label(AppCopy.readerOriginalImage, systemImage: "photo")
+                }
+            }
+        } label: {
+            Label(AppCopy.readerLinksMenu, systemImage: "link")
         }
     }
 }
