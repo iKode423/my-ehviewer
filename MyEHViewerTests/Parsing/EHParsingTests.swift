@@ -124,12 +124,11 @@ final class EHParsingTests: XCTestCase {
         XCTAssertEqual(items["next"], "100")
     }
 
-    /// Confirms alternate browse sources use the documented endpoint path.
-    func testSearchRequestBuildsPopularURL() {
-        let request = EHSearchRequest(source: .popular)
-
-        let url = request.url()
-
-        XCTAssertEqual(url.absoluteString, "https://e-hentai.org/popular")
+    /// Confirms alternate browse sources use the documented endpoint paths.
+    func testSearchRequestBuildsSourceURLs() {
+        XCTAssertEqual(EHSearchRequest(source: .frontPage).url().absoluteString, "https://e-hentai.org/")
+        XCTAssertEqual(EHSearchRequest(source: .popular).url().absoluteString, "https://e-hentai.org/popular")
+        XCTAssertEqual(EHSearchRequest(source: .watched).url().absoluteString, "https://e-hentai.org/watched")
+        XCTAssertEqual(EHSearchRequest(source: .favorites).url().absoluteString, "https://e-hentai.org/favorites.php")
     }
 }

@@ -181,6 +181,8 @@ struct EHImagePage: Hashable, Codable, Identifiable {
 enum EHSearchSource: String, CaseIterable, Identifiable, Codable {
     case frontPage
     case popular
+    case watched
+    case favorites
 
     var id: String { rawValue }
 
@@ -188,6 +190,8 @@ enum EHSearchSource: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .frontPage: AppCopy.searchSourceFrontPage
         case .popular: AppCopy.searchSourcePopular
+        case .watched: AppCopy.searchSourceWatched
+        case .favorites: AppCopy.searchSourceFavorites
         }
     }
 
@@ -196,6 +200,8 @@ enum EHSearchSource: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .frontPage: "/"
         case .popular: "/popular"
+        case .watched: "/watched"
+        case .favorites: "/favorites.php"
         }
     }
 }

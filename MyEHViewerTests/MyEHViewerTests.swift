@@ -11,6 +11,8 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.settingsTitle, "设置")
         XCTAssertEqual(EHSearchSource.frontPage.title, "首页")
         XCTAssertEqual(EHSearchSource.popular.title, "热门")
+        XCTAssertEqual(EHSearchSource.watched.title, "关注")
+        XCTAssertEqual(EHSearchSource.favorites.title, "收藏")
     }
 
     /// Confirms reader preference labels stay localized for settings and toolbar menus.

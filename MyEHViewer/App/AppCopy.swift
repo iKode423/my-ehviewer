@@ -12,6 +12,8 @@ enum AppCopy {
     static let searchSourceTitle = "浏览来源"
     static let searchSourceFrontPage = "首页"
     static let searchSourcePopular = "热门"
+    static let searchSourceWatched = "关注"
+    static let searchSourceFavorites = "收藏"
     static let searchRecentTitle = "最近搜索"
     static let searchClearRecent = "清空最近搜索"
     static let libraryTitle = "书架"
