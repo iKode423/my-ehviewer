@@ -34,6 +34,8 @@ MyEHViewer 是一个 iOS 阅读应用项目，目标是支持浏览 `https://e-h
 xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
+更多验证记录见 `Docs/QA.md`。
+
 ## 开发约定
 
 - 每完成一个明确阶段，先验证，再提交对应代码。
