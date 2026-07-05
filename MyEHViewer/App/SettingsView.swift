@@ -3,11 +3,14 @@ import SwiftUI
 /// Shows local data controls and reader-related preferences.
 struct SettingsView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
+    @AppStorage(ReaderFitMode.storageKey) private var fitModeRaw = ReaderFitMode.fitPage.rawValue
+    @AppStorage(ReaderBackgroundMode.storageKey) private var backgroundModeRaw = ReaderBackgroundMode.system.rawValue
     @State private var showsClearConfirmation = false
 
     var body: some View {
         NavigationStack {
             List {
+                readerPreferencesSection
                 localDataSection
                 cachePolicySection
             }
@@ -22,6 +25,23 @@ struct SettingsView: View {
                 }
             } message: {
                 Text(AppCopy.settingsClearConfirmationMessage)
+            }
+        }
+    }
+
+    /// Shows reader display preferences shared with ReaderView.
+    private var readerPreferencesSection: some View {
+        Section(AppCopy.settingsReaderPreferencesTitle) {
+            Picker(AppCopy.readerDisplayMode, selection: $fitModeRaw) {
+                ForEach(ReaderFitMode.allCases) { mode in
+                    Text(mode.title).tag(mode.rawValue)
+                }
+            }
+
+            Picker(AppCopy.readerBackgroundMode, selection: $backgroundModeRaw) {
+                ForEach(ReaderBackgroundMode.allCases) { mode in
+                    Text(mode.title).tag(mode.rawValue)
+                }
             }
         }
     }

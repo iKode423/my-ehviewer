@@ -249,3 +249,39 @@ enum EHSearchCursor: Hashable, Codable {
     case next(Int)
     case previous(Int)
 }
+
+/// Describes the reader image layout preference saved on this device.
+enum ReaderFitMode: String, CaseIterable, Identifiable, Codable {
+    case fitPage
+    case fitWidth
+
+    static let storageKey = "Reader.fitMode"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .fitPage: AppCopy.readerFitPage
+        case .fitWidth: AppCopy.readerFitWidth
+        }
+    }
+}
+
+/// Describes the reader background preference saved on this device.
+enum ReaderBackgroundMode: String, CaseIterable, Identifiable, Codable {
+    case system
+    case dark
+    case paper
+
+    static let storageKey = "Reader.backgroundMode"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: AppCopy.readerBackgroundSystem
+        case .dark: AppCopy.readerBackgroundDark
+        case .paper: AppCopy.readerBackgroundPaper
+        }
+    }
+}
