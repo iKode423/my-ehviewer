@@ -145,7 +145,11 @@ struct SearchView: View {
             }
 
             ForEach(viewModel.results) { result in
-                SearchResultRow(result: result)
+                NavigationLink {
+                    GalleryDetailView(result: result)
+                } label: {
+                    SearchResultRow(result: result)
+                }
             }
 
             paginationControls

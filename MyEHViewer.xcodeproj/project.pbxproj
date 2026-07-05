@@ -26,6 +26,10 @@
 		0A1100010000000000000001 /* SearchResultRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1100020000000000000001 /* SearchResultRow.swift */; };
 		0A1100010000000000000002 /* SearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1100020000000000000002 /* SearchViewModel.swift */; };
 		0A1100010000000000000003 /* SearchViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1100020000000000000003 /* SearchViewModelTests.swift */; };
+		0A1200010000000000000001 /* GalleryDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1200020000000000000001 /* GalleryDetailView.swift */; };
+		0A1200010000000000000002 /* GalleryDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1200020000000000000002 /* GalleryDetailViewModel.swift */; };
+		0A1200010000000000000003 /* FlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1200020000000000000003 /* FlowLayout.swift */; };
+		0A1200010000000000000004 /* GalleryDetailViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1200020000000000000004 /* GalleryDetailViewModelTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -61,6 +65,10 @@
 		0A1100020000000000000001 /* SearchResultRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultRow.swift; sourceTree = "<group>"; };
 		0A1100020000000000000002 /* SearchViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchViewModel.swift; sourceTree = "<group>"; };
 		0A1100020000000000000003 /* SearchViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchViewModelTests.swift; sourceTree = "<group>"; };
+		0A1200020000000000000001 /* GalleryDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GalleryDetailView.swift; sourceTree = "<group>"; };
+		0A1200020000000000000002 /* GalleryDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GalleryDetailViewModel.swift; sourceTree = "<group>"; };
+		0A1200020000000000000003 /* FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowLayout.swift; sourceTree = "<group>"; };
+		0A1200020000000000000004 /* GalleryDetailViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GalleryDetailViewModelTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -118,6 +126,7 @@
 		0A0000040000000000000004 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				0A1200040000000000000001 /* Gallery */,
 				0A0000040000000000000005 /* Search */,
 				0A0000040000000000000006 /* Reader */,
 			);
@@ -208,6 +217,7 @@
 		0A1100040000000000000001 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				0A1200040000000000000002 /* Gallery */,
 				0A1100040000000000000002 /* Search */,
 			);
 			path = Features;
@@ -219,6 +229,24 @@
 				0A1100020000000000000003 /* SearchViewModelTests.swift */,
 			);
 			path = Search;
+			sourceTree = "<group>";
+		};
+		0A1200040000000000000001 /* Gallery */ = {
+			isa = PBXGroup;
+			children = (
+				0A1200020000000000000003 /* FlowLayout.swift */,
+				0A1200020000000000000001 /* GalleryDetailView.swift */,
+				0A1200020000000000000002 /* GalleryDetailViewModel.swift */,
+			);
+			path = Gallery;
+			sourceTree = "<group>";
+		};
+		0A1200040000000000000002 /* Gallery */ = {
+			isa = PBXGroup;
+			children = (
+				0A1200020000000000000004 /* GalleryDetailViewModelTests.swift */,
+			);
+			path = Gallery;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -330,6 +358,9 @@
 				0A1000010000000000000001 /* EHModels.swift in Sources */,
 				0A1000010000000000000004 /* EHParseError.swift in Sources */,
 				0A1000010000000000000005 /* EHSearchPageParser.swift in Sources */,
+				0A1200010000000000000003 /* FlowLayout.swift in Sources */,
+				0A1200010000000000000001 /* GalleryDetailView.swift in Sources */,
+				0A1200010000000000000002 /* GalleryDetailViewModel.swift in Sources */,
 				0A0000010000000000000001 /* MyEHViewerApp.swift in Sources */,
 				0A0000010000000000000004 /* SettingsView.swift in Sources */,
 				0A0000010000000000000006 /* ReaderView.swift in Sources */,
@@ -344,6 +375,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0A1000010000000000000008 /* EHParsingTests.swift in Sources */,
+				0A1200010000000000000004 /* GalleryDetailViewModelTests.swift in Sources */,
 				0A0000010000000000000008 /* MyEHViewerTests.swift in Sources */,
 				0A1100010000000000000003 /* SearchViewModelTests.swift in Sources */,
 			);
