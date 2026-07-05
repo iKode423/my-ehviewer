@@ -20,21 +20,33 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var hasSearched = false
+    @Published private(set) var recentQueries: [String] = []
 
     private let client: EHHTTPClient
     private let parser: EHSearchPageParser
+    private let userDefaults: UserDefaults
+    private let recentQueriesKey: String
     private var lastURL: URL?
 
     /// Creates a view model with injectable dependencies for tests.
-    init(client: EHHTTPClient = URLSessionEHHTTPClient(), parser: EHSearchPageParser = EHSearchPageParser()) {
+    init(
+        client: EHHTTPClient = URLSessionEHHTTPClient(),
+        parser: EHSearchPageParser = EHSearchPageParser(),
+        userDefaults: UserDefaults = .standard,
+        recentQueriesKey: String = "Search.recentQueries"
+    ) {
         self.client = client
         self.parser = parser
+        self.userDefaults = userDefaults
+        self.recentQueriesKey = recentQueriesKey
+        self.recentQueries = userDefaults.stringArray(forKey: recentQueriesKey) ?? []
     }
 
     /// Loads the first page for the current query and filter state.
     func search() async {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = EHSearchRequest(
-            keyword: query,
+            keyword: trimmedQuery,
             excludedCategories: excludedCategories,
             browseExpunged: browseExpunged,
             requireTorrent: requireTorrent,
@@ -45,7 +57,21 @@ final class SearchViewModel: ObservableObject {
             disableUploaderFilter: disableUploaderFilter,
             disableTagFilter: disableTagFilter
         )
-        await load(request.url())
+        if await load(request.url()) {
+            recordRecentQuery(trimmedQuery)
+        }
+    }
+
+    /// Reuses a previous query and starts a new search.
+    func useRecentQuery(_ recentQuery: String) async {
+        query = recentQuery
+        await search()
+    }
+
+    /// Clears all locally saved recent search queries.
+    func clearRecentQueries() {
+        recentQueries = []
+        userDefaults.removeObject(forKey: recentQueriesKey)
     }
 
     /// Reloads the last successful request, or starts a new search if needed.
@@ -66,8 +92,9 @@ final class SearchViewModel: ObservableObject {
     }
 
     /// Performs the request and replaces the current page with parsed results.
-    private func load(_ url: URL) async {
-        guard !isLoading else { return }
+    @discardableResult
+    private func load(_ url: URL) async -> Bool {
+        guard !isLoading else { return false }
         isLoading = true
         errorMessage = nil
         hasSearched = true
@@ -80,8 +107,20 @@ final class SearchViewModel: ObservableObject {
             nextPageURL = page.nextPageURL
             previousPageURL = page.previousPageURL
             lastURL = response.url
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
+    }
+
+    /// Saves a successful non-empty query at the front of recent searches.
+    private func recordRecentQuery(_ recentQuery: String) {
+        guard !recentQuery.isEmpty else { return }
+
+        recentQueries.removeAll { $0.caseInsensitiveCompare(recentQuery) == .orderedSame }
+        recentQueries.insert(recentQuery, at: 0)
+        recentQueries = Array(recentQueries.prefix(10))
+        userDefaults.set(recentQueries, forKey: recentQueriesKey)
     }
 }

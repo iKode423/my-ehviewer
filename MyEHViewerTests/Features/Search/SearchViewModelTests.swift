@@ -6,7 +6,7 @@ import XCTest
 final class SearchViewModelTests: XCTestCase {
     /// Confirms a successful search populates result and pagination state.
     func testSearchLoadsParsedResults() async {
-        let viewModel = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML))
+        let viewModel = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML), userDefaults: makeUserDefaults())
         viewModel.query = "sample"
 
         await viewModel.search()
@@ -21,13 +21,46 @@ final class SearchViewModelTests: XCTestCase {
 
     /// Confirms network errors become Chinese user-facing messages.
     func testSearchStoresErrorMessage() async {
-        let viewModel = SearchViewModel(client: MockHTTPClient(error: EHNetworkError.unacceptableStatusCode(503)))
+        let viewModel = SearchViewModel(client: MockHTTPClient(error: EHNetworkError.unacceptableStatusCode(503)), userDefaults: makeUserDefaults())
 
         await viewModel.search()
 
         XCTAssertTrue(viewModel.hasSearched)
         XCTAssertTrue(viewModel.results.isEmpty)
         XCTAssertEqual(viewModel.errorMessage, "服务器返回状态码 503。")
+    }
+
+    /// Confirms successful non-empty queries are persisted as recent searches.
+    func testSuccessfulSearchRecordsRecentQuery() async {
+        let defaults = makeUserDefaults()
+        let viewModel = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML), userDefaults: defaults, recentQueriesKey: "recent-test")
+        viewModel.query = " sample "
+
+        await viewModel.search()
+
+        let restored = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML), userDefaults: defaults, recentQueriesKey: "recent-test")
+        XCTAssertEqual(restored.recentQueries, ["sample"])
+    }
+
+    /// Confirms recent queries can be cleared from local persistence.
+    func testClearRecentQueriesRemovesPersistedState() async {
+        let defaults = makeUserDefaults()
+        let viewModel = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML), userDefaults: defaults, recentQueriesKey: "recent-clear-test")
+        viewModel.query = "sample"
+
+        await viewModel.search()
+        viewModel.clearRecentQueries()
+
+        let restored = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML), userDefaults: defaults, recentQueriesKey: "recent-clear-test")
+        XCTAssertTrue(restored.recentQueries.isEmpty)
+    }
+
+    /// Creates isolated defaults for each test run.
+    private func makeUserDefaults() -> UserDefaults {
+        let suiteName = "SearchViewModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
     }
 
     private static let searchHTML = """
@@ -68,4 +101,3 @@ private struct MockHTTPClient: EHHTTPClient {
         return EHHTTPResponse(url: url, statusCode: 200, body: body)
     }
 }
-

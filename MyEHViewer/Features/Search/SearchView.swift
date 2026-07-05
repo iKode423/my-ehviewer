@@ -15,6 +15,10 @@ struct SearchView: View {
                 searchBar
                     .padding([.horizontal, .top])
 
+                recentQueries
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+
                 filterPanel
                     .padding(.horizontal)
                     .padding(.top, 12)
@@ -44,6 +48,49 @@ struct SearchView: View {
             }
                 .buttonStyle(.borderedProminent)
                 .disabled(viewModel.isLoading)
+        }
+    }
+
+    /// Shows locally saved search shortcuts.
+    @ViewBuilder
+    private var recentQueries: some View {
+        if !viewModel.recentQueries.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(AppCopy.searchRecentTitle)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Button {
+                        viewModel.clearRecentQueries()
+                    } label: {
+                        Label(AppCopy.searchClearRecent, systemImage: "trash")
+                    }
+                    .font(.caption)
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(viewModel.recentQueries, id: \.self) { recentQuery in
+                            Button {
+                                Task { await viewModel.useRecentQuery(recentQuery) }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "clock.arrow.circlepath")
+                                    Text(recentQuery)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
+                                        .frame(maxWidth: 160)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.isLoading)
+                        }
+                    }
+                }
+            }
         }
     }
 

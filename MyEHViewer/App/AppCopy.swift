@@ -8,6 +8,8 @@ enum AppCopy {
     static let settingsTitle = "设置"
     static let searchPlaceholder = "输入关键词"
     static let searchButtonTitle = "搜索"
+    static let searchRecentTitle = "最近搜索"
+    static let searchClearRecent = "清空最近搜索"
     static let libraryTitle = "书架"
     static let libraryFavorites = "收藏"
     static let libraryHistory = "历史"
