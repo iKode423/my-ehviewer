@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Presents the gallery reader surface once a gallery is selected.
 struct ReaderView: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
     @StateObject private var viewModel: ReaderViewModel
 
     /// Creates a reader view that can start from a parsed image page URL.
@@ -24,6 +25,11 @@ struct ReaderView: View {
         }
         .task {
             await viewModel.loadIfNeeded()
+        }
+        .onChange(of: viewModel.imagePage) { _, imagePage in
+            if let imagePage {
+                libraryStore.updateProgress(imagePage: imagePage)
+            }
         }
         .refreshable {
             await viewModel.reload()
@@ -132,4 +138,5 @@ struct ReaderView: View {
     NavigationStack {
         ReaderView()
     }
+    .environmentObject(LibraryStore())
 }

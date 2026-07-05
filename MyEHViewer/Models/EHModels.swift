@@ -61,11 +61,31 @@ struct EHGalleryIdentifier: Hashable, Codable, Identifiable {
 
     var id: String { "\(gid)-\(token)" }
 
+    /// Creates an identifier from the numeric gallery id and token.
+    init(gid: Int, token: String) {
+        self.gid = gid
+        self.token = token
+    }
+
     /// Builds the canonical gallery URL for this identifier.
     func url(baseURL: URL = EHConstants.baseURL) -> URL {
         baseURL.appending(path: "g/\(gid)/\(token)/")
     }
+
+    /// Extracts a gallery identifier from a canonical gallery URL.
+    init?(galleryURL: URL) {
+        guard
+            let match = EHHTMLParsing.firstMatch(in: galleryURL.path, pattern: #"^/g/([0-9]+)/([a-z0-9]+)/?$"#),
+            match.count >= 3,
+            let gid = Int(match[1])
+        else {
+            return nil
+        }
+        self.gid = gid
+        self.token = match[2]
+    }
 }
+
 
 /// Describes a namespace tag such as `artist:name` or `language:english`.
 struct EHTag: Hashable, Codable, Identifiable {
@@ -140,6 +160,7 @@ struct EHGalleryDetail: Hashable, Codable, Identifiable {
 struct EHImagePage: Hashable, Codable, Identifiable {
     let galleryID: Int
     let pageNumber: Int
+    let pageURL: URL
     let title: String?
     let imageURL: URL
     let previousPageURL: URL?

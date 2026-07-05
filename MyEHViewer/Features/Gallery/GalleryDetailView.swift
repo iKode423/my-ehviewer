@@ -3,6 +3,7 @@ import SwiftUI
 /// Displays a gallery detail page loaded from a search result.
 struct GalleryDetailView: View {
     let result: EHSearchResult
+    @EnvironmentObject private var libraryStore: LibraryStore
     @StateObject private var viewModel: GalleryDetailViewModel
 
     /// Creates a detail view that loads the result's gallery URL.
@@ -31,11 +32,32 @@ struct GalleryDetailView: View {
         }
         .navigationTitle(AppCopy.galleryTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let detail = viewModel.detail {
+                Button {
+                    libraryStore.toggleFavorite(detail: detail, fallback: result)
+                } label: {
+                    Label(
+                        libraryStore.isFavorite(detail.identifier) ? AppCopy.libraryUnfavoriteAction : AppCopy.libraryFavoriteAction,
+                        systemImage: libraryStore.isFavorite(detail.identifier) ? "star.fill" : "star"
+                    )
+                }
+            }
+        }
         .task {
             await viewModel.loadIfNeeded()
+            recordLoadedDetail()
         }
         .refreshable {
             await viewModel.reload()
+            recordLoadedDetail()
+        }
+    }
+
+    /// Records a loaded detail page into local history.
+    private func recordLoadedDetail() {
+        if let detail = viewModel.detail {
+            libraryStore.record(detail: detail, fallback: result)
         }
     }
 
@@ -193,4 +215,5 @@ struct GalleryDetailView: View {
             )
         )
     }
+    .environmentObject(LibraryStore())
 }

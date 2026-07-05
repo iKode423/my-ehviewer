@@ -18,6 +18,7 @@ struct EHImagePageParser {
         return EHImagePage(
             galleryID: identifiers.galleryID,
             pageNumber: identifiers.pageNumber,
+            pageURL: sourceURL,
             title: title(in: html),
             imageURL: imageURL,
             previousPageURL: linkByID("prev", in: html),
@@ -74,4 +75,3 @@ struct EHImagePageParser {
         )
     }
 }
-

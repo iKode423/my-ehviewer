@@ -14,13 +14,15 @@ MyEHViewer 会按以下边界逐步建设：
 
 ## 当前状态
 
-当前仓库包含工程骨架、领域模型、HTTP 客户端、基础解析层、搜索界面闭环、图库详情页和基础阅读器。解析层已覆盖搜索列表、图库详情和阅读图片页的核心结构，并使用中性 HTML fixture 测试。
+当前仓库包含工程骨架、领域模型、HTTP 客户端、基础解析层、搜索界面闭环、图库详情页、基础阅读器和本地书架。解析层已覆盖搜索列表、图库详情和阅读图片页的核心结构，并使用中性 HTML fixture 测试。
 
 搜索界面由 `SearchViewModel` 负责请求、解析、分页和错误状态，`SearchView` 只负责 SwiftUI 展示与用户输入。
 
 图库详情页由 `GalleryDetailViewModel` 负责详情请求与解析，`GalleryDetailView` 展示封面、元信息、标签和阅读页入口。
 
 阅读器由 `ReaderViewModel` 负责图片页请求、解析和翻页状态，`ReaderView` 展示当前图片、页码、上一页、下一页和原图入口。
+
+本地书架由 `LibraryStore` 通过 `UserDefaults` 保存历史、收藏和最近阅读页。它只保存图库 URL、标题、缩略图 URL 和页码等轻量元数据，不保存远端 HTML、图片或用户凭据。
 
 ## 约束
 

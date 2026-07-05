@@ -19,5 +19,4 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 
 ## 提交节奏
 
-每个阶段完成后执行验证命令。验证结果明确后，请求确认并提交对应阶段代码。
-
+每个阶段完成后执行验证命令。当前目标已授权自动提交，因此验证结果明确后直接提交对应阶段代码。
