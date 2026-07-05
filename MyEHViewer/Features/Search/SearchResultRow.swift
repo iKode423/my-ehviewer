@@ -32,6 +32,13 @@ struct SearchResultRow: View {
                         .lineLimit(1)
                 }
 
+                if let postedText = result.postedText, !postedText.isEmpty {
+                    Label(postedText, systemImage: "calendar")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
                 tagStrip
             }
         }
