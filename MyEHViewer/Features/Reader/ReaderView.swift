@@ -8,6 +8,7 @@ struct ReaderView: View {
     @AppStorage(ReaderZoomLevel.storageKey) private var zoomLevelRaw = ReaderZoomLevel.x1.rawValue
     @AppStorage(ReaderBackgroundMode.storageKey) private var backgroundModeRaw = ReaderBackgroundMode.system.rawValue
     @StateObject private var viewModel: ReaderViewModel
+    @State private var showsPageGridSheet = false
     @State private var showsPageJumpSheet = false
     @State private var pageJumpText = ""
 
@@ -25,6 +26,15 @@ struct ReaderView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                if !viewModel.sortedPageLinks.isEmpty {
+                    Button {
+                        showsPageGridSheet = true
+                    } label: {
+                        Label(AppCopy.readerPageGrid, systemImage: "square.grid.3x3")
+                    }
+                    .disabled(viewModel.isLoading)
+                }
+
                 displayMenu
 
                 if let originalImageURL = viewModel.imagePage?.originalImageURL {
@@ -47,6 +57,9 @@ struct ReaderView: View {
         }
         .sheet(isPresented: $showsPageJumpSheet) {
             pageJumpSheet
+        }
+        .sheet(isPresented: $showsPageGridSheet) {
+            pageGridSheet
         }
     }
 
@@ -206,6 +219,31 @@ struct ReaderView: View {
         .frame(maxWidth: .infinity, minHeight: 320)
     }
 
+    /// Shows a stable thumbnail frame for a known reader page.
+    private func pageThumbnail(url: URL?) -> some View {
+        AsyncImage(url: url) { phase in
+            switch phase {
+            case .success(let image):
+                image
+                    .resizable()
+                    .scaledToFill()
+            case .failure:
+                Image(systemName: "photo")
+                    .foregroundStyle(.secondary)
+            case .empty:
+                ProgressView()
+            @unknown default:
+                Image(systemName: "photo")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(0.72, contentMode: .fit)
+        .background(Color.secondary.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .clipped()
+    }
+
     /// Builds the visible page progress text from loaded reader state.
     private func pageStatusText(for imagePage: EHImagePage) -> String {
         if let knownLastPageNumber = viewModel.knownLastPageNumber {
@@ -300,6 +338,54 @@ struct ReaderView: View {
         .presentationDetents([.medium])
     }
 
+    /// Shows known reader pages as selectable thumbnails.
+    private var pageGridSheet: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], alignment: .leading, spacing: 10) {
+                    ForEach(viewModel.sortedPageLinks) { pageLink in
+                        Button {
+                            loadPageFromGrid(pageLink)
+                        } label: {
+                            VStack(spacing: 6) {
+                                pageThumbnail(url: pageLink.thumbnailURL)
+
+                                Text(String(format: AppCopy.galleryOpenPage, String(pageLink.pageNumber)))
+                                    .font(.caption.weight(.semibold))
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .padding(6)
+                            .frame(maxWidth: .infinity)
+                            .background(pageGridTileBackground(for: pageLink))
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(viewModel.isLoading)
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle(AppCopy.readerPageGridTitle)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(AppCopy.readerJumpPageCancel) {
+                        showsPageGridSheet = false
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    /// Highlights the currently loaded reader page in the thumbnail grid.
+    private func pageGridTileBackground(for pageLink: EHGalleryPageLink) -> Color {
+        if pageLink.pageNumber == viewModel.imagePage?.pageNumber {
+            return Color.accentColor.opacity(0.16)
+        }
+        return Color.secondary.opacity(0.08)
+    }
+
     /// Opens page jump controls with the current reader page prefilled.
     private func presentPageJump() {
         pageJumpText = String(viewModel.imagePage?.pageNumber ?? viewModel.sortedPageLinks.first?.pageNumber ?? 1)
@@ -312,6 +398,14 @@ struct ReaderView: View {
         showsPageJumpSheet = false
         Task {
             await viewModel.loadPageNumber(pageJumpNumber)
+        }
+    }
+
+    /// Loads a selected thumbnail page and dismisses the grid sheet.
+    private func loadPageFromGrid(_ pageLink: EHGalleryPageLink) {
+        showsPageGridSheet = false
+        Task {
+            await viewModel.loadPage(pageLink)
         }
     }
 

@@ -27,6 +27,8 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(ReaderBackgroundMode.paper.title, "纸色")
         XCTAssertEqual(AppCopy.readerZoomMode, "缩放倍率")
         XCTAssertEqual(AppCopy.readerPageKnownFormat, "第 %@ 页 · 已知到 %@ 页")
+        XCTAssertEqual(AppCopy.readerPageGrid, "目录")
+        XCTAssertEqual(AppCopy.readerPageGridTitle, "页面目录")
         XCTAssertEqual(AppCopy.readerJumpPageTitle, "跳到页码")
         XCTAssertEqual(AppCopy.readerJumpPageConfirm, "跳转")
         XCTAssertEqual(AppCopy.readerImageLoadFailed, "图片加载失败")

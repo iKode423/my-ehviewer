@@ -65,6 +65,8 @@ enum AppCopy {
     static let readerImageRetry = "重新加载图片"
     static let readerPreviousPage = "上一页"
     static let readerNextPage = "下一页"
+    static let readerPageGrid = "目录"
+    static let readerPageGridTitle = "页面目录"
     static let readerJumpPage = "跳页"
     static let readerJumpPageTitle = "跳到页码"
     static let readerJumpPageField = "页码"
