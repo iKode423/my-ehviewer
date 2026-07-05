@@ -4,6 +4,7 @@ import Foundation
 /// Manages search query state, loading, parsing, and pagination.
 @MainActor
 final class SearchViewModel: ObservableObject {
+    @Published var source = EHSearchSource.frontPage
     @Published var query = ""
     @Published var excludedCategories: Set<EHGalleryCategory> = []
     @Published var browseExpunged = false
@@ -46,6 +47,7 @@ final class SearchViewModel: ObservableObject {
     func search() async {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = EHSearchRequest(
+            source: source,
             keyword: trimmedQuery,
             excludedCategories: excludedCategories,
             browseExpunged: browseExpunged,
@@ -76,7 +78,7 @@ final class SearchViewModel: ObservableObject {
 
     /// Reloads the last successful request, or starts a new search if needed.
     func refresh() async {
-        await load(lastURL ?? EHSearchRequest(keyword: query).url())
+        await load(lastURL ?? EHSearchRequest(source: source, keyword: query).url())
     }
 
     /// Loads the next cursor page when the site exposes one.

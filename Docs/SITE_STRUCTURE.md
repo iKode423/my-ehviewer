@@ -5,6 +5,7 @@
 ## 搜索页
 
 - 请求入口：`https://e-hentai.org/`
+- 热门入口：`https://e-hentai.org/popular`
 - 关键词参数：`f_search`
 - 分类隐藏字段：`f_cats`
 - 下一页游标：`next`
@@ -49,4 +50,3 @@
 - 回到图库：`#i5 a[href^="https://e-hentai.org/g/"]`
 - 原图入口：`#i6 a[href^="https://e-hentai.org/fullimg/"]`
 - 当前页码：阅读页 URL 末尾的 `<gid>-<page>`
-

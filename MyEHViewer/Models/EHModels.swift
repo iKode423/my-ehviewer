@@ -171,8 +171,32 @@ struct EHImagePage: Hashable, Codable, Identifiable {
     var id: String { "\(galleryID)-\(pageNumber)" }
 }
 
+/// Describes the browse endpoint used by search results.
+enum EHSearchSource: String, CaseIterable, Identifiable, Codable {
+    case frontPage
+    case popular
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .frontPage: AppCopy.searchSourceFrontPage
+        case .popular: AppCopy.searchSourcePopular
+        }
+    }
+
+    /// Returns the path used by the site's browse endpoint.
+    var path: String {
+        switch self {
+        case .frontPage: "/"
+        case .popular: "/popular"
+        }
+    }
+}
+
 /// Describes search options that map directly to the site's query parameters.
 struct EHSearchRequest: Hashable, Codable {
+    var source = EHSearchSource.frontPage
     var keyword = ""
     var excludedCategories: Set<EHGalleryCategory> = []
     var browseExpunged = false
@@ -188,6 +212,7 @@ struct EHSearchRequest: Hashable, Codable {
     /// Builds a site URL using the currently documented public search parameters.
     func url(baseURL: URL = EHConstants.baseURL) -> URL {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+        components.path = source.path
         var items: [URLQueryItem] = []
 
         let trimmedKeyword = keyword.trimmingCharacters(in: .whitespacesAndNewlines)

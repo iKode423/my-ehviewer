@@ -15,6 +15,10 @@ struct SearchView: View {
                 searchBar
                     .padding([.horizontal, .top])
 
+                sourcePicker
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+
                 recentQueries
                     .padding(.horizontal)
                     .padding(.top, 8)
@@ -49,6 +53,16 @@ struct SearchView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(viewModel.isLoading)
         }
+    }
+
+    /// Lets the user browse the front page or the popular endpoint.
+    private var sourcePicker: some View {
+        Picker(AppCopy.searchSourceTitle, selection: $viewModel.source) {
+            ForEach(EHSearchSource.allCases) { source in
+                Text(source.title).tag(source)
+            }
+        }
+        .pickerStyle(.segmented)
     }
 
     /// Shows locally saved search shortcuts.
