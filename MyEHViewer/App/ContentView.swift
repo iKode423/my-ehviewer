@@ -9,7 +9,9 @@ struct ContentView: View {
                     Label(AppCopy.searchTitle, systemImage: "magnifyingglass")
                 }
 
-            ReaderView()
+            NavigationStack {
+                ReaderView()
+            }
                 .tabItem {
                     Label(AppCopy.readerTitle, systemImage: "book.pages")
                 }
@@ -25,4 +27,3 @@ struct ContentView: View {
 #Preview {
     ContentView()
 }
-
