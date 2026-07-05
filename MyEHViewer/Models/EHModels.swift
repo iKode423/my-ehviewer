@@ -292,6 +292,33 @@ enum ReaderFitMode: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+/// Describes the reader zoom preference saved on this device.
+enum ReaderZoomLevel: Double, CaseIterable, Identifiable, Codable {
+    case x1 = 1.0
+    case x125 = 1.25
+    case x15 = 1.5
+    case x2 = 2.0
+    case x3 = 3.0
+
+    static let storageKey = "Reader.zoomLevel"
+
+    var id: Double { rawValue }
+
+    var title: String {
+        "\(Int(rawValue * 100))%"
+    }
+
+    /// Returns the zoom level used after a double tap.
+    var doubleTapTarget: ReaderZoomLevel {
+        self == .x1 ? .x2 : .x1
+    }
+
+    /// Resolves a persisted value into a known zoom level.
+    static func resolved(rawValue: Double) -> ReaderZoomLevel {
+        ReaderZoomLevel(rawValue: rawValue) ?? .x1
+    }
+}
+
 /// Describes the reader background preference saved on this device.
 enum ReaderBackgroundMode: String, CaseIterable, Identifiable, Codable {
     case system

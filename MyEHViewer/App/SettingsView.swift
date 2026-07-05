@@ -5,6 +5,7 @@ struct SettingsView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @StateObject private var siteCookieStore = SiteCookieStore.shared
     @AppStorage(ReaderFitMode.storageKey) private var fitModeRaw = ReaderFitMode.fitPage.rawValue
+    @AppStorage(ReaderZoomLevel.storageKey) private var zoomLevelRaw = ReaderZoomLevel.x1.rawValue
     @AppStorage(ReaderBackgroundMode.storageKey) private var backgroundModeRaw = ReaderBackgroundMode.system.rawValue
     @State private var cookieInput = ""
     @State private var showsClearConfirmation = false
@@ -52,6 +53,12 @@ struct SettingsView: View {
             Picker(AppCopy.readerDisplayMode, selection: $fitModeRaw) {
                 ForEach(ReaderFitMode.allCases) { mode in
                     Text(mode.title).tag(mode.rawValue)
+                }
+            }
+
+            Picker(AppCopy.readerZoomMode, selection: $zoomLevelRaw) {
+                ForEach(ReaderZoomLevel.allCases) { level in
+                    Text(level.title).tag(level.rawValue)
                 }
             }
 

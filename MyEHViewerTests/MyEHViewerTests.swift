@@ -17,8 +17,19 @@ final class MyEHViewerTests: XCTestCase {
     func testReaderPreferenceCopy() {
         XCTAssertEqual(ReaderFitMode.fitPage.title, "适合页面")
         XCTAssertEqual(ReaderFitMode.fitWidth.title, "贴合宽度")
+        XCTAssertEqual(ReaderZoomLevel.x1.title, "100%")
+        XCTAssertEqual(ReaderZoomLevel.x2.title, "200%")
         XCTAssertEqual(ReaderBackgroundMode.system.title, "跟随系统")
         XCTAssertEqual(ReaderBackgroundMode.dark.title, "深色")
         XCTAssertEqual(ReaderBackgroundMode.paper.title, "纸色")
+        XCTAssertEqual(AppCopy.readerZoomMode, "缩放倍率")
+    }
+
+    /// Confirms reader zoom persistence resolves unknown values safely.
+    func testReaderZoomLevelResolution() {
+        XCTAssertEqual(ReaderZoomLevel.resolved(rawValue: 1.5), .x15)
+        XCTAssertEqual(ReaderZoomLevel.resolved(rawValue: 9.9), .x1)
+        XCTAssertEqual(ReaderZoomLevel.x1.doubleTapTarget, .x2)
+        XCTAssertEqual(ReaderZoomLevel.x2.doubleTapTarget, .x1)
     }
 }

@@ -3,7 +3,9 @@ import SwiftUI
 /// Presents the gallery reader surface once a gallery is selected.
 struct ReaderView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(ReaderFitMode.storageKey) private var fitModeRaw = ReaderFitMode.fitPage.rawValue
+    @AppStorage(ReaderZoomLevel.storageKey) private var zoomLevelRaw = ReaderZoomLevel.x1.rawValue
     @AppStorage(ReaderBackgroundMode.storageKey) private var backgroundModeRaw = ReaderBackgroundMode.system.rawValue
     @StateObject private var viewModel: ReaderViewModel
 
@@ -45,6 +47,10 @@ struct ReaderView: View {
 
     private var fitMode: ReaderFitMode {
         ReaderFitMode(rawValue: fitModeRaw) ?? .fitPage
+    }
+
+    private var zoomLevel: ReaderZoomLevel {
+        ReaderZoomLevel.resolved(rawValue: zoomLevelRaw)
     }
 
     private var backgroundMode: ReaderBackgroundMode {
@@ -108,29 +114,46 @@ struct ReaderView: View {
                 if viewModel.isLoading {
                     ProgressView()
                 }
+
+                Label(String(format: AppCopy.readerZoomFormat, zoomLevel.title), systemImage: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(readerForegroundStyle.opacity(0.72))
             }
             .padding()
 
             Divider()
 
-            ScrollView([.vertical, .horizontal]) {
-                AsyncImage(url: imagePage.imageURL) { phase in
-                    switch phase {
-                    case .success(let image):
-                        readerImage(image)
-                    case .failure:
-                        ContentUnavailableView(AppCopy.readerRetry, systemImage: "photo")
-                            .frame(minHeight: 320)
-                    case .empty:
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 320)
-                    @unknown default:
-                        ContentUnavailableView(AppCopy.readerRetry, systemImage: "photo")
-                            .frame(minHeight: 320)
+            GeometryReader { geometry in
+                ScrollView([.vertical, .horizontal]) {
+                    HStack {
+                        Spacer(minLength: 0)
+
+                        AsyncImage(url: imagePage.imageURL) { phase in
+                            switch phase {
+                            case .success(let image):
+                                readerImage(image)
+                                    .onTapGesture(count: 2) {
+                                        toggleReaderZoom()
+                                    }
+                            case .failure:
+                                ContentUnavailableView(AppCopy.readerRetry, systemImage: "photo")
+                                    .frame(minHeight: 320)
+                            case .empty:
+                                ProgressView()
+                                    .frame(maxWidth: .infinity, minHeight: 320)
+                            @unknown default:
+                                ContentUnavailableView(AppCopy.readerRetry, systemImage: "photo")
+                                    .frame(minHeight: 320)
+                            }
+                        }
+                        .frame(width: readerImageWidth(availableWidth: geometry.size.width))
+                        .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: zoomLevelRaw)
+
+                        Spacer(minLength: 0)
                     }
+                    .padding(fitMode == .fitPage ? 16 : 0)
+                    .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .top)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(fitMode == .fitPage ? 16 : 0)
             }
             .background(readerBackgroundColor)
 
@@ -146,7 +169,23 @@ struct ReaderView: View {
         image
             .resizable()
             .scaledToFit()
-            .frame(maxWidth: fitMode == .fitWidth ? .infinity : nil)
+    }
+
+    /// Calculates the rendered image width for the current fit and zoom preferences.
+    private func readerImageWidth(availableWidth: CGFloat) -> CGFloat {
+        let horizontalPadding: CGFloat = fitMode == .fitPage ? 32 : 0
+        let baseWidth = max(availableWidth - horizontalPadding, 44)
+        return baseWidth * CGFloat(zoomLevel.rawValue)
+    }
+
+    /// Toggles between the default zoom and a readable close-up zoom.
+    private func toggleReaderZoom() {
+        zoomLevelRaw = zoomLevel.doubleTapTarget.rawValue
+    }
+
+    /// Restores the reader zoom to the default size.
+    private func resetReaderZoom() {
+        zoomLevelRaw = ReaderZoomLevel.x1.rawValue
     }
 
     /// Provides previous and next page actions.
@@ -199,6 +238,19 @@ struct ReaderView: View {
                     Text(mode.title).tag(mode.rawValue)
                 }
             }
+
+            Picker(AppCopy.readerZoomMode, selection: $zoomLevelRaw) {
+                ForEach(ReaderZoomLevel.allCases) { level in
+                    Text(level.title).tag(level.rawValue)
+                }
+            }
+
+            Button {
+                resetReaderZoom()
+            } label: {
+                Label(AppCopy.readerZoomReset, systemImage: "arrow.counterclockwise")
+            }
+            .disabled(zoomLevel == .x1)
 
             Picker(AppCopy.readerBackgroundMode, selection: $backgroundModeRaw) {
                 ForEach(ReaderBackgroundMode.allCases) { mode in
