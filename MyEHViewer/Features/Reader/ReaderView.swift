@@ -8,6 +8,8 @@ struct ReaderView: View {
     @AppStorage(ReaderZoomLevel.storageKey) private var zoomLevelRaw = ReaderZoomLevel.x1.rawValue
     @AppStorage(ReaderBackgroundMode.storageKey) private var backgroundModeRaw = ReaderBackgroundMode.system.rawValue
     @StateObject private var viewModel: ReaderViewModel
+    @State private var showsPageJumpSheet = false
+    @State private var pageJumpText = ""
 
     /// Creates a reader view that can start from a parsed image page URL.
     init(initialPageURL: URL? = nil, pageLinks: [EHGalleryPageLink] = []) {
@@ -43,6 +45,9 @@ struct ReaderView: View {
         .refreshable {
             await viewModel.reload()
         }
+        .sheet(isPresented: $showsPageJumpSheet) {
+            pageJumpSheet
+        }
     }
 
     private var fitMode: ReaderFitMode {
@@ -55,6 +60,15 @@ struct ReaderView: View {
 
     private var backgroundMode: ReaderBackgroundMode {
         ReaderBackgroundMode(rawValue: backgroundModeRaw) ?? .system
+    }
+
+    private var pageJumpNumber: Int? {
+        Int(pageJumpText.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private var canSubmitPageJump: Bool {
+        guard let pageJumpNumber else { return false }
+        return viewModel.canLoadPageNumber(pageJumpNumber)
     }
 
     private var readerBackgroundColor: Color {
@@ -212,7 +226,12 @@ struct ReaderView: View {
 
             Spacer()
 
-            jumpPageMenu
+            Button {
+                presentPageJump()
+            } label: {
+                Label(AppCopy.readerJumpPage, systemImage: "number.square")
+            }
+            .disabled(viewModel.sortedPageLinks.isEmpty || viewModel.isLoading)
 
             Spacer()
 
@@ -226,20 +245,53 @@ struct ReaderView: View {
         .buttonStyle(.bordered)
     }
 
-    /// Provides jump navigation for known gallery page links.
-    private var jumpPageMenu: some View {
-        Menu {
-            ForEach(viewModel.sortedPageLinks) { pageLink in
-                Button {
-                    Task { await viewModel.loadPage(pageLink) }
-                } label: {
-                    Text(String(format: AppCopy.galleryOpenPage, String(pageLink.pageNumber)))
+    /// Shows a page-number jump form for known gallery page links.
+    private var pageJumpSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(AppCopy.readerJumpPageField, text: $pageJumpText)
+                        .keyboardType(.numberPad)
+
+                    if let knownLastPageNumber = viewModel.knownLastPageNumber {
+                        Text(String(format: AppCopy.readerJumpPageRangeFormat, String(knownLastPageNumber)))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
-        } label: {
-            Label(AppCopy.readerJumpPage, systemImage: "list.number")
+            .navigationTitle(AppCopy.readerJumpPageTitle)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(AppCopy.readerJumpPageCancel) {
+                        showsPageJumpSheet = false
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(AppCopy.readerJumpPageConfirm) {
+                        submitPageJump()
+                    }
+                    .disabled(!canSubmitPageJump || viewModel.isLoading)
+                }
+            }
         }
-        .disabled(viewModel.sortedPageLinks.isEmpty || viewModel.isLoading)
+        .presentationDetents([.medium])
+    }
+
+    /// Opens page jump controls with the current reader page prefilled.
+    private func presentPageJump() {
+        pageJumpText = String(viewModel.imagePage?.pageNumber ?? viewModel.sortedPageLinks.first?.pageNumber ?? 1)
+        showsPageJumpSheet = true
+    }
+
+    /// Loads the requested known page and dismisses the jump sheet.
+    private func submitPageJump() {
+        guard let pageJumpNumber else { return }
+        showsPageJumpSheet = false
+        Task {
+            await viewModel.loadPageNumber(pageJumpNumber)
+        }
     }
 
     /// Exposes reader display preferences from the reader toolbar.

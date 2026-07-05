@@ -20,7 +20,7 @@ MyEHViewer 会按以下边界逐步建设：
 
 图库详情页由 `GalleryDetailViewModel` 负责详情请求、解析和缩略图分页合并，`GalleryDetailView` 展示封面、元信息、可继续搜索的标签、阅读页入口和失败重试操作。
 
-阅读器由 `ReaderViewModel` 负责图片页请求、解析、翻页、已知页码范围和已知页面入口跳转状态，`ReaderView` 展示当前图片、页码、上一页、下一页、跳页、缩放控制、显示偏好和原图入口。
+阅读器由 `ReaderViewModel` 负责图片页请求、解析、翻页、已知页码范围和已知页面入口跳转状态，`ReaderView` 展示当前图片、页码、上一页、下一页、页码输入跳转、缩放控制、显示偏好和原图入口。
 
 本地书架由 `LibraryStore` 通过 `UserDefaults` 保存历史、收藏和最近阅读页。它只保存图库 URL、标题、缩略图 URL 和页码等轻量元数据，不保存远端 HTML、图片或用户凭据。
 

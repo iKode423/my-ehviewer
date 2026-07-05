@@ -39,7 +39,7 @@ final class ReaderViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.canLoadNextPage)
     }
 
-    /// Confirms a known page link can be loaded directly from the jump menu.
+    /// Confirms a known page link can be loaded directly from reader controls.
     func testLoadPageJumpsToKnownPageLink() async {
         let firstURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
         let secondURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!
@@ -61,6 +61,33 @@ final class ReaderViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
         XCTAssertEqual(viewModel.sortedPageLinks.map(\.pageNumber), [1, 2])
         XCTAssertEqual(viewModel.knownLastPageNumber, 2)
+    }
+
+    /// Confirms a known page number can be loaded from the jump form.
+    func testLoadPageNumberJumpsToKnownPage() async {
+        let firstURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
+        let secondURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!
+        let client = ReaderMockHTTPClient(responses: [
+            firstURL: Self.firstPageHTML,
+            secondURL: Self.secondPageHTML
+        ])
+        let viewModel = ReaderViewModel(
+            initialPageURL: firstURL,
+            pageLinks: [
+                EHGalleryPageLink(pageNumber: 1, pageURL: firstURL),
+                EHGalleryPageLink(pageNumber: 2, pageURL: secondURL)
+            ],
+            client: client
+        )
+
+        let loadedKnownPage = await viewModel.loadPageNumber(2)
+        let loadedUnknownPage = await viewModel.loadPageNumber(9)
+
+        XCTAssertTrue(loadedKnownPage)
+        XCTAssertFalse(loadedUnknownPage)
+        XCTAssertTrue(viewModel.canLoadPageNumber(1))
+        XCTAssertFalse(viewModel.canLoadPageNumber(9))
+        XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
     }
 
     /// Confirms loading a restored progress URL does not require known page links.

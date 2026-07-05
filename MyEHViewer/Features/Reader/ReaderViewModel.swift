@@ -72,9 +72,27 @@ final class ReaderViewModel: ObservableObject {
         await load(nextPageURL)
     }
 
-    /// Loads a known gallery page link selected from the jump menu.
+    /// Loads a known gallery page link selected from reader controls.
     func loadPage(_ pageLink: EHGalleryPageLink) async {
         await load(pageLink.pageURL)
+    }
+
+    /// Loads a known gallery page by its page number.
+    @discardableResult
+    func loadPageNumber(_ pageNumber: Int) async -> Bool {
+        guard !isLoading, let pageLink = pageLink(for: pageNumber) else { return false }
+        await loadPage(pageLink)
+        return true
+    }
+
+    /// Returns true when the page number is available in known page links.
+    func canLoadPageNumber(_ pageNumber: Int) -> Bool {
+        pageLink(for: pageNumber) != nil
+    }
+
+    /// Finds a known gallery page link by page number.
+    private func pageLink(for pageNumber: Int) -> EHGalleryPageLink? {
+        sortedPageLinks.first { $0.pageNumber == pageNumber }
     }
 
     /// Fetches, parses, and stores one reader page.
