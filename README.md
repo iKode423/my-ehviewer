@@ -20,6 +20,7 @@ MyEHViewer 是一个 iOS 阅读应用项目，目标是支持浏览 `https://e-h
 - 已实现图库详情页缩略图分页加载，可按页或一次性补全后续页面入口。
 - 已实现阅读器显示偏好：图片显示模式和阅读背景可在阅读器与设置页调整。
 - 已实现最近搜索词记录与一键复用。
+- 已实现站点 Cookie 配置：本机 Keychain 保存，网络请求自动带上 Cookie header。
 
 ## 技术选择
 
@@ -41,4 +42,4 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 
 - 每完成一个明确阶段，先验证，再提交对应代码。
 - 所有面向用户的 App 文案默认使用中文。
-- 不在仓库内保存站点内容、用户凭据或抓取到的图片资源。
+- 不在仓库内保存站点内容、用户凭据、Cookie 或抓取到的图片资源。

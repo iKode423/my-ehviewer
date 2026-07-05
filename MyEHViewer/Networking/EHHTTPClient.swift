@@ -36,10 +36,15 @@ protocol EHHTTPClient {
 @MainActor
 final class URLSessionEHHTTPClient: EHHTTPClient {
     private let session: URLSession
+    private let cookieHeaderProvider: @MainActor () -> String?
 
     /// Creates a client with browser-like headers that the public site accepts.
-    init(session: URLSession = .shared) {
+    init(
+        session: URLSession = .shared,
+        cookieHeaderProvider: @escaping @MainActor () -> String? = { SiteCookieStore.shared.cookieHeaderForRequest }
+    ) {
         self.session = session
+        self.cookieHeaderProvider = cookieHeaderProvider
     }
 
     /// Sends a GET request using a stable user agent and Chinese language preference.
@@ -48,6 +53,9 @@ final class URLSessionEHHTTPClient: EHHTTPClient {
         request.httpMethod = "GET"
         request.setValue("Mozilla/5.0 MyEHViewer/0.1", forHTTPHeaderField: "User-Agent")
         request.setValue("zh-CN,zh;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
+        if let cookieHeader = cookieHeaderProvider(), !cookieHeader.isEmpty {
+            request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+        }
 
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {

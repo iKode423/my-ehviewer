@@ -8,7 +8,7 @@ MyEHViewer 会按以下边界逐步建设：
 - `Features/Search`：搜索输入、结果列表、高级搜索入口。
 - `Features/Gallery`：图库详情、标签和元信息展示。
 - `Features/Reader`：阅读器、图片页导航和阅读状态。
-- `Networking`：HTTP 请求、Cookie、请求头和响应错误。
+- `Networking`：HTTP 请求、Cookie header、请求头和响应错误。
 - `Parsing`：HTML 到领域模型的解析。
 - `Persistence`：历史、收藏和设置。
 
@@ -25,6 +25,8 @@ MyEHViewer 会按以下边界逐步建设：
 本地书架由 `LibraryStore` 通过 `UserDefaults` 保存历史、收藏和最近阅读页。它只保存图库 URL、标题、缩略图 URL 和页码等轻量元数据，不保存远端 HTML、图片或用户凭据。
 
 设置页通过共享的 `LibraryStore` 展示本地数据数量，并提供清空历史、收藏和阅读进度的确认操作。阅读显示偏好通过 `AppStorage` 在设置页和阅读器工具栏之间共享。
+
+站点访问 Cookie 由 `SiteCookieStore` 保存到本机 Keychain。`URLSessionEHHTTPClient` 在请求公开站点页面时读取该 Cookie header 并注入请求，不在仓库内保存任何真实凭据。
 
 ## 约束
 

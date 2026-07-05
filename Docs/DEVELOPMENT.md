@@ -20,3 +20,8 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ## 提交节奏
 
 每个阶段完成后执行验证命令。当前目标已授权自动提交，因此验证结果明确后直接提交对应阶段代码。
+
+## 敏感数据
+
+- 不提交真实站点 HTML、图片、标题样本、用户凭据或 Cookie。
+- 站点 Cookie 仅通过 App 设置页写入本机 Keychain。

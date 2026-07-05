@@ -35,6 +35,8 @@
 		0A1400010000000000000001 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1400020000000000000001 /* LibraryView.swift */; };
 		0A1400010000000000000002 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1400020000000000000002 /* LibraryStore.swift */; };
 		0A1400010000000000000003 /* LibraryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1400020000000000000003 /* LibraryStoreTests.swift */; };
+		0A1500010000000000000001 /* SiteCookieStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1500020000000000000001 /* SiteCookieStore.swift */; };
+		0A1500010000000000000002 /* SiteCookieStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1500020000000000000002 /* SiteCookieStoreTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -79,6 +81,8 @@
 		0A1400020000000000000001 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		0A1400020000000000000002 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
 		0A1400020000000000000003 /* LibraryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStoreTests.swift; sourceTree = "<group>"; };
+		0A1500020000000000000001 /* SiteCookieStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteCookieStore.swift; sourceTree = "<group>"; };
+		0A1500020000000000000002 /* SiteCookieStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteCookieStoreTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -276,6 +280,7 @@
 			isa = PBXGroup;
 			children = (
 				0A1400020000000000000002 /* LibraryStore.swift */,
+				0A1500020000000000000001 /* SiteCookieStore.swift */,
 			);
 			path = Persistence;
 			sourceTree = "<group>";
@@ -292,6 +297,7 @@
 			isa = PBXGroup;
 			children = (
 				0A1400020000000000000003 /* LibraryStoreTests.swift */,
+				0A1500020000000000000002 /* SiteCookieStoreTests.swift */,
 			);
 			path = Persistence;
 			sourceTree = "<group>";
@@ -412,6 +418,7 @@
 				0A1400010000000000000001 /* LibraryView.swift in Sources */,
 				0A0000010000000000000001 /* MyEHViewerApp.swift in Sources */,
 				0A0000010000000000000004 /* SettingsView.swift in Sources */,
+				0A1500010000000000000001 /* SiteCookieStore.swift in Sources */,
 				0A0000010000000000000006 /* ReaderView.swift in Sources */,
 				0A1300010000000000000001 /* ReaderViewModel.swift in Sources */,
 				0A1100010000000000000001 /* SearchResultRow.swift in Sources */,
@@ -430,6 +437,7 @@
 				0A0000010000000000000008 /* MyEHViewerTests.swift in Sources */,
 				0A1300010000000000000002 /* ReaderViewModelTests.swift in Sources */,
 				0A1100010000000000000003 /* SearchViewModelTests.swift in Sources */,
+				0A1500010000000000000002 /* SiteCookieStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

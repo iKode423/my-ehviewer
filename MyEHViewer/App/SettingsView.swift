@@ -3,18 +3,25 @@ import SwiftUI
 /// Shows local data controls and reader-related preferences.
 struct SettingsView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
+    @StateObject private var siteCookieStore = SiteCookieStore.shared
     @AppStorage(ReaderFitMode.storageKey) private var fitModeRaw = ReaderFitMode.fitPage.rawValue
     @AppStorage(ReaderBackgroundMode.storageKey) private var backgroundModeRaw = ReaderBackgroundMode.system.rawValue
+    @State private var cookieInput = ""
     @State private var showsClearConfirmation = false
+    @State private var showsCookieClearConfirmation = false
 
     var body: some View {
         NavigationStack {
             List {
                 readerPreferencesSection
+                siteAccessSection
                 localDataSection
                 cachePolicySection
             }
             .navigationTitle(AppCopy.settingsTitle)
+            .onAppear {
+                cookieInput = siteCookieStore.cookieHeader
+            }
             .confirmationDialog(
                 AppCopy.settingsClearConfirmationTitle,
                 isPresented: $showsClearConfirmation,
@@ -25,6 +32,16 @@ struct SettingsView: View {
                 }
             } message: {
                 Text(AppCopy.settingsClearConfirmationMessage)
+            }
+            .confirmationDialog(
+                AppCopy.settingsCookieClearTitle,
+                isPresented: $showsCookieClearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(AppCopy.settingsCookieClearConfirm, role: .destructive) {
+                    siteCookieStore.clearCookieHeader()
+                    cookieInput = ""
+                }
             }
         }
     }
@@ -42,6 +59,40 @@ struct SettingsView: View {
                 ForEach(ReaderBackgroundMode.allCases) { mode in
                     Text(mode.title).tag(mode.rawValue)
                 }
+            }
+        }
+    }
+
+    /// Shows account cookie controls used by network requests.
+    private var siteAccessSection: some View {
+        Section(AppCopy.settingsSiteAccessTitle) {
+            Label(
+                siteCookieStore.hasCookieHeader ? AppCopy.settingsCookieConfigured : AppCopy.settingsCookieMissing,
+                systemImage: siteCookieStore.hasCookieHeader ? "checkmark.seal" : "exclamationmark.triangle"
+            )
+
+            SecureField(AppCopy.settingsCookieField, text: $cookieInput)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            Button {
+                siteCookieStore.saveCookieHeader(cookieInput)
+                cookieInput = siteCookieStore.cookieHeader
+            } label: {
+                Label(AppCopy.settingsCookieSave, systemImage: "key")
+            }
+            .disabled(cookieInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            Button(role: .destructive) {
+                showsCookieClearConfirmation = true
+            } label: {
+                Label(AppCopy.settingsCookieClear, systemImage: "trash")
+            }
+            .disabled(!siteCookieStore.hasCookieHeader)
+
+            if let errorMessage = siteCookieStore.errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
             }
         }
     }
