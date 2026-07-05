@@ -28,3 +28,14 @@ xcrun simctl io booted screenshot /tmp/my-ehviewer-smoke.png
 ```
 
 结果：应用成功启动，首屏搜索页、筛选入口和底部 Tab 正常显示。
+
+### 最终模拟器冒烟
+
+```sh
+xcrun simctl bootstatus 'iPhone 17 Pro' -b
+xcrun simctl install booted /Users/ikode/Library/Developer/Xcode/DerivedData/MyEHViewer-asduoirgkvnkeocmxnxbvjnwfqad/Build/Products/Debug-iphonesimulator/MyEHViewer.app
+xcrun simctl launch booted com.ikode.MyEHViewer
+xcrun simctl io booted screenshot /tmp/my-ehviewer-final-smoke.png
+```
+
+结果：通过。应用成功安装并启动，首屏搜索页展示首页、热门、关注、收藏四个来源，中文搜索入口、筛选入口和底部 Tab 未见明显遮挡或错位。
