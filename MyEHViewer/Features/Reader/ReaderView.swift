@@ -6,8 +6,8 @@ struct ReaderView: View {
     @StateObject private var viewModel: ReaderViewModel
 
     /// Creates a reader view that can start from a parsed image page URL.
-    init(initialPageURL: URL? = nil) {
-        _viewModel = StateObject(wrappedValue: ReaderViewModel(initialPageURL: initialPageURL))
+    init(initialPageURL: URL? = nil, pageLinks: [EHGalleryPageLink] = []) {
+        _viewModel = StateObject(wrappedValue: ReaderViewModel(initialPageURL: initialPageURL, pageLinks: pageLinks))
     }
 
     var body: some View {
@@ -123,6 +123,10 @@ struct ReaderView: View {
 
             Spacer()
 
+            jumpPageMenu
+
+            Spacer()
+
             Button {
                 Task { await viewModel.loadNextPage() }
             } label: {
@@ -131,6 +135,22 @@ struct ReaderView: View {
             .disabled(!viewModel.canLoadNextPage || viewModel.isLoading)
         }
         .buttonStyle(.bordered)
+    }
+
+    /// Provides jump navigation for known gallery page links.
+    private var jumpPageMenu: some View {
+        Menu {
+            ForEach(viewModel.sortedPageLinks) { pageLink in
+                Button {
+                    Task { await viewModel.loadPage(pageLink) }
+                } label: {
+                    Text(String(format: AppCopy.galleryOpenPage, String(pageLink.pageNumber)))
+                }
+            }
+        } label: {
+            Label(AppCopy.readerJumpPage, systemImage: "list.number")
+        }
+        .disabled(viewModel.sortedPageLinks.isEmpty || viewModel.isLoading)
     }
 }
 

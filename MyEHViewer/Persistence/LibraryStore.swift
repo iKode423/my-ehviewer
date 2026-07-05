@@ -74,7 +74,7 @@ final class LibraryStore: ObservableObject {
     }
 
     /// Finds a record for the given gallery identifier.
-    private func record(for identifier: EHGalleryIdentifier) -> LibraryGalleryRecord? {
+    func record(for identifier: EHGalleryIdentifier) -> LibraryGalleryRecord? {
         records.first { $0.identifier == identifier }
     }
 
@@ -157,4 +157,3 @@ private struct LibraryState: Codable {
     let records: [LibraryGalleryRecord]
     let favoriteIDs: [String]
 }
-

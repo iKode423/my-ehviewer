@@ -122,7 +122,7 @@ struct GalleryDetailView: View {
 
     /// Shows parsed metadata rows from the gallery table.
     private func metadataSection(for detail: EHGalleryDetail) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 10) {
             Text(AppCopy.galleryMetadataTitle)
                 .font(.headline)
 
@@ -141,7 +141,7 @@ struct GalleryDetailView: View {
 
     /// Shows a wrapping list of parsed gallery tags.
     private func tagsSection(for detail: EHGalleryDetail) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 10) {
             Text(AppCopy.galleryTagsTitle)
                 .font(.headline)
 
@@ -160,18 +160,21 @@ struct GalleryDetailView: View {
 
     /// Shows reader page links parsed from the thumbnail grid.
     private func pageLinksSection(for detail: EHGalleryDetail) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let resumeURL = libraryStore.record(for: detail.identifier)?.lastReadPageURL
+        let startURL = resumeURL ?? detail.pageLinks.first?.pageURL
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(AppCopy.galleryPagesTitle)
                     .font(.headline)
 
                 Spacer()
 
-                if let firstPage = detail.pageLinks.first {
+                if let startURL {
                     NavigationLink {
-                        ReaderView(initialPageURL: firstPage.pageURL)
+                        ReaderView(initialPageURL: startURL, pageLinks: detail.pageLinks)
                     } label: {
-                        Label(AppCopy.galleryReadFromStart, systemImage: "book")
+                        Label(resumeURL == nil ? AppCopy.galleryReadFromStart : AppCopy.galleryContinueReading, systemImage: "book")
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -185,7 +188,7 @@ struct GalleryDetailView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 8)], alignment: .leading, spacing: 8) {
                     ForEach(detail.pageLinks) { pageLink in
                         NavigationLink {
-                            ReaderView(initialPageURL: pageLink.pageURL)
+                            ReaderView(initialPageURL: pageLink.pageURL, pageLinks: detail.pageLinks)
                         } label: {
                             Text(String(format: AppCopy.galleryOpenPage, String(pageLink.pageNumber)))
                                 .font(.caption.weight(.semibold))

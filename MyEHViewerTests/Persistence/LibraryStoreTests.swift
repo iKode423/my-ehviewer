@@ -19,6 +19,7 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(restored.history.count, 1)
         XCTAssertEqual(restored.favorites.count, 1)
         XCTAssertTrue(restored.isFavorite(detail.identifier))
+        XCTAssertNotNil(restored.record(for: detail.identifier))
         XCTAssertEqual(restored.history.first?.title, "Sample Gallery")
     }
 

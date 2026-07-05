@@ -5,6 +5,7 @@ import Foundation
 @MainActor
 final class ReaderViewModel: ObservableObject {
     let initialPageURL: URL?
+    let pageLinks: [EHGalleryPageLink]
 
     @Published private(set) var imagePage: EHImagePage?
     @Published private(set) var isLoading = false
@@ -13,6 +14,10 @@ final class ReaderViewModel: ObservableObject {
     private let client: EHHTTPClient
     private let parser: EHImagePageParser
     private var currentPageURL: URL?
+
+    var sortedPageLinks: [EHGalleryPageLink] {
+        pageLinks.sorted { $0.pageNumber < $1.pageNumber }
+    }
 
     var canLoadPreviousPage: Bool {
         guard let previousPageURL = imagePage?.previousPageURL else { return false }
@@ -27,10 +32,12 @@ final class ReaderViewModel: ObservableObject {
     /// Creates a reader view model with injectable dependencies for tests.
     init(
         initialPageURL: URL?,
+        pageLinks: [EHGalleryPageLink] = [],
         client: EHHTTPClient = URLSessionEHHTTPClient(),
         parser: EHImagePageParser = EHImagePageParser()
     ) {
         self.initialPageURL = initialPageURL
+        self.pageLinks = pageLinks
         self.currentPageURL = initialPageURL
         self.client = client
         self.parser = parser
@@ -60,6 +67,11 @@ final class ReaderViewModel: ObservableObject {
         await load(nextPageURL)
     }
 
+    /// Loads a known gallery page link selected from the jump menu.
+    func loadPage(_ pageLink: EHGalleryPageLink) async {
+        await load(pageLink.pageURL)
+    }
+
     /// Fetches, parses, and stores one reader page.
     private func load(_ url: URL) async {
         guard !isLoading else { return }
@@ -76,4 +88,3 @@ final class ReaderViewModel: ObservableObject {
         }
     }
 }
-

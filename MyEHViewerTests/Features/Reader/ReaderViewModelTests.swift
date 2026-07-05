@@ -39,6 +39,41 @@ final class ReaderViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.canLoadNextPage)
     }
 
+    /// Confirms a known page link can be loaded directly from the jump menu.
+    func testLoadPageJumpsToKnownPageLink() async {
+        let firstURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
+        let secondURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!
+        let client = ReaderMockHTTPClient(responses: [
+            firstURL: Self.firstPageHTML,
+            secondURL: Self.secondPageHTML
+        ])
+        let viewModel = ReaderViewModel(
+            initialPageURL: firstURL,
+            pageLinks: [
+                EHGalleryPageLink(pageNumber: 2, pageURL: secondURL),
+                EHGalleryPageLink(pageNumber: 1, pageURL: firstURL)
+            ],
+            client: client
+        )
+
+        await viewModel.loadPage(EHGalleryPageLink(pageNumber: 2, pageURL: secondURL))
+
+        XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
+        XCTAssertEqual(viewModel.sortedPageLinks.map(\.pageNumber), [1, 2])
+    }
+
+    /// Confirms loading a restored progress URL does not require known page links.
+    func testLoadRestoredProgressURLWithoutPageLinks() async {
+        let secondURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!
+        let client = ReaderMockHTTPClient(responses: [secondURL: Self.secondPageHTML])
+        let viewModel = ReaderViewModel(initialPageURL: secondURL, client: client)
+
+        await viewModel.loadIfNeeded()
+
+        XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
+        XCTAssertTrue(viewModel.sortedPageLinks.isEmpty)
+    }
+
     /// Confirms loading errors are exposed as Chinese messages.
     func testLoadStoresErrorMessage() async {
         let firstURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
@@ -94,4 +129,3 @@ private struct ReaderMockHTTPClient: EHHTTPClient {
         return EHHTTPResponse(url: url, statusCode: 200, body: responses[url] ?? "")
     }
 }
-
