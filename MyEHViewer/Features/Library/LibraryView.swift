@@ -33,11 +33,7 @@ struct LibraryView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             List(records) { record in
-                NavigationLink {
-                    GalleryDetailView(result: record.searchResult)
-                } label: {
-                    LibraryRecordRow(record: record)
-                }
+                LibraryRecordRow(record: record)
             }
             .listStyle(.plain)
         }
@@ -95,12 +91,28 @@ private struct LibraryRecordRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SearchResultRow(result: record.searchResult)
+            NavigationLink {
+                GalleryDetailView(result: record.searchResult)
+            } label: {
+                SearchResultRow(result: record.searchResult)
+            }
 
             if let lastReadPage = record.lastReadPage {
                 Label(String(format: AppCopy.libraryLastReadPage, String(lastReadPage)), systemImage: "bookmark")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            if let lastReadPageURL = record.lastReadPageURL, let lastReadPage = record.lastReadPage {
+                NavigationLink {
+                    ReaderView(initialPageURL: lastReadPageURL)
+                } label: {
+                    Label(
+                        String(format: AppCopy.libraryContinueReadingPage, String(lastReadPage)),
+                        systemImage: "book"
+                    )
+                }
+                .buttonStyle(.bordered)
             }
         }
     }

@@ -24,6 +24,7 @@ enum AppCopy {
     static let libraryEmptyHistoryTitle = "暂无历史"
     static let libraryEmptyHistoryMessage = "打开过的图库会出现在这里。"
     static let libraryLastReadPage = "读到第 %@ 页"
+    static let libraryContinueReadingPage = "继续阅读第 %@ 页"
     static let libraryFavoriteAction = "收藏"
     static let libraryUnfavoriteAction = "取消收藏"
     static let searchEmptyTitle = "开始搜索"
