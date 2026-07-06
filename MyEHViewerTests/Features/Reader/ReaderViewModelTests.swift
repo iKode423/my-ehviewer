@@ -227,6 +227,72 @@ final class ReaderViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.imagePage?.imageURL, secondImageURL)
     }
 
+    /// Confirms cached pages can navigate to an uncached next page through known gallery links.
+    func testCachedPageNavigationUsesKnownPageLinksForUncachedNextPage() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let identifier = EHGalleryIdentifier(gid: 100, token: "abcdef1234")
+        let firstPageURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
+        let secondPageURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!
+        let firstImageURL = URL(string: "https://example.test/1.webp")!
+        let client = ReaderMockHTTPClient(responses: [secondPageURL: Self.secondPageHTML])
+
+        cacheStore.save(
+            Data([0x01]),
+            for: firstImageURL,
+            responseURL: firstImageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: identifier,
+                galleryTitle: "Sample Gallery",
+                pageNumber: 1,
+                pageURL: firstPageURL,
+                totalPageCount: 2,
+                thumbnailURL: nil
+            )
+        )
+
+        let viewModel = ReaderViewModel(
+            initialPageURL: firstPageURL,
+            pageLinks: [
+                EHGalleryPageLink(pageNumber: 1, pageURL: firstPageURL),
+                EHGalleryPageLink(pageNumber: 2, pageURL: secondPageURL)
+            ],
+            client: client,
+            cacheStore: cacheStore
+        )
+
+        await viewModel.loadIfNeeded()
+
+        XCTAssertTrue(viewModel.canLoadNextPage)
+
+        await viewModel.loadNextPage()
+
+        XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
+        XCTAssertEqual(viewModel.imagePage?.imageURL.absoluteString, "https://example.test/2.webp")
+        XCTAssertFalse(viewModel.canLoadNextPage)
+    }
+
+    /// Confirms known page order keeps next enabled even when parsed HTML points to itself.
+    func testKnownPageLinksKeepNextEnabledWhenParsedNextIsSelf() async {
+        let secondPageURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!
+        let thirdPageURL = URL(string: "https://e-hentai.org/s/eeeeffffgg/100-3")!
+        let client = ReaderMockHTTPClient(responses: [secondPageURL: Self.secondPageHTML])
+        let viewModel = ReaderViewModel(
+            initialPageURL: secondPageURL,
+            pageLinks: [
+                EHGalleryPageLink(pageNumber: 1, pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!),
+                EHGalleryPageLink(pageNumber: 2, pageURL: secondPageURL),
+                EHGalleryPageLink(pageNumber: 3, pageURL: thirdPageURL)
+            ],
+            client: client
+        )
+
+        await viewModel.loadIfNeeded()
+
+        XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
+        XCTAssertTrue(viewModel.canLoadNextPage)
+    }
+
     /// Confirms retrying the current image advances the view reload token.
     func testReloadImageAdvancesRetryToken() async {
         let firstURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!

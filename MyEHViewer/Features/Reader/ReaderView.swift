@@ -12,13 +12,16 @@ struct ReaderView: View {
     @StateObject private var viewModel: ReaderViewModel
     @State private var showsPageGridSheet = false
     @State private var showsPageJumpSheet = false
-    @State private var showsReaderChrome = false
+    @State private var showsReaderChrome: Bool
     @State private var pageJumpText = ""
     @State private var persistedPinchScale: CGFloat = 1.0
     @GestureState private var transientPinchScale: CGFloat = 1.0
+    private let onClose: (() -> Void)?
 
     /// Creates a reader view that can start from a parsed image page URL.
-    init(initialPageURL: URL? = nil, pageLinks: [EHGalleryPageLink] = [], totalPageCount: Int? = nil) {
+    init(initialPageURL: URL? = nil, pageLinks: [EHGalleryPageLink] = [], totalPageCount: Int? = nil, onClose: (() -> Void)? = nil) {
+        self.onClose = onClose
+        _showsReaderChrome = State(initialValue: onClose != nil)
         _viewModel = StateObject(wrappedValue: ReaderViewModel(initialPageURL: initialPageURL, pageLinks: pageLinks, totalPageCount: totalPageCount))
     }
 
@@ -30,9 +33,12 @@ struct ReaderView: View {
         .navigationTitle(AppCopy.readerTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(readerChromeVisibility, for: .navigationBar)
-        .toolbar(readerChromeVisibility, for: .tabBar)
         .statusBarHidden(viewModel.imagePage != nil && !showsReaderChrome)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                readerBackButton
+            }
+
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if !viewModel.sortedPageLinks.isEmpty {
                     Button {
@@ -114,6 +120,44 @@ struct ReaderView: View {
         }
     }
 
+    /// Shows the explicit escape route when the reader is presented above another screen.
+    @ViewBuilder
+    private var readerBackButton: some View {
+        if let onClose {
+            Button {
+                onClose()
+            } label: {
+                Label(AppCopy.readerBack, systemImage: "chevron.left")
+            }
+        }
+    }
+
+    /// Shows a compact always-available back target while the reader chrome is hidden.
+    @ViewBuilder
+    private var readerFloatingBackButton: some View {
+        if let onClose {
+            VStack {
+                HStack {
+                    Button {
+                        onClose()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.headline.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel(AppCopy.readerBack)
+                    .foregroundStyle(readerForegroundStyle)
+                    .background(.regularMaterial, in: Circle())
+
+                    Spacer()
+                }
+
+                Spacer()
+            }
+            .padding(12)
+        }
+    }
+
     /// Displays the empty, loading, error, or image-reading state.
     @ViewBuilder
     private var content: some View {
@@ -152,6 +196,8 @@ struct ReaderView: View {
                 if showsReaderChrome {
                     readerChromeOverlay(for: imagePage)
                         .transition(.opacity)
+                } else {
+                    readerFloatingBackButton
                 }
             }
             .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: showsReaderChrome)

@@ -24,6 +24,7 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.galleryLocalFavorite, "本地收藏")
         XCTAssertEqual(AppCopy.gallerySiteFavorite, "加入线上收藏")
         XCTAssertEqual(AppCopy.gallerySiteUnfavorite, "取消线上收藏")
+        XCTAssertEqual(AppCopy.galleryDownloadPageFailedFormat, "第 %@ 页下载失败：%@")
         XCTAssertEqual(AppCopy.cacheManagementDeleteGallery, "删除缓存")
     }
 
@@ -37,6 +38,7 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(ReaderBackgroundMode.dark.title, "深色")
         XCTAssertEqual(ReaderBackgroundMode.paper.title, "纸色")
         XCTAssertEqual(AppCopy.readerZoomMode, "缩放倍率")
+        XCTAssertEqual(AppCopy.readerBack, "返回")
         XCTAssertEqual(AppCopy.readerPageKnownFormat, "第 %@ 页 · 已知到 %@ 页")
         XCTAssertEqual(AppCopy.readerPageGrid, "目录")
         XCTAssertEqual(AppCopy.readerPageGridTitle, "页面目录")
@@ -145,17 +147,22 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertNil(staticImage?.images)
     }
 
-    /// Confirms opening a reader route selects the reader tab.
+    /// Confirms opening a reader route keeps the current tab and presents a route.
     @MainActor
-    func testAppNavigationStoreOpensReaderTab() {
+    func testAppNavigationStoreOpensReaderRouteWithoutChangingTab() {
         let store = AppNavigationStore()
         let pageURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
 
+        store.selectedTab = .library
         store.openReader(initialPageURL: pageURL)
 
-        XCTAssertEqual(store.selectedTab, .reader)
+        XCTAssertEqual(store.selectedTab, .library)
         XCTAssertEqual(store.readerRoute?.initialPageURL, pageURL)
         XCTAssertEqual(store.readerRoute?.pageLinks, [])
+
+        store.closeReader()
+
+        XCTAssertNil(store.readerRoute)
     }
 
     /// Confirms reader zoom persistence resolves unknown values safely.
@@ -201,5 +208,121 @@ final class MyEHViewerTests: XCTestCase {
 
         XCTAssertTrue(CGImageDestinationFinalize(destination))
         return data as Data
+    }
+}
+
+/// Verifies gallery background download progress and failure handling.
+@MainActor
+final class GalleryDownloadManagerTests: XCTestCase {
+    /// Confirms one failed page does not stop later pages from being cached.
+    func testDownloadSkipsFailedPageAndContinues() async throws {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let identifier = EHGalleryIdentifier(gid: 100, token: "abcdef1234")
+        let firstPageURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
+        let secondPageURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!
+        let thirdPageURL = URL(string: "https://e-hentai.org/s/eeeeffffgg/100-3")!
+        let firstImageURL = URL(string: "https://example.test/1.webp")!
+        let secondImageURL = URL(string: "https://example.test/2.webp")!
+        let thirdImageURL = URL(string: "https://example.test/3.webp")!
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: [
+                firstPageURL: Self.imagePageHTML(pageNumber: 1, imageURL: firstImageURL),
+                secondPageURL: Self.imagePageHTML(pageNumber: 2, imageURL: secondImageURL),
+                thirdPageURL: Self.imagePageHTML(pageNumber: 3, imageURL: thirdImageURL)
+            ],
+            dataResponses: [
+                firstImageURL: .success(Data([0x01])),
+                secondImageURL: .failure(EHNetworkError.unacceptableStatusCode(503)),
+                thirdImageURL: .success(Data([0x03]))
+            ]
+        )
+        let manager = GalleryDownloadManager(client: client, cacheStore: cacheStore)
+        let detail = EHGalleryDetail(
+            identifier: identifier,
+            title: "Sample Gallery",
+            japaneseTitle: nil,
+            category: "Manga",
+            coverURL: nil,
+            uploader: nil,
+            metadata: [],
+            ratingLabel: nil,
+            ratingCount: nil,
+            tags: [],
+            pageLinks: [
+                EHGalleryPageLink(pageNumber: 1, pageURL: firstPageURL),
+                EHGalleryPageLink(pageNumber: 2, pageURL: secondPageURL),
+                EHGalleryPageLink(pageNumber: 3, pageURL: thirdPageURL)
+            ],
+            thumbnailPageURLs: [],
+            pageCount: 3
+        )
+
+        manager.startDownload(detail: detail)
+        await waitForFinishedDownload(manager: manager, identifier: identifier)
+
+        let progress = try XCTUnwrap(manager.progress(for: identifier))
+        XCTAssertFalse(progress.isRunning)
+        XCTAssertEqual(progress.downloadedPageCount, 2)
+        XCTAssertEqual(progress.totalPageCount, 3)
+        XCTAssertEqual(progress.errorMessage, "第 2 页下载失败：服务器返回状态码 503。")
+        XCTAssertEqual(cacheStore.data(for: firstImageURL), Data([0x01]))
+        XCTAssertNil(cacheStore.data(for: secondImageURL))
+        XCTAssertEqual(cacheStore.data(for: thirdImageURL), Data([0x03]))
+    }
+
+    /// Waits briefly for the manager's background task to finish.
+    private func waitForFinishedDownload(manager: GalleryDownloadManager, identifier: EHGalleryIdentifier) async {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if manager.progress(for: identifier)?.isRunning == false {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
+    /// Builds minimal reader HTML that the image page parser accepts.
+    private static func imagePageHTML(pageNumber: Int, imageURL: URL) -> String {
+        """
+        <div id="i1"><h1>Sample Gallery - \(pageNumber)</h1></div>
+        <div id="i2"><a id="prev" href="https://e-hentai.org/s/aaaabbbbcc/100-1">Prev</a><a id="next" href="https://e-hentai.org/s/eeeeffffgg/100-3">Next</a></div>
+        <div id="i3"><img id="img" src="\(imageURL.absoluteString)" /></div>
+        <div id="i5"><a href="https://e-hentai.org/g/100/abcdef1234/">Back</a></div>
+        """
+    }
+}
+
+/// Provides deterministic HTML and image responses for gallery download tests.
+private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
+    private let htmlResponses: [URL: String]
+    private let dataResponses: [URL: Result<Data, Error>]
+
+    /// Creates a mock client with fixed page and image responses.
+    init(htmlResponses: [URL: String], dataResponses: [URL: Result<Data, Error>]) {
+        self.htmlResponses = htmlResponses
+        self.dataResponses = dataResponses
+    }
+
+    /// Returns configured reader page HTML.
+    func get(_ url: URL) async throws -> EHHTTPResponse {
+        guard let body = htmlResponses[url] else {
+            throw EHParseError.missingImageURL
+        }
+        return EHHTTPResponse(url: url, statusCode: 200, body: body)
+    }
+
+    /// Returns configured image data or throws the configured failure.
+    func data(_ url: URL) async throws -> EHDataResponse {
+        guard let response = dataResponses[url] else {
+            throw EHNetworkError.unacceptableStatusCode(404)
+        }
+
+        switch response {
+        case .success(let data):
+            return EHDataResponse(url: url, statusCode: 200, data: data)
+        case .failure(let error):
+            throw error
+        }
     }
 }

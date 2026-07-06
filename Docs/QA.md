@@ -134,3 +134,12 @@ xcrun simctl io booted screenshot /tmp/my-ehviewer-cache-first-20260706.png
 ```
 
 结果：通过。应用成功安装并启动，启动 PID 为 `60886`；首屏搜索页在深色模式下显示正常，底部 Tab、搜索入口和筛选入口未见明显遮挡或错位。
+
+### 阅读器路由与下载跳过回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。覆盖阅读器从底部 Tab 移出并以全屏路由打开、返回上一级关闭阅读器且保留原 Tab、缓存页通过已知图库目录继续打开未缓存下一页、解析 HTML 下一页指向自身时仍可按已知目录继续下一页、整本下载遇到单页图片失败后跳过并继续缓存后续页，以及既有搜索、图库、阅读、缓存、Cookie、书架和中文文案回归。

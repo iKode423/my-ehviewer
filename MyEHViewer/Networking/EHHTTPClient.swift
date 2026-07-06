@@ -41,6 +41,13 @@ protocol EHHTTPClient {
     func get(_ url: URL) async throws -> EHHTTPResponse
 }
 
+/// Loads HTML and binary image data with the same cookie context.
+@MainActor
+protocol EHDataHTTPClient: EHHTTPClient {
+    /// Sends a GET request and returns the raw binary response data.
+    func data(_ url: URL) async throws -> EHDataResponse
+}
+
 /// Submits URL-encoded site forms while preserving cookies.
 @MainActor
 protocol EHFormHTTPClient {
@@ -50,7 +57,7 @@ protocol EHFormHTTPClient {
 
 /// Default URLSession-backed HTTP client used by the app.
 @MainActor
-final class URLSessionEHHTTPClient: EHHTTPClient, EHFormHTTPClient {
+final class URLSessionEHHTTPClient: EHDataHTTPClient, EHFormHTTPClient {
     private let session: URLSession
     private let cookieHeaderProvider: @MainActor () -> String?
 
@@ -574,14 +581,14 @@ final class GalleryDownloadManager: ObservableObject {
 
     @Published private(set) var progressByGalleryID: [String: GalleryDownloadProgress] = [:]
 
-    private let client: URLSessionEHHTTPClient
+    private let client: any EHDataHTTPClient
     private let parser: EHImagePageParser
     private let cacheStore: ImageCacheStore
     private var tasks: [String: Task<Void, Never>] = [:]
 
     /// Creates a download manager with injectable dependencies.
     init(
-        client: URLSessionEHHTTPClient = URLSessionEHHTTPClient(),
+        client: any EHDataHTTPClient = URLSessionEHHTTPClient(),
         parser: EHImagePageParser = EHImagePageParser(),
         cacheStore: ImageCacheStore = .shared
     ) {
@@ -618,6 +625,7 @@ final class GalleryDownloadManager: ObservableObject {
     private func download(detail: EHGalleryDetail, fallback: EHSearchResult?) async {
         let totalPageCount = detail.pageCount ?? detail.pageLinks.count
         var downloadedPageCount = cachedPageCount(for: detail.identifier)
+        var lastErrorMessage: String?
         updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
 
         for pageLink in detail.pageLinks.sorted(by: { $0.pageNumber < $1.pageNumber }) {
@@ -644,13 +652,13 @@ final class GalleryDownloadManager: ObservableObject {
                 downloadedPageCount = cachedPageCount(for: detail.identifier)
                 updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
             } catch {
-                updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: error.localizedDescription)
-                tasks[detail.identifier.id] = nil
-                return
+                lastErrorMessage = String(format: AppCopy.galleryDownloadPageFailedFormat, String(pageLink.pageNumber), error.localizedDescription)
+                updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: lastErrorMessage)
+                continue
             }
         }
 
-        updateProgress(detail: detail, downloadedPageCount: cachedPageCount(for: detail.identifier), totalPageCount: totalPageCount, isRunning: false, errorMessage: nil)
+        updateProgress(detail: detail, downloadedPageCount: cachedPageCount(for: detail.identifier), totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
         tasks[detail.identifier.id] = nil
     }
 

@@ -38,13 +38,11 @@ final class ReaderViewModel: ObservableObject {
     }
 
     var canLoadPreviousPage: Bool {
-        guard let previousPageURL = imagePage?.previousPageURL else { return false }
-        return previousPageURL != currentPageURL
+        previousPageCandidateURL != nil
     }
 
     var canLoadNextPage: Bool {
-        guard let nextPageURL = imagePage?.nextPageURL else { return false }
-        return nextPageURL != currentPageURL
+        nextPageCandidateURL != nil
     }
 
     var canPresentPageJump: Bool {
@@ -85,13 +83,13 @@ final class ReaderViewModel: ObservableObject {
 
     /// Loads the previous image page when available.
     func loadPreviousPage() async {
-        guard canLoadPreviousPage, let previousPageURL = imagePage?.previousPageURL else { return }
+        guard let previousPageURL = previousPageCandidateURL else { return }
         await load(previousPageURL)
     }
 
     /// Loads the next image page when available.
     func loadNextPage() async {
-        guard canLoadNextPage, let nextPageURL = imagePage?.nextPageURL else { return }
+        guard let nextPageURL = nextPageCandidateURL else { return }
         await load(nextPageURL)
     }
 
@@ -162,6 +160,46 @@ final class ReaderViewModel: ObservableObject {
         sortedPageLinks.first { $0.pageNumber == pageNumber }
     }
 
+    /// Returns the best previous page URL from known page order, cache, or parsed HTML.
+    private var previousPageCandidateURL: URL? {
+        adjacentPageURL(offset: -1)
+    }
+
+    /// Returns the best next page URL from known page order, cache, or parsed HTML.
+    private var nextPageCandidateURL: URL? {
+        adjacentPageURL(offset: 1)
+    }
+
+    /// Finds an adjacent page URL while only disabling navigation at gallery boundaries.
+    private func adjacentPageURL(offset: Int) -> URL? {
+        guard let imagePage else { return nil }
+
+        let targetPageNumber = imagePage.pageNumber + offset
+        guard targetPageNumber > 0 else { return nil }
+        if let knownLastPageNumber, targetPageNumber > knownLastPageNumber {
+            return nil
+        }
+
+        if let knownPageURL = knownPageURL(for: targetPageNumber) {
+            return knownPageURL
+        }
+
+        let parsedURL = offset < 0 ? imagePage.previousPageURL : imagePage.nextPageURL
+        let activeURL = currentPageURL ?? imagePage.pageURL
+        guard parsedURL != activeURL else { return nil }
+        return parsedURL
+    }
+
+    /// Finds a page URL from loaded gallery links or cache records.
+    private func knownPageURL(for pageNumber: Int) -> URL? {
+        guard pageNumber > 0 else { return nil }
+        if let pageLink = pageLink(for: pageNumber) {
+            return pageLink.pageURL
+        }
+        guard let identifier = activeGalleryIdentifier else { return nil }
+        return cacheStore.pageRecord(for: identifier, pageNumber: pageNumber)?.pageURL
+    }
+
     /// Merges page links while keeping one URL for each page number.
     private func mergePageLinks(_ links: [EHGalleryPageLink]) {
         pageLinks = Dictionary(grouping: pageLinks + links, by: \.pageNumber)
@@ -212,8 +250,10 @@ final class ReaderViewModel: ObservableObject {
             return nil
         }
         totalPageCount = record.totalPageCount ?? totalPageCount
-        let previousURL = cacheStore.pageRecord(for: record.galleryIdentifier, pageNumber: record.pageNumber - 1)?.pageURL
-        let nextURL = cacheStore.pageRecord(for: record.galleryIdentifier, pageNumber: record.pageNumber + 1)?.pageURL
+        let previousURL = pageLink(for: record.pageNumber - 1)?.pageURL
+            ?? cacheStore.pageRecord(for: record.galleryIdentifier, pageNumber: record.pageNumber - 1)?.pageURL
+        let nextURL = pageLink(for: record.pageNumber + 1)?.pageURL
+            ?? cacheStore.pageRecord(for: record.galleryIdentifier, pageNumber: record.pageNumber + 1)?.pageURL
         return EHImagePage(
             galleryID: record.galleryIdentifier.gid,
             pageNumber: record.pageNumber,

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Hosts the root tab navigation for search, reading, and settings.
+/// Hosts the root tab navigation for search, library, and settings.
 struct ContentView: View {
     @StateObject private var libraryStore = LibraryStore()
     @StateObject private var appNavigationStore = AppNavigationStore()
@@ -22,14 +22,6 @@ struct ContentView: View {
                 }
                 .tag(ContentTab.library)
 
-            NavigationStack {
-                readerTabContent
-            }
-                .tabItem {
-                    Label(AppCopy.readerTitle, systemImage: "book.pages")
-                }
-                .tag(ContentTab.reader)
-
             SettingsView()
                 .tabItem {
                     Label(AppCopy.settingsTitle, systemImage: "gearshape")
@@ -40,16 +32,8 @@ struct ContentView: View {
         .environmentObject(appNavigationStore)
         .preferredColorScheme(preferredColorScheme)
         .tint(.appAccent)
-    }
-
-    /// Shows the active reader session or the empty reader state.
-    @ViewBuilder
-    private var readerTabContent: some View {
-        if let route = appNavigationStore.readerRoute {
-            ReaderView(initialPageURL: route.initialPageURL, pageLinks: route.pageLinks, totalPageCount: route.totalPageCount)
-                .id(route.id)
-        } else {
-            ReaderView()
+        .fullScreenCover(isPresented: readerPresentationBinding) {
+            readerPresentation
         }
     }
 
@@ -64,13 +48,45 @@ struct ContentView: View {
         case .dark: .dark
         }
     }
+
+    /// Bridges the optional reader route into a dismissible full-screen cover.
+    private var readerPresentationBinding: Binding<Bool> {
+        Binding {
+            appNavigationStore.readerRoute != nil
+        } set: { isPresented in
+            if !isPresented {
+                appNavigationStore.closeReader()
+            }
+        }
+    }
+
+    /// Presents the active reader session above the tab hierarchy.
+    @ViewBuilder
+    private var readerPresentation: some View {
+        if let route = appNavigationStore.readerRoute {
+            NavigationStack {
+                ReaderView(
+                    initialPageURL: route.initialPageURL,
+                    pageLinks: route.pageLinks,
+                    totalPageCount: route.totalPageCount,
+                    onClose: {
+                        appNavigationStore.closeReader()
+                    }
+                )
+                .id(route.id)
+            }
+            .environmentObject(libraryStore)
+            .environmentObject(appNavigationStore)
+            .preferredColorScheme(preferredColorScheme)
+            .tint(.appAccent)
+        }
+    }
 }
 
 /// Identifies top-level app tabs.
 enum ContentTab: Hashable {
     case search
     case library
-    case reader
     case settings
 }
 
@@ -88,10 +104,14 @@ final class AppNavigationStore: ObservableObject {
     @Published var selectedTab = ContentTab.search
     @Published private(set) var readerRoute: ReaderRoute?
 
-    /// Opens the reader tab with the requested image page.
+    /// Opens a full-screen reader with the requested image page.
     func openReader(initialPageURL: URL, pageLinks: [EHGalleryPageLink] = [], totalPageCount: Int? = nil) {
         readerRoute = ReaderRoute(initialPageURL: initialPageURL, pageLinks: pageLinks, totalPageCount: totalPageCount)
-        selectedTab = .reader
+    }
+
+    /// Closes the active reader session and returns to the previous tab.
+    func closeReader() {
+        readerRoute = nil
     }
 }
 
