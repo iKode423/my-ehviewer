@@ -1,10 +1,12 @@
 import SwiftUI
+import UIKit
 
 /// Hosts the root tab navigation for search, library, and settings.
 struct ContentView: View {
     @StateObject private var libraryStore = LibraryStore()
     @StateObject private var appNavigationStore = AppNavigationStore()
     @AppStorage(AppThemeMode.storageKey) private var themeModeRaw = AppThemeMode.system.rawValue
+    @AppStorage(AppAccentColor.storageKey) private var accentColorHex = AppAccentColor.defaultHex
 
     var body: some View {
         TabView(selection: $appNavigationStore.selectedTab) {
@@ -31,7 +33,7 @@ struct ContentView: View {
         .environmentObject(libraryStore)
         .environmentObject(appNavigationStore)
         .preferredColorScheme(preferredColorScheme)
-        .tint(.appAccent)
+        .tint(accentColor)
         .fullScreenCover(isPresented: readerPresentationBinding) {
             readerPresentation
         }
@@ -47,6 +49,10 @@ struct ContentView: View {
         case .light: .light
         case .dark: .dark
         }
+    }
+
+    private var accentColor: Color {
+        AppAccentColor.color(from: accentColorHex)
     }
 
     /// Bridges the optional reader route into a dismissible full-screen cover.
@@ -78,7 +84,7 @@ struct ContentView: View {
             .environmentObject(libraryStore)
             .environmentObject(appNavigationStore)
             .preferredColorScheme(preferredColorScheme)
-            .tint(.appAccent)
+            .tint(accentColor)
         }
     }
 }
@@ -115,9 +121,50 @@ final class AppNavigationStore: ObservableObject {
     }
 }
 
-extension Color {
-    /// Returns the shared app accent color required by the light theme.
-    static let appAccent = Color(red: 0.0, green: 168.0 / 255.0, blue: 1.0)
+/// Stores and converts the user-selected app accent color.
+enum AppAccentColor {
+    static let storageKey = "App.accentColorHex"
+    static let defaultHex = "#00A8FF"
+
+    /// Converts a persisted hex string into a SwiftUI color.
+    static func color(from hex: String) -> Color {
+        guard let components = rgbComponents(from: hex) else {
+            return Color(red: 0.0, green: 168.0 / 255.0, blue: 1.0)
+        }
+        return Color(red: components.red, green: components.green, blue: components.blue)
+    }
+
+    /// Converts a SwiftUI color into a stable uppercase hex string.
+    static func hex(from color: Color) -> String {
+        let uiColor = UIColor(color)
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return defaultHex
+        }
+        return String(
+            format: "#%02X%02X%02X",
+            Int((red * 255).rounded()),
+            Int((green * 255).rounded()),
+            Int((blue * 255).rounded())
+        )
+    }
+
+    /// Parses a six-digit RGB hex string.
+    private static func rgbComponents(from hex: String) -> (red: Double, green: Double, blue: Double)? {
+        let trimmedHex = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedHex = trimmedHex.hasPrefix("#") ? String(trimmedHex.dropFirst()) : trimmedHex
+        guard normalizedHex.count == 6, let value = Int(normalizedHex, radix: 16) else {
+            return nil
+        }
+        return (
+            red: Double((value >> 16) & 0xFF) / 255.0,
+            green: Double((value >> 8) & 0xFF) / 255.0,
+            blue: Double(value & 0xFF) / 255.0
+        )
+    }
 }
 
 #Preview {

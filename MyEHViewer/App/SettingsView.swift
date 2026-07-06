@@ -6,6 +6,7 @@ struct SettingsView: View {
     @StateObject private var siteCookieStore = SiteCookieStore.shared
     @StateObject private var imageCacheStore = ImageCacheStore.shared
     @AppStorage(AppThemeMode.storageKey) private var themeModeRaw = AppThemeMode.system.rawValue
+    @AppStorage(AppAccentColor.storageKey) private var accentColorHex = AppAccentColor.defaultHex
     @AppStorage(ReaderFitMode.storageKey) private var fitModeRaw = ReaderFitMode.fitPage.rawValue
     @AppStorage(ReaderZoomLevel.storageKey) private var zoomLevelRaw = ReaderZoomLevel.x1.rawValue
     @AppStorage(ReaderBackgroundMode.storageKey) private var backgroundModeRaw = ReaderBackgroundMode.system.rawValue
@@ -20,9 +21,9 @@ struct SettingsView: View {
             List {
                 appearanceSection
                 readerPreferencesSection
+                cachePolicySection
                 localDataSection
                 imageCacheSection
-                cachePolicySection
                 siteAccessSection
             }
             .navigationTitle(AppCopy.settingsTitle)
@@ -84,6 +85,17 @@ struct SettingsView: View {
                     Text(mode.title).tag(mode.rawValue)
                 }
             }
+
+            ColorPicker(AppCopy.settingsAccentColor, selection: accentColorBinding, supportsOpacity: false)
+        }
+    }
+
+    /// Bridges the persisted hex value into SwiftUI's color picker binding.
+    private var accentColorBinding: Binding<Color> {
+        Binding {
+            AppAccentColor.color(from: accentColorHex)
+        } set: { color in
+            accentColorHex = AppAccentColor.hex(from: color)
         }
     }
 
@@ -182,7 +194,10 @@ struct SettingsView: View {
             Button(role: .destructive) {
                 showsNonGalleryImageCacheClearConfirmation = true
             } label: {
-                Label(AppCopy.settingsClearNonGalleryImageCache, systemImage: "photo.badge.minus")
+                HStack {
+                    Image(systemName: "photo.badge.minus")
+                    Text(AppCopy.settingsClearNonGalleryImageCache)
+                }
             }
             .disabled(!imageCacheStore.hasNonGalleryImageCache)
         }

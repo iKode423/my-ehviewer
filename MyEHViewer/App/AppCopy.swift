@@ -118,6 +118,7 @@ enum AppCopy {
     static let readerEmptyMessage = "从搜索结果或图库详情进入阅读器后，这里会显示图片页面。"
     static let settingsAppearanceTitle = "外观"
     static let settingsThemeMode = "主题模式"
+    static let settingsAccentColor = "主题颜色"
     static let settingsThemeSystem = "跟随系统"
     static let settingsThemeLight = "浅色"
     static let settingsThemeDark = "深色"

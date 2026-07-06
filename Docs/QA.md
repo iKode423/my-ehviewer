@@ -164,3 +164,12 @@ xcrun simctl io booted screenshot /tmp/my-ehviewer-library-cache-20260706-retry.
 ```
 
 结果：通过。应用成功安装并启动，启动 PID 为 `23416`；搜索首屏、筛选入口、底部 Tab 和深色模式下的强调色显示正常，未见明显遮挡或错位。
+
+### 主题色与设置顺序回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。覆盖默认主题色 `#00A8FF`、主题色十六进制存取、设置页新增“主题颜色”文案、非图库图片缓存清理按钮前置图标、缓存策略区域移动到本地数据上方、书架页恢复系统大标题，以及既有搜索、图库、阅读、缓存、Cookie、书架回归。

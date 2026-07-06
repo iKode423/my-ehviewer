@@ -1,4 +1,5 @@
 import ImageIO
+import SwiftUI
 import XCTest
 import UniformTypeIdentifiers
 import UIKit
@@ -51,7 +52,15 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.readerImageRetry, "重新加载图片")
         XCTAssertEqual(AppCopy.readerToggleOrientation, "切换横竖屏")
         XCTAssertEqual(AppCopy.settingsImageCacheTitle, "图片缓存")
+        XCTAssertEqual(AppCopy.settingsAccentColor, "主题颜色")
         XCTAssertEqual(AppCopy.settingsClearNonGalleryImageCache, "清空非图库图片缓存")
+    }
+
+    /// Confirms the app accent color keeps the required default and persists as hex.
+    func testAppAccentColorHexConversion() {
+        XCTAssertEqual(AppAccentColor.defaultHex, "#00A8FF")
+        XCTAssertEqual(AppAccentColor.hex(from: Color(red: 1.0, green: 0.0, blue: 0.0)), "#FF0000")
+        XCTAssertEqual(AppAccentColor.hex(from: AppAccentColor.color(from: "#00a8ff")), "#00A8FF")
     }
 
     /// Confirms image cache data is saved, counted, read, and cleared.

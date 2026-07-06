@@ -15,6 +15,7 @@ struct LibraryView: View {
     var body: some View {
         content
             .navigationTitle(AppCopy.libraryTitle)
+            .navigationBarTitleDisplayMode(.large)
             .safeAreaInset(edge: .top, spacing: 0) {
                 libraryPinnedControls
             }
