@@ -262,3 +262,19 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。搜索页分页按钮改为图标按钮，页码跳转改用站点 zero-based `jump` 参数，因此第 1 页会请求 `jump=0`；图库标签区域改为默认折叠；图库详情会在有 Cookie 时读取线上收藏 popup，已收藏时在标题区显示线上收藏状态和分类；阅读页长按当前图片会先确认，再使用 Photos add-only 写入权限保存到系统相册；新增跳页参数、线上收藏状态读取/提交后状态、相册保存文案回归测试，定向测试和完整回归测试通过。
+
+### 真机 Debug Dylib 启动回归
+
+```sh
+xcrun devicectl device info lockState --device iKode
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS,name=iKode' build
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS,name=iKode' -showBuildSettings | rg -n "ENABLE_DEBUG_DYLIB|MACH_O_TYPE|EXECUTABLE_NAME|LD_RUNPATH_SEARCH_PATHS"
+otool -l ~/Library/Developer/Xcode/DerivedData/MyEHViewer-asduoirgkvnkeocmxnxbvjnwfqad/Build/Products/Debug-iphoneos/MyEHViewer.app/MyEHViewer | rg -n "__debug_dylib|debug_entry|MyEHViewer.debug|LC_MAIN|entryoff|LC_LOAD_DYLIB|LC_RPATH|path" -A2 -B1
+xcrun devicectl device install app --device iKode ~/Library/Developer/Xcode/DerivedData/MyEHViewer-asduoirgkvnkeocmxnxbvjnwfqad/Build/Products/Debug-iphoneos/MyEHViewer.app
+xcrun devicectl device process launch --device iKode com.ikode.MyEHViewer
+xcrun devicectl device info processes --device iKode --filter "executablePath CONTAINS 'MyEHViewer'" --columns '*'
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。真机 Debug 构建显式关闭 `ENABLE_DEBUG_DYLIB`，避免 Xcode 使用 stub 可执行文件加载 `MyEHViewer.debug.dylib` 时在真机调试启动阶段停到 `0x00000000`；重新构建后包内不再包含 `MyEHViewer.debug.dylib` 或 `__preview.dylib`，Mach-O 不再包含 `__debug_dylib` 和 debug dylib 加载项。设备锁屏时 `devicectl` 会被 SpringBoard 拒绝启动，需要先解锁真机再运行；解锁后安装、启动成功，设备进程列表可见 `MyEHViewer.app/MyEHViewer`；完整模拟器回归测试通过。
