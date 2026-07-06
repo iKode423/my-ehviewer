@@ -173,3 +173,12 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。覆盖默认主题色 `#00A8FF`、主题色十六进制存取、设置页新增“主题颜色”文案、非图库图片缓存清理按钮前置图标、缓存策略区域移动到本地数据上方、书架页恢复系统大标题，以及既有搜索、图库、阅读、缓存、Cookie、书架回归。
+
+### 书架大标题遮挡回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。书架分段控件、线上收藏关键词搜索和翻页按钮改为滚动内容内的吸顶 header，不再通过顶层 `safeAreaInset` 覆盖系统大标题；既有搜索、图库、阅读、缓存、Cookie、书架回归测试通过。

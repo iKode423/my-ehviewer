@@ -16,9 +16,6 @@ struct LibraryView: View {
         content
             .navigationTitle(AppCopy.libraryTitle)
             .navigationBarTitleDisplayMode(.large)
-            .safeAreaInset(edge: .top, spacing: 0) {
-                libraryPinnedControls
-            }
     }
 
     /// Keeps library section and online favorite search controls available while content scrolls.
@@ -38,7 +35,9 @@ struct LibraryView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
         .background(.regularMaterial)
+        .zIndex(1)
     }
 
     /// Displays the selected local collection.
@@ -56,16 +55,16 @@ struct LibraryView: View {
     @ViewBuilder
     private var localRecordsContent: some View {
         let records = selection.records(from: libraryStore)
-        if records.isEmpty {
-            ContentUnavailableView(
-                selection.emptyTitle,
-                systemImage: selection.emptySystemImage,
-                description: Text(selection.emptyMessage)
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+        libraryScrollContent {
+            if records.isEmpty {
+                ContentUnavailableView(
+                    selection.emptyTitle,
+                    systemImage: selection.emptySystemImage,
+                    description: Text(selection.emptyMessage)
+                )
+                .frame(maxWidth: .infinity, minHeight: 320)
+            } else {
+                Group {
                     ForEach(records) { record in
                         LibraryRecordRow(record: record)
                             .padding(.horizontal)
@@ -74,8 +73,6 @@ struct LibraryView: View {
                             .padding(.leading, 100)
                     }
                 }
-                .padding(.top, 8)
-                .padding(.bottom, 96)
             }
         }
     }
@@ -86,12 +83,14 @@ struct LibraryView: View {
         if siteCookieStore.hasCookieHeader {
             siteFavoritesResultList
         } else {
-            ContentUnavailableView(
-                AppCopy.librarySiteFavoritesCookieTitle,
-                systemImage: "key",
-                description: Text(AppCopy.librarySiteFavoritesCookieMessage)
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            libraryScrollContent {
+                ContentUnavailableView(
+                    AppCopy.librarySiteFavoritesCookieTitle,
+                    systemImage: "key",
+                    description: Text(AppCopy.librarySiteFavoritesCookieMessage)
+                )
+                .frame(maxWidth: .infinity, minHeight: 320)
+            }
         }
     }
 
@@ -147,18 +146,29 @@ struct LibraryView: View {
 
     /// Displays online favorite loading, error, empty, and result states.
     private var siteFavoritesResultList: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                siteFavoritesResultsContent
-            }
-            .padding(.top, 8)
-            .padding(.bottom, 96)
+        libraryScrollContent {
+            siteFavoritesResultsContent
         }
         .refreshable {
             await siteFavoritesViewModel.refresh()
         }
         .task {
             await siteFavoritesViewModel.searchIfNeeded()
+        }
+    }
+
+    /// Builds the main library scroller with controls pinned below the navigation title.
+    private func libraryScrollContent<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                Section {
+                    content()
+                        .padding(.top, 8)
+                        .padding(.bottom, 96)
+                } header: {
+                    libraryPinnedControls
+                }
+            }
         }
     }
 
