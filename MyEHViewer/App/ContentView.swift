@@ -33,6 +33,7 @@ struct ContentView: View {
         .environmentObject(libraryStore)
         .environmentObject(appNavigationStore)
         .preferredColorScheme(preferredColorScheme)
+        .accentColor(accentColor)
         .tint(accentColor)
         .fullScreenCover(isPresented: readerPresentationBinding) {
             readerPresentation
@@ -84,6 +85,7 @@ struct ContentView: View {
             .environmentObject(libraryStore)
             .environmentObject(appNavigationStore)
             .preferredColorScheme(preferredColorScheme)
+            .accentColor(accentColor)
             .tint(accentColor)
         }
     }

@@ -182,3 +182,12 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。书架分段控件、线上收藏关键词搜索和翻页按钮改为滚动内容内的吸顶 header，不再通过顶层 `safeAreaInset` 覆盖系统大标题；既有搜索、图库、阅读、缓存、Cookie、书架回归测试通过。
+
+### 设置主题色、书架间距与阅读器工具栏回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。非图库图片缓存清理按钮恢复标准图标标签；设置页显式应用自定义主题色到 tint 和 accent 控件；书架列表内容先包进稳定容器再添加外边距，避免列表项被异常撑开；阅读器顶部工具栏移除外部链接菜单；既有搜索、图库、阅读、缓存、Cookie、书架回归测试通过。

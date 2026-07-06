@@ -27,6 +27,8 @@ struct SettingsView: View {
                 siteAccessSection
             }
             .navigationTitle(AppCopy.settingsTitle)
+            .accentColor(settingsAccentColor)
+            .tint(settingsAccentColor)
             .onAppear {
                 cookieInput = siteCookieStore.cookieHeader
                 imageCacheStore.refresh()
@@ -85,15 +87,24 @@ struct SettingsView: View {
                     Text(mode.title).tag(mode.rawValue)
                 }
             }
+            .accentColor(settingsAccentColor)
+            .tint(settingsAccentColor)
 
             ColorPicker(AppCopy.settingsAccentColor, selection: accentColorBinding, supportsOpacity: false)
+                .accentColor(settingsAccentColor)
+                .tint(settingsAccentColor)
         }
+    }
+
+    /// Resolves the current custom accent color for controls hosted by this settings stack.
+    private var settingsAccentColor: Color {
+        AppAccentColor.color(from: accentColorHex)
     }
 
     /// Bridges the persisted hex value into SwiftUI's color picker binding.
     private var accentColorBinding: Binding<Color> {
         Binding {
-            AppAccentColor.color(from: accentColorHex)
+            settingsAccentColor
         } set: { color in
             accentColorHex = AppAccentColor.hex(from: color)
         }
@@ -107,18 +118,24 @@ struct SettingsView: View {
                     Text(mode.title).tag(mode.rawValue)
                 }
             }
+            .accentColor(settingsAccentColor)
+            .tint(settingsAccentColor)
 
             Picker(AppCopy.readerZoomMode, selection: $zoomLevelRaw) {
                 ForEach(ReaderZoomLevel.allCases) { level in
                     Text(level.title).tag(level.rawValue)
                 }
             }
+            .accentColor(settingsAccentColor)
+            .tint(settingsAccentColor)
 
             Picker(AppCopy.readerBackgroundMode, selection: $backgroundModeRaw) {
                 ForEach(ReaderBackgroundMode.allCases) { mode in
                     Text(mode.title).tag(mode.rawValue)
                 }
             }
+            .accentColor(settingsAccentColor)
+            .tint(settingsAccentColor)
         }
     }
 
@@ -194,10 +211,7 @@ struct SettingsView: View {
             Button(role: .destructive) {
                 showsNonGalleryImageCacheClearConfirmation = true
             } label: {
-                HStack {
-                    Image(systemName: "photo.badge.minus")
-                    Text(AppCopy.settingsClearNonGalleryImageCache)
-                }
+                Label(AppCopy.settingsClearNonGalleryImageCache, systemImage: "photo.badge.minus")
             }
             .disabled(!imageCacheStore.hasNonGalleryImageCache)
         }

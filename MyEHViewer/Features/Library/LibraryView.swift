@@ -162,7 +162,10 @@ struct LibraryView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 Section {
-                    content()
+                    VStack(alignment: .leading, spacing: 0) {
+                        content()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 8)
                         .padding(.bottom, 96)
                 } header: {
