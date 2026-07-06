@@ -100,7 +100,7 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(recorder.requestedURLs.first?.absoluteString, "https://e-hentai.org/favorites.php?favcat=all")
     }
 
-    /// Confirms jump-to-page requests keep the active query and use the site's zero-based page parameter.
+    /// Confirms jump-to-page requests keep the active query and use the site's zero-based jump parameter.
     func testLoadPageNumberUsesCurrentSearchParameters() async {
         let recorder = SearchRequestRecorder()
         let viewModel = SearchViewModel(
@@ -117,7 +117,7 @@ final class SearchViewModelTests: XCTestCase {
         let queryByName = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
         XCTAssertEqual(queryByName["favcat"], "all")
         XCTAssertEqual(queryByName["f_search"], "sample")
-        XCTAssertEqual(queryByName["page"], "2")
+        XCTAssertEqual(queryByName["jump"], "2")
     }
 
     /// Confirms filter reset keeps the query and browse source unchanged.

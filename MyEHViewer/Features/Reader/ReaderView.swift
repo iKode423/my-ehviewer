@@ -1,4 +1,5 @@
 import ImageIO
+import Photos
 import SwiftUI
 import UIKit
 
@@ -15,6 +16,10 @@ struct ReaderView: View {
     @State private var showsReaderChrome: Bool
     @State private var pageJumpText = ""
     @State private var persistedPinchScale: CGFloat = 1.0
+    @State private var pendingImageSavePage: EHImagePage?
+    @State private var showsImageSaveConfirmation = false
+    @State private var imageSaveAlert: ReaderImageSaveAlert?
+    @State private var isSavingImage = false
     @GestureState private var transientPinchScale: CGFloat = 1.0
     private let onClose: (() -> Void)?
 
@@ -70,6 +75,23 @@ struct ReaderView: View {
         }
         .sheet(isPresented: $showsPageGridSheet) {
             pageGridSheet
+        }
+        .confirmationDialog(AppCopy.readerSaveImageTitle, isPresented: $showsImageSaveConfirmation, titleVisibility: .visible) {
+            Button(AppCopy.readerSaveImageConfirm) {
+                savePendingImageToPhotoLibrary()
+            }
+            .disabled(isSavingImage)
+
+            Button(AppCopy.readerSaveImageCancel, role: .cancel) {
+                pendingImageSavePage = nil
+            }
+        }
+        .alert(item: $imageSaveAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: alert.message.map(Text.init),
+                dismissButton: .default(Text(AppCopy.commonOK))
+            )
         }
     }
 
@@ -220,6 +242,7 @@ struct ReaderView: View {
                 }
                 .id(viewModel.imageReloadToken)
                 .frame(width: readerImageWidth(availableWidth: geometry.size.width))
+                .simultaneousGesture(readerImageSaveLongPress(for: imagePage))
                 .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: zoomLevelRaw)
                 .animation(reduceMotion ? nil : .snappy(duration: 0.12), value: activePinchScale)
 
@@ -390,6 +413,52 @@ struct ReaderView: View {
             .onEnded { value in
                 persistedPinchScale = min(max(persistedPinchScale * value, 1.0), 4.0)
             }
+    }
+
+    /// Creates the long-press gesture that asks before saving the current image.
+    private func readerImageSaveLongPress(for imagePage: EHImagePage) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.6)
+            .onEnded { _ in
+                guard !isSavingImage else { return }
+                pendingImageSavePage = imagePage
+                showsImageSaveConfirmation = true
+            }
+    }
+
+    /// Saves the confirmed reader image to the user's photo library.
+    private func savePendingImageToPhotoLibrary() {
+        guard let imagePage = pendingImageSavePage else { return }
+        pendingImageSavePage = nil
+        Task {
+            await saveImageToPhotoLibrary(imagePage)
+        }
+    }
+
+    /// Loads cached image bytes when possible and writes them to Photos.
+    private func saveImageToPhotoLibrary(_ imagePage: EHImagePage) async {
+        isSavingImage = true
+        defer { isSavingImage = false }
+
+        do {
+            let data = try await imageDataForSaving(imagePage)
+            try await PhotoLibraryImageSaver.save(data)
+            imageSaveAlert = ReaderImageSaveAlert(title: AppCopy.readerSaveImageSuccess)
+        } catch {
+            imageSaveAlert = ReaderImageSaveAlert(
+                title: String(format: AppCopy.readerSaveImageFailed, error.localizedDescription)
+            )
+        }
+    }
+
+    /// Returns current image data from cache first, then falls back to one network fetch.
+    private func imageDataForSaving(_ imagePage: EHImagePage) async throws -> Data {
+        if let cachedData = ImageCacheStore.shared.data(for: imagePage.imageURL) {
+            return cachedData
+        }
+
+        let response = try await URLSessionEHHTTPClient().data(imagePage.imageURL)
+        ImageCacheStore.shared.save(response.data, for: imagePage.imageURL, responseURL: response.url, context: imageCacheContext(for: imagePage))
+        return response.data
     }
 
     /// Provides previous and next page actions.
@@ -586,6 +655,74 @@ struct ReaderView: View {
         }
     }
 
+}
+
+/// Carries one reader image save result alert.
+private struct ReaderImageSaveAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String?
+
+    /// Creates an alert with an optional explanatory message.
+    init(title: String, message: String? = nil) {
+        self.title = title
+        self.message = message
+    }
+}
+
+/// Saves reader image data to the user's photo library.
+enum PhotoLibraryImageSaver {
+    /// Requests add-only Photos access and creates a photo asset from the original bytes.
+    static func save(_ data: Data) async throws {
+        let status = await authorizedAddOnlyStatus()
+        guard status == .authorized || status == .limited else {
+            throw PhotoLibraryImageSaveError.denied
+        }
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            PHPhotoLibrary.shared().performChanges {
+                let request = PHAssetCreationRequest.forAsset()
+                request.addResource(with: .photo, data: data, options: nil)
+            } completionHandler: { success, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if success {
+                    continuation.resume()
+                } else {
+                    continuation.resume(throwing: PhotoLibraryImageSaveError.failed)
+                }
+            }
+        }
+    }
+
+    /// Returns an add-only Photos authorization status, prompting the user when needed.
+    private static func authorizedAddOnlyStatus() async -> PHAuthorizationStatus {
+        let currentStatus = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        guard currentStatus == .notDetermined else {
+            return currentStatus
+        }
+
+        return await withCheckedContinuation { continuation in
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+                continuation.resume(returning: status)
+            }
+        }
+    }
+}
+
+/// Describes reader image save failures that need localized messages.
+enum PhotoLibraryImageSaveError: LocalizedError {
+    case denied
+    case failed
+
+    var errorDescription: String? {
+        switch self {
+        case .denied:
+            AppCopy.readerSaveImageDenied
+        case .failed:
+            "相册没有返回保存结果。"
+        }
+    }
 }
 
 /// Requests manual portrait or landscape orientation changes for the reader.

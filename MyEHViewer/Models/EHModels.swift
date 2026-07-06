@@ -335,7 +335,7 @@ struct EHSearchRequest: Hashable, Codable {
         }
 
         if let pageIndex {
-            items.append(URLQueryItem(name: "page", value: String(max(0, pageIndex))))
+            items.append(URLQueryItem(name: "jump", value: String(max(0, pageIndex))))
         }
 
         if let cursor {

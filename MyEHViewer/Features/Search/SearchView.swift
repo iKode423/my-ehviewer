@@ -309,13 +309,16 @@ struct SearchView: View {
 
     /// Shows previous and next page actions when available.
     private var paginationControls: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Button {
                 Task { await viewModel.loadPreviousPage() }
             } label: {
                 Label(AppCopy.searchPreviousPage, systemImage: "chevron.left")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 44, height: 44)
             }
             .disabled(viewModel.previousPageURL == nil || viewModel.isLoading)
+            .accessibilityLabel(AppCopy.searchPreviousPage)
 
             Spacer()
 
@@ -333,8 +336,11 @@ struct SearchView: View {
                 Task { await viewModel.loadNextPage() }
             } label: {
                 Label(AppCopy.searchNextPage, systemImage: "chevron.right")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 44, height: 44)
             }
             .disabled(viewModel.nextPageURL == nil || viewModel.isLoading)
+            .accessibilityLabel(AppCopy.searchNextPage)
         }
         .buttonStyle(.bordered)
         .padding(.vertical, 8)
@@ -357,6 +363,7 @@ struct SearchView: View {
             } label: {
                 Label(AppCopy.searchJumpPage, systemImage: "arrow.right.to.line")
                     .labelStyle(.iconOnly)
+                    .frame(width: 44, height: 44)
             }
             .disabled(jumpPageNumber == nil || viewModel.isLoading)
             .accessibilityLabel(AppCopy.searchJumpPage)

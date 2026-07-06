@@ -10,6 +10,7 @@ struct GalleryDetailView: View {
     @StateObject private var downloadManager = GalleryDownloadManager.shared
     @StateObject private var viewModel: GalleryDetailViewModel
     @State private var showsMetadata = false
+    @State private var showsTags = false
 
     /// Creates a detail view that loads the result's gallery URL.
     init(result: EHSearchResult) {
@@ -59,10 +60,12 @@ struct GalleryDetailView: View {
         .task {
             await viewModel.loadIfNeeded()
             recordLoadedDetail()
+            await refreshSiteFavoriteStatusIfNeeded()
         }
         .refreshable {
             await viewModel.reload()
             recordLoadedDetail()
+            await refreshSiteFavoriteStatusIfNeeded()
         }
     }
 
@@ -93,6 +96,8 @@ struct GalleryDetailView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
 
+                siteFavoriteBadge
+
                 if let uploader = detail.uploader {
                     Label(uploader, systemImage: "person")
                         .font(.subheadline)
@@ -106,6 +111,12 @@ struct GalleryDetailView: View {
                 }
             }
         }
+    }
+
+    /// Refreshes online favorite state only when the user has configured site cookies.
+    private func refreshSiteFavoriteStatusIfNeeded() async {
+        guard siteCookieStore.hasCookieHeader else { return }
+        await viewModel.refreshSiteFavoriteStatus()
     }
 
     /// Shows a stable cover image frame.
@@ -144,10 +155,7 @@ struct GalleryDetailView: View {
 
     /// Shows a wrapping list of parsed gallery tags.
     private func tagsSection(for detail: EHGalleryDetail) -> some View {
-        return VStack(alignment: .leading, spacing: 10) {
-            Text(AppCopy.galleryTagsTitle)
-                .font(.headline)
-
+        DisclosureGroup(AppCopy.galleryTagsTitle, isExpanded: $showsTags) {
             FlowLayout(spacing: 8) {
                 ForEach(detail.tags) { tag in
                     NavigationLink {
@@ -175,7 +183,9 @@ struct GalleryDetailView: View {
                     .buttonStyle(.plain)
                 }
             }
+            .padding(.top, 8)
         }
+        .font(.headline)
     }
 
     /// Shows reader page links parsed from the thumbnail grid.
@@ -356,6 +366,25 @@ struct GalleryDetailView: View {
                 .font(.footnote)
                 .foregroundStyle(viewModel.siteFavoriteSucceeded ? .green : .red)
         }
+    }
+
+    /// Shows the online favorite badge near the gallery title when known.
+    @ViewBuilder
+    private var siteFavoriteBadge: some View {
+        if viewModel.isSiteFavorited == true {
+            Label(siteFavoriteBadgeText, systemImage: "star.circle.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .accessibilityLabel(siteFavoriteBadgeText)
+        }
+    }
+
+    /// Builds the online favorite badge text with the selected site category when available.
+    private var siteFavoriteBadgeText: String {
+        if let title = viewModel.siteFavoriteCategoryTitle, !title.isEmpty {
+            return String(format: AppCopy.gallerySiteFavoriteCategoryFormat, title)
+        }
+        return AppCopy.gallerySiteFavoriteBadge
     }
 
     /// Starts a background cache download after loading all page links.

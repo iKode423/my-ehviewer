@@ -251,4 +251,14 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
-结果：通过。搜索结果分页区在上一页和下一页之间新增页码跳转，并按站点 zero-based `page` 参数发起请求；图库详情初始加载提示加入尊重减少动态效果的轻量旋转动画；缓存管理页有任务进行时将“继续未完成下载”切换为“暂停所有下载”，可取消运行任务并清空排队任务；书架页顶部控件不再固定，线上收藏翻页按钮移动到底部；新增搜索跳页 URL、下载暂停和文案回归测试，定向测试和完整回归测试通过。
+结果：通过。搜索结果分页区在上一页和下一页之间新增页码跳转；图库详情初始加载提示加入尊重减少动态效果的轻量旋转动画；缓存管理页有任务进行时将“继续未完成下载”切换为“暂停所有下载”，可取消运行任务并清空排队任务；书架页顶部控件不再固定，线上收藏翻页按钮移动到底部；新增搜索跳页 URL、下载暂停和文案回归测试，定向测试和完整回归测试通过。
+
+### 搜索跳页参数、图库收藏状态与阅读保存回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:MyEHViewerTests/SearchViewModelTests -only-testing:MyEHViewerTests/GalleryDetailViewModelTests -only-testing:MyEHViewerTests/EHParsingTests -only-testing:MyEHViewerTests/MyEHViewerTests test
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。搜索页分页按钮改为图标按钮，页码跳转改用站点 zero-based `jump` 参数，因此第 1 页会请求 `jump=0`；图库标签区域改为默认折叠；图库详情会在有 Cookie 时读取线上收藏 popup，已收藏时在标题区显示线上收藏状态和分类；阅读页长按当前图片会先确认，再使用 Photos add-only 写入权限保存到系统相册；新增跳页参数、线上收藏状态读取/提交后状态、相册保存文案回归测试，定向测试和完整回归测试通过。

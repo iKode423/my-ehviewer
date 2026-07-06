@@ -78,6 +78,8 @@ final class GalleryDetailViewModelTests: XCTestCase {
 
         XCTAssertFalse(viewModel.isUpdatingSiteFavorite)
         XCTAssertTrue(viewModel.siteFavoriteSucceeded)
+        XCTAssertEqual(viewModel.isSiteFavorited, true)
+        XCTAssertEqual(viewModel.siteFavoriteCategoryTitle, "测试")
         XCTAssertEqual(viewModel.siteFavoriteMessage, AppCopy.gallerySiteFavoriteSaved)
         XCTAssertEqual(formClient.postedURL?.absoluteString, "https://e-hentai.org/gallerypopups.php?gid=100&t=abcdef1234&act=addfav")
         XCTAssertEqual(formClient.postedFields["gid"], "100")
@@ -105,9 +107,51 @@ final class GalleryDetailViewModelTests: XCTestCase {
 
         XCTAssertFalse(viewModel.isUpdatingSiteFavorite)
         XCTAssertTrue(viewModel.siteFavoriteSucceeded)
+        XCTAssertEqual(viewModel.isSiteFavorited, false)
+        XCTAssertNil(viewModel.siteFavoriteCategoryTitle)
         XCTAssertEqual(viewModel.siteFavoriteMessage, AppCopy.gallerySiteFavoriteRemoved)
         XCTAssertEqual(formClient.postedFields["favcat"], "-1")
         XCTAssertEqual(formClient.postedFields["favnote"], "")
+    }
+
+    /// Confirms online favorite status can be read without submitting the form.
+    func testRefreshSiteFavoriteStatusReadsSelectedCategory() async {
+        let galleryURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
+        let popupURL = EHGalleryIdentifier(gid: 100, token: "abcdef1234").favoritePopupURL()
+        let viewModel = GalleryDetailViewModel(
+            pageURL: galleryURL,
+            client: GalleryMockHTTPClient(responses: [
+                galleryURL: Self.detailHTML,
+                popupURL: Self.favoritePopupHTML
+            ])
+        )
+
+        await viewModel.reload()
+        await viewModel.refreshSiteFavoriteStatus()
+
+        XCTAssertFalse(viewModel.isLoadingSiteFavoriteStatus)
+        XCTAssertEqual(viewModel.isSiteFavorited, true)
+        XCTAssertEqual(viewModel.siteFavoriteCategoryTitle, "测试")
+    }
+
+    /// Confirms a successful add marks the gallery favorited even when the popup has no selected category.
+    func testAddSiteFavoriteMarksFavoriteAfterUnselectedPopupSubmission() async {
+        let galleryURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
+        let popupURL = EHGalleryIdentifier(gid: 100, token: "abcdef1234").favoritePopupURL()
+        let viewModel = GalleryDetailViewModel(
+            pageURL: galleryURL,
+            client: GalleryMockHTTPClient(responses: [
+                galleryURL: Self.detailHTML,
+                popupURL: Self.unselectedFavoritePopupHTML
+            ]),
+            formClient: GalleryFormRecorder()
+        )
+
+        await viewModel.reload()
+        await viewModel.addSiteFavorite()
+
+        XCTAssertEqual(viewModel.isSiteFavorited, true)
+        XCTAssertEqual(viewModel.siteFavoriteCategoryTitle, "默认")
     }
 
     /// Confirms loading errors are exposed as user-facing messages.
@@ -193,6 +237,16 @@ final class GalleryDetailViewModelTests: XCTestCase {
       <label><input type="radio" name="favcat" value="0">默认</label><br>
       <label><input type="radio" name="favcat" value="2" checked="checked">测试</label><br>
       <textarea name="favnote">old note</textarea>
+      <input type="submit" name="apply" value="Apply">
+    </form>
+    """
+
+    private static let unselectedFavoritePopupHTML = """
+    <form action="/gallerypopups.php?gid=100&amp;t=abcdef1234&amp;act=addfav" method="post">
+      <input type="hidden" name="gid" value="100">
+      <label><input type="radio" name="favcat" value="0">默认</label><br>
+      <label><input type="radio" name="favcat" value="2">测试</label><br>
+      <textarea name="favnote"></textarea>
       <input type="submit" name="apply" value="Apply">
     </form>
     """
