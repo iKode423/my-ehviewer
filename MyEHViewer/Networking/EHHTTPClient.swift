@@ -624,27 +624,79 @@ struct GalleryDownloadProgress: Equatable {
     }
 }
 
+/// Summarizes currently active and queued gallery downloads.
+struct GalleryDownloadAggregateProgress: Equatable {
+    let activeDownloadCount: Int
+    let queuedDownloadCount: Int
+    let downloadedPageCount: Int
+    let totalPageCount: Int
+    let bytesPerSecond: Int64
+
+    var progressFraction: Double {
+        guard totalPageCount > 0 else { return 0 }
+        return min(1, Double(downloadedPageCount) / Double(totalPageCount))
+    }
+
+    var progressText: String {
+        String(
+            format: AppCopy.cacheManagementProgressFormat,
+            String(downloadedPageCount),
+            String(totalPageCount)
+        )
+    }
+
+    var speedText: String {
+        let speed = ByteCountFormatter.string(fromByteCount: bytesPerSecond, countStyle: .file)
+        return String(format: AppCopy.cacheManagementSpeedFormat, speed)
+    }
+
+    var activeDownloadText: String {
+        String(format: AppCopy.cacheManagementActiveDownloadsFormat, String(activeDownloadCount))
+    }
+
+    var queuedDownloadText: String {
+        String(format: AppCopy.cacheManagementQueuedDownloadsFormat, String(queuedDownloadCount))
+    }
+}
+
 /// Downloads every reader image for a gallery into the shared cache.
 @MainActor
 final class GalleryDownloadManager: ObservableObject {
     static let shared = GalleryDownloadManager()
 
     @Published private(set) var progressByGalleryID: [String: GalleryDownloadProgress] = [:]
+    @Published private(set) var aggregateProgress: GalleryDownloadAggregateProgress?
 
     private let client: any EHDataHTTPClient
+    private let galleryParser: EHGalleryPageParser
     private let parser: EHImagePageParser
     private let cacheStore: ImageCacheStore
-    private var tasks: [String: Task<Void, Never>] = [:]
+    private let maxConcurrentDownloads: Int
+    private let maxPageDownloadRetryCount: Int
+    private let retryDelayRange: ClosedRange<Double>
+    private var runningTasks: [String: Task<Void, Never>] = [:]
+    private var queuedJobs: [String: GalleryDownloadJob] = [:]
+    private var queuedJobIDs: [String] = []
+    private var activeRunStartedAt: Date?
+    private var activeRunDownloadedByteCount: Int64 = 0
 
     /// Creates a download manager with injectable dependencies.
     init(
         client: any EHDataHTTPClient = URLSessionEHHTTPClient(),
+        galleryParser: EHGalleryPageParser = EHGalleryPageParser(),
         parser: EHImagePageParser = EHImagePageParser(),
-        cacheStore: ImageCacheStore = .shared
+        cacheStore: ImageCacheStore = .shared,
+        maxConcurrentDownloads: Int = 5,
+        maxPageDownloadRetryCount: Int = 2,
+        retryDelayRange: ClosedRange<Double> = 0.35...1.25
     ) {
         self.client = client
+        self.galleryParser = galleryParser
         self.parser = parser
         self.cacheStore = cacheStore
+        self.maxConcurrentDownloads = max(1, maxConcurrentDownloads)
+        self.maxPageDownloadRetryCount = max(0, maxPageDownloadRetryCount)
+        self.retryDelayRange = retryDelayRange
     }
 
     /// Returns the latest progress for one gallery.
@@ -668,7 +720,7 @@ final class GalleryDownloadManager: ObservableObject {
 
     /// Starts a non-blocking download for all currently known gallery page links.
     func startDownload(detail: EHGalleryDetail, fallback: EHSearchResult? = nil) {
-        guard tasks[detail.identifier.id] == nil else { return }
+        guard !hasPendingOrRunningJob(for: detail.identifier) else { return }
         cacheStore.saveGalleryMetadata(detail: detail, fallback: fallback)
         let totalPageCount = detail.pageCount ?? detail.pageLinks.count
         progressByGalleryID[detail.identifier.id] = GalleryDownloadProgress(
@@ -680,8 +732,42 @@ final class GalleryDownloadManager: ObservableObject {
             errorMessage: nil
         )
 
-        tasks[detail.identifier.id] = Task { [weak self] in
-            await self?.download(detail: detail, fallback: fallback)
+        enqueue(
+            GalleryDownloadJob(
+                identifier: detail.identifier,
+                title: detail.title,
+                totalPageCount: totalPageCount,
+                source: .detail(detail, fallback)
+            )
+        )
+    }
+
+    /// Starts queued downloads for every cached gallery whose cache is incomplete.
+    func startUnfinishedDownloads(from summaries: [CachedGallerySummary]) {
+        let unfinishedSummaries = summaries.filter { summary in
+            guard let totalPageCount = summary.totalPageCount else { return false }
+            return summary.cachedPageCount < totalPageCount
+        }
+
+        for summary in unfinishedSummaries where !hasPendingOrRunningJob(for: summary.galleryIdentifier) {
+            let totalPageCount = summary.totalPageCount ?? summary.cachedPageCount
+            progressByGalleryID[summary.galleryIdentifier.id] = GalleryDownloadProgress(
+                galleryID: summary.galleryIdentifier.id,
+                title: summary.title,
+                downloadedPageCount: summary.cachedPageCount,
+                totalPageCount: totalPageCount,
+                isRunning: true,
+                errorMessage: nil
+            )
+
+            enqueue(
+                GalleryDownloadJob(
+                    identifier: summary.galleryIdentifier,
+                    title: summary.title,
+                    totalPageCount: totalPageCount,
+                    source: .cachedSummary(summary)
+                )
+            )
         }
     }
 
@@ -701,18 +787,8 @@ final class GalleryDownloadManager: ObservableObject {
             }
 
             do {
-                let pageResponse = try await client.get(pageLink.pageURL)
-                let imagePage = try parser.parse(pageResponse.body, sourceURL: pageResponse.url)
-                let dataResponse = try await client.data(imagePage.imageURL)
-                let context = ImageCacheContext(
-                    galleryIdentifier: detail.identifier,
-                    galleryTitle: detail.title,
-                    pageNumber: imagePage.pageNumber,
-                    pageURL: imagePage.pageURL,
-                    totalPageCount: totalPageCount,
-                    thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL
-                )
-                cacheStore.save(dataResponse.data, for: imagePage.imageURL, responseURL: dataResponse.url, context: context)
+                let byteCount = try await downloadPage(pageLink, detail: detail, fallback: fallback, totalPageCount: totalPageCount)
+                recordDownloadedBytes(byteCount)
                 downloadedPageCount = cachedPageCount(for: detail.identifier)
                 updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
             } catch {
@@ -723,7 +799,6 @@ final class GalleryDownloadManager: ObservableObject {
         }
 
         updateProgress(detail: detail, downloadedPageCount: cachedPageCount(for: detail.identifier), totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
-        tasks[detail.identifier.id] = nil
     }
 
     /// Updates observable progress for a gallery.
@@ -736,6 +811,7 @@ final class GalleryDownloadManager: ObservableObject {
             isRunning: isRunning,
             errorMessage: errorMessage
         )
+        updateAggregateProgress()
     }
 
     /// Builds progress from cache when no download is running.
@@ -755,6 +831,211 @@ final class GalleryDownloadManager: ObservableObject {
     private func cachedPageCount(for identifier: EHGalleryIdentifier) -> Int {
         cacheStore.gallerySummaries.first(where: { $0.galleryIdentifier == identifier })?.cachedPageCount ?? 0
     }
+
+    /// Returns true when a gallery is already queued or actively downloading.
+    private func hasPendingOrRunningJob(for identifier: EHGalleryIdentifier) -> Bool {
+        runningTasks[identifier.id] != nil || queuedJobs[identifier.id] != nil
+    }
+
+    /// Adds one gallery job to the queue and starts work when capacity is available.
+    private func enqueue(_ job: GalleryDownloadJob) {
+        guard queuedJobs[job.identifier.id] == nil, runningTasks[job.identifier.id] == nil else { return }
+        queuedJobs[job.identifier.id] = job
+        queuedJobIDs.append(job.identifier.id)
+        scheduleDownloads()
+    }
+
+    /// Starts queued gallery jobs up to the configured concurrency limit.
+    private func scheduleDownloads() {
+        while runningTasks.count < maxConcurrentDownloads, let nextID = queuedJobIDs.first {
+            queuedJobIDs.removeFirst()
+            guard let job = queuedJobs.removeValue(forKey: nextID) else { continue }
+            runningTasks[nextID] = Task { [weak self] in
+                await self?.run(job)
+            }
+        }
+        updateAggregateProgress()
+    }
+
+    /// Runs one queued job and schedules the next job after it finishes.
+    private func run(_ job: GalleryDownloadJob) async {
+        defer {
+            runningTasks[job.identifier.id] = nil
+            scheduleDownloads()
+        }
+
+        do {
+            let (detail, fallback) = try await resolvedDetailAndFallback(for: job)
+            cacheStore.saveGalleryMetadata(detail: detail, fallback: fallback)
+            await download(detail: detail, fallback: fallback)
+        } catch {
+            let downloadedPageCount = cachedPageCount(for: job.identifier)
+            progressByGalleryID[job.identifier.id] = GalleryDownloadProgress(
+                galleryID: job.identifier.id,
+                title: job.title,
+                downloadedPageCount: downloadedPageCount,
+                totalPageCount: job.totalPageCount,
+                isRunning: false,
+                errorMessage: error.localizedDescription
+            )
+            updateAggregateProgress()
+        }
+    }
+
+    /// Resolves full gallery page links for a queued job.
+    private func resolvedDetailAndFallback(for job: GalleryDownloadJob) async throws -> (EHGalleryDetail, EHSearchResult?) {
+        switch job.source {
+        case .detail(let detail, let fallback):
+            return (detail, fallback)
+        case .cachedSummary(let summary):
+            let detail = try await loadCompleteDetail(for: summary)
+            return (detail, summary.searchResult)
+        }
+    }
+
+    /// Loads the gallery detail page and every known thumbnail page for a cached summary.
+    private func loadCompleteDetail(for summary: CachedGallerySummary) async throws -> EHGalleryDetail {
+        let response = try await client.get(summary.galleryIdentifier.url())
+        var detail = try galleryParser.parse(response.body, sourceURL: response.url)
+        var loadedThumbnailPageURLStrings: Set<String> = [response.url.absoluteString]
+
+        while let nextURL = detail.thumbnailPageURLs.first(where: { !loadedThumbnailPageURLStrings.contains($0.absoluteString) }) {
+            let pageResponse = try await client.get(nextURL)
+            let incomingDetail = try galleryParser.parse(pageResponse.body, sourceURL: pageResponse.url)
+            loadedThumbnailPageURLStrings.insert(pageResponse.url.absoluteString)
+            detail = mergedDetail(detail, with: incomingDetail)
+        }
+
+        return detail
+    }
+
+    /// Combines thumbnail page links while keeping the first page's gallery metadata.
+    private func mergedDetail(_ current: EHGalleryDetail, with incoming: EHGalleryDetail) -> EHGalleryDetail {
+        let pageLinks = Dictionary(grouping: current.pageLinks + incoming.pageLinks, by: \.pageNumber)
+            .compactMap { $0.value.first }
+            .sorted { $0.pageNumber < $1.pageNumber }
+        let thumbnailPageURLs = Array(Set(current.thumbnailPageURLs + incoming.thumbnailPageURLs))
+            .sorted { $0.absoluteString < $1.absoluteString }
+
+        return EHGalleryDetail(
+            identifier: current.identifier,
+            title: current.title,
+            japaneseTitle: current.japaneseTitle,
+            category: current.category,
+            coverURL: current.coverURL,
+            uploader: current.uploader,
+            metadata: current.metadata,
+            ratingLabel: current.ratingLabel,
+            ratingCount: current.ratingCount,
+            tags: current.tags,
+            pageLinks: pageLinks,
+            thumbnailPageURLs: thumbnailPageURLs,
+            pageCount: current.pageCount ?? incoming.pageCount
+        )
+    }
+
+    /// Downloads one reader page and its image, retrying transient failures with a short delay.
+    private func downloadPage(
+        _ pageLink: EHGalleryPageLink,
+        detail: EHGalleryDetail,
+        fallback: EHSearchResult?,
+        totalPageCount: Int
+    ) async throws -> Int64 {
+        var lastError: Error?
+        for attempt in 0...maxPageDownloadRetryCount {
+            do {
+                return try await downloadPageOnce(pageLink, detail: detail, fallback: fallback, totalPageCount: totalPageCount)
+            } catch {
+                lastError = error
+                guard attempt < maxPageDownloadRetryCount else { break }
+                await waitBeforeRetry()
+            }
+        }
+        throw lastError ?? EHNetworkError.invalidResponse
+    }
+
+    /// Performs a single reader page and image download attempt.
+    private func downloadPageOnce(
+        _ pageLink: EHGalleryPageLink,
+        detail: EHGalleryDetail,
+        fallback: EHSearchResult?,
+        totalPageCount: Int
+    ) async throws -> Int64 {
+        let pageResponse = try await client.get(pageLink.pageURL)
+        let imagePage = try parser.parse(pageResponse.body, sourceURL: pageResponse.url)
+        let dataResponse = try await client.data(imagePage.imageURL)
+        let context = ImageCacheContext(
+            galleryIdentifier: detail.identifier,
+            galleryTitle: detail.title,
+            pageNumber: imagePage.pageNumber,
+            pageURL: imagePage.pageURL,
+            totalPageCount: totalPageCount,
+            thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL
+        )
+        cacheStore.save(dataResponse.data, for: imagePage.imageURL, responseURL: dataResponse.url, context: context)
+        return Int64(dataResponse.data.count)
+    }
+
+    /// Waits for a short randomized retry delay to avoid hammering the image host.
+    private func waitBeforeRetry() async {
+        let delay = Double.random(in: retryDelayRange)
+        let nanoseconds = UInt64(max(0, delay) * 1_000_000_000)
+        guard nanoseconds > 0 else { return }
+        try? await Task.sleep(nanoseconds: nanoseconds)
+    }
+
+    /// Records bytes downloaded during the current active run.
+    private func recordDownloadedBytes(_ byteCount: Int64) {
+        if activeRunStartedAt == nil {
+            activeRunStartedAt = Date()
+        }
+        activeRunDownloadedByteCount += byteCount
+        updateAggregateProgress()
+    }
+
+    /// Publishes aggregate progress while at least one gallery download is active.
+    private func updateAggregateProgress() {
+        let activeDownloadCount = runningTasks.count
+        guard activeDownloadCount > 0 else {
+            aggregateProgress = nil
+            activeRunStartedAt = nil
+            activeRunDownloadedByteCount = 0
+            return
+        }
+
+        if activeRunStartedAt == nil {
+            activeRunStartedAt = Date()
+            activeRunDownloadedByteCount = 0
+        }
+
+        let runningProgresses = progressByGalleryID.values.filter(\.isRunning)
+        let downloadedPageCount = runningProgresses.reduce(0) { $0 + $1.downloadedPageCount }
+        let totalPageCount = runningProgresses.reduce(0) { $0 + $1.totalPageCount }
+        let elapsed = max(Date().timeIntervalSince(activeRunStartedAt ?? Date()), 0.1)
+        let bytesPerSecond = Int64(Double(activeRunDownloadedByteCount) / elapsed)
+
+        aggregateProgress = GalleryDownloadAggregateProgress(
+            activeDownloadCount: activeDownloadCount,
+            queuedDownloadCount: queuedJobs.count,
+            downloadedPageCount: downloadedPageCount,
+            totalPageCount: totalPageCount,
+            bytesPerSecond: bytesPerSecond
+        )
+    }
+}
+
+/// Stores a queued gallery download request.
+private struct GalleryDownloadJob {
+    let identifier: EHGalleryIdentifier
+    let title: String
+    let totalPageCount: Int
+    let source: GalleryDownloadJobSource
+}
+
+/// Describes how a queued download should resolve its page links.
+private enum GalleryDownloadJobSource {
+    case detail(EHGalleryDetail, EHSearchResult?)
+    case cachedSummary(CachedGallerySummary)
 }
 
 /// Stores cache aliases and reader page mappings.

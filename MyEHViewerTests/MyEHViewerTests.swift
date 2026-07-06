@@ -27,6 +27,8 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.gallerySiteUnfavorite, "取消线上收藏")
         XCTAssertEqual(AppCopy.galleryDownloadPageFailedFormat, "第 %@ 页下载失败：%@")
         XCTAssertEqual(AppCopy.cacheManagementDeleteGallery, "删除缓存")
+        XCTAssertEqual(AppCopy.cacheManagementStartUnfinished, "继续未完成下载")
+        XCTAssertEqual(AppCopy.cacheManagementProgressTitle, "下载进度")
     }
 
     /// Confirms reader preference labels stay localized for settings and toolbar menus.
@@ -284,7 +286,7 @@ final class GalleryDownloadManagerTests: XCTestCase {
                 thirdImageURL: .success(Data([0x03]))
             ]
         )
-        let manager = GalleryDownloadManager(client: client, cacheStore: cacheStore)
+        let manager = GalleryDownloadManager(client: client, cacheStore: cacheStore, retryDelayRange: 0...0)
         let detail = EHGalleryDetail(
             identifier: identifier,
             title: "Sample Gallery",
@@ -324,6 +326,83 @@ final class GalleryDownloadManagerTests: XCTestCase {
         XCTAssertEqual(clearedProgress.totalPageCount, 3)
     }
 
+    /// Confirms a transient image failure is retried before the page is skipped.
+    func testDownloadRetriesFailedImageBeforeSkipping() async throws {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let identifier = EHGalleryIdentifier(gid: 101, token: "abcdef1234")
+        let firstPageURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/101-1")!
+        let firstImageURL = URL(string: "https://example.test/retry.webp")!
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: [
+                firstPageURL: Self.imagePageHTML(pageNumber: 1, imageURL: firstImageURL)
+            ],
+            dataResponseSequences: [
+                firstImageURL: [
+                    .failure(EHNetworkError.unacceptableStatusCode(503)),
+                    .success(Data([0x0A, 0x0B]))
+                ]
+            ]
+        )
+        let manager = GalleryDownloadManager(client: client, cacheStore: cacheStore, retryDelayRange: 0...0)
+        let detail = EHGalleryDetail(
+            identifier: identifier,
+            title: "Retry Gallery",
+            japaneseTitle: nil,
+            category: "Manga",
+            coverURL: nil,
+            uploader: nil,
+            metadata: [],
+            ratingLabel: nil,
+            ratingCount: nil,
+            tags: [],
+            pageLinks: [
+                EHGalleryPageLink(pageNumber: 1, pageURL: firstPageURL)
+            ],
+            thumbnailPageURLs: [],
+            pageCount: 1
+        )
+
+        manager.startDownload(detail: detail)
+        await waitForFinishedDownload(manager: manager, identifier: identifier)
+
+        let progress = try XCTUnwrap(manager.progress(for: identifier))
+        XCTAssertFalse(progress.isRunning)
+        XCTAssertEqual(progress.downloadedPageCount, 1)
+        XCTAssertNil(progress.errorMessage)
+        XCTAssertEqual(cacheStore.data(for: firstImageURL), Data([0x0A, 0x0B]))
+        XCTAssertEqual(client.dataRequestCount(for: firstImageURL), 2)
+    }
+
+    /// Confirms bulk cache downloads only run up to five gallery tasks at once.
+    func testStartUnfinishedDownloadsLimitsConcurrentTasksToFive() {
+        let cacheStore = ImageCacheStore(directoryURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory))
+        let manager = GalleryDownloadManager(
+            client: GalleryDownloadMockHTTPClient(htmlResponses: [:], dataResponses: [:]),
+            cacheStore: cacheStore,
+            retryDelayRange: 0...0
+        )
+        let summaries = (1...7).map { index in
+            CachedGallerySummary(
+                galleryIdentifier: EHGalleryIdentifier(gid: 200 + index, token: "token\(index)"),
+                title: "Gallery \(index)",
+                thumbnailURL: nil,
+                cachedPageCount: 1,
+                totalPageCount: 2,
+                byteCount: 1,
+                updatedAt: Date(),
+                pageRecords: []
+            )
+        }
+
+        manager.startUnfinishedDownloads(from: summaries)
+
+        XCTAssertEqual(manager.aggregateProgress?.activeDownloadCount, 5)
+        XCTAssertEqual(manager.aggregateProgress?.queuedDownloadCount, 2)
+        XCTAssertEqual(manager.aggregateProgress?.downloadedPageCount, 7)
+        XCTAssertEqual(manager.aggregateProgress?.totalPageCount, 14)
+    }
+
     /// Waits briefly for the manager's background task to finish.
     private func waitForFinishedDownload(manager: GalleryDownloadManager, identifier: EHGalleryIdentifier) async {
         let deadline = Date().addingTimeInterval(2)
@@ -349,12 +428,19 @@ final class GalleryDownloadManagerTests: XCTestCase {
 /// Provides deterministic HTML and image responses for gallery download tests.
 private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
     private let htmlResponses: [URL: String]
-    private let dataResponses: [URL: Result<Data, Error>]
+    private var dataResponses: [URL: [Result<Data, Error>]]
+    private var dataRequestCounts: [URL: Int] = [:]
 
     /// Creates a mock client with fixed page and image responses.
     init(htmlResponses: [URL: String], dataResponses: [URL: Result<Data, Error>]) {
         self.htmlResponses = htmlResponses
-        self.dataResponses = dataResponses
+        self.dataResponses = dataResponses.mapValues { [$0] }
+    }
+
+    /// Creates a mock client with per-request image response sequences.
+    init(htmlResponses: [URL: String], dataResponseSequences: [URL: [Result<Data, Error>]]) {
+        self.htmlResponses = htmlResponses
+        self.dataResponses = dataResponseSequences
     }
 
     /// Returns configured reader page HTML.
@@ -367,7 +453,8 @@ private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
 
     /// Returns configured image data or throws the configured failure.
     func data(_ url: URL) async throws -> EHDataResponse {
-        guard let response = dataResponses[url] else {
+        dataRequestCounts[url, default: 0] += 1
+        guard let response = nextDataResponse(for: url) else {
             throw EHNetworkError.unacceptableStatusCode(404)
         }
 
@@ -377,5 +464,22 @@ private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
         case .failure(let error):
             throw error
         }
+    }
+
+    /// Returns how many times image data was requested for a URL.
+    func dataRequestCount(for url: URL) -> Int {
+        dataRequestCounts[url] ?? 0
+    }
+
+    /// Pops the next configured response, repeating the final value if needed.
+    private func nextDataResponse(for url: URL) -> Result<Data, Error>? {
+        guard var responses = dataResponses[url], let first = responses.first else {
+            return nil
+        }
+        if responses.count > 1 {
+            responses.removeFirst()
+            dataResponses[url] = responses
+        }
+        return first
     }
 }

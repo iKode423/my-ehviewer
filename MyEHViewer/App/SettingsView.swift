@@ -23,8 +23,8 @@ struct SettingsView: View {
                 appearanceSection
                 readerPreferencesSection
                 cachePolicySection
-                localDataSection
                 imageCacheSection
+                localDataSection
                 siteAccessSection
             }
             .navigationTitle(AppCopy.settingsTitle)
@@ -252,6 +252,7 @@ struct SettingsView: View {
 /// Lists cached galleries and opens their detail pages.
 private struct ImageCacheManagementView: View {
     @StateObject private var imageCacheStore = ImageCacheStore.shared
+    @StateObject private var downloadManager = GalleryDownloadManager.shared
 
     var body: some View {
         Group {
@@ -263,6 +264,8 @@ private struct ImageCacheManagementView: View {
                 )
             } else {
                 List {
+                    cacheDownloadControls
+
                     ForEach(imageCacheStore.gallerySummaries) { summary in
                         NavigationLink {
                             GalleryDetailView(result: summary.searchResult)
@@ -285,6 +288,47 @@ private struct ImageCacheManagementView: View {
         .toolbar(.hidden, for: .tabBar)
         .onAppear {
             imageCacheStore.refresh()
+        }
+    }
+
+    /// Shows the bulk download action and current aggregate download status.
+    private var cacheDownloadControls: some View {
+        Section {
+            Button {
+                downloadManager.startUnfinishedDownloads(from: imageCacheStore.gallerySummaries)
+            } label: {
+                Label(AppCopy.cacheManagementStartUnfinished, systemImage: "arrow.down.circle")
+                    .frame(minHeight: 44, alignment: .leading)
+            }
+            .disabled(unfinishedSummaries.isEmpty)
+
+            if let aggregateProgress = downloadManager.aggregateProgress {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label(AppCopy.cacheManagementProgressTitle, systemImage: "speedometer")
+                        .font(.headline)
+
+                    ProgressView(value: aggregateProgress.progressFraction)
+                        .tint(.accentColor)
+
+                    HStack {
+                        Text(aggregateProgress.progressText)
+                        Spacer()
+                        Text(aggregateProgress.speedText)
+                            .monospacedDigit()
+                    }
+                    .font(.subheadline)
+
+                    HStack(spacing: 12) {
+                        Label(aggregateProgress.activeDownloadText, systemImage: "arrow.down")
+                        if aggregateProgress.queuedDownloadCount > 0 {
+                            Label(aggregateProgress.queuedDownloadText, systemImage: "clock")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 6)
+            }
         }
     }
 
@@ -311,6 +355,14 @@ private struct ImageCacheManagementView: View {
         let summaries = imageCacheStore.gallerySummaries
         for offset in offsets where summaries.indices.contains(offset) {
             imageCacheStore.clearGallery(summaries[offset].galleryIdentifier)
+        }
+    }
+
+    /// Returns cached galleries that still have pages missing from the local cache.
+    private var unfinishedSummaries: [CachedGallerySummary] {
+        imageCacheStore.gallerySummaries.filter { summary in
+            guard let totalPageCount = summary.totalPageCount else { return false }
+            return summary.cachedPageCount < totalPageCount
         }
     }
 }
