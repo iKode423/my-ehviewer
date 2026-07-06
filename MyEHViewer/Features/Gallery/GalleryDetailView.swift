@@ -53,10 +53,6 @@ struct GalleryDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
-            Link(destination: result.pageURL) {
-                Label(AppCopy.galleryOpenInBrowser, systemImage: "safari")
-            }
-
             downloadButton
             favoriteMenu
         }

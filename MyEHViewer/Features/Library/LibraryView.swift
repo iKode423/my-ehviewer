@@ -13,18 +13,31 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        content
+            .navigationTitle(AppCopy.libraryTitle)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                libraryPinnedControls
+            }
+    }
+
+    /// Keeps library section and online favorite search controls available while content scrolls.
+    private var libraryPinnedControls: some View {
+        VStack(spacing: 10) {
             Picker(AppCopy.libraryTitle, selection: $selection) {
                 ForEach(LibrarySelection.allCases) { item in
                     Text(item.title).tag(item)
                 }
             }
             .pickerStyle(.segmented)
-            .padding()
 
-            content
+            if selection == .siteFavorites, siteCookieStore.hasCookieHeader {
+                siteFavoritesSearchBar
+                siteFavoritesPaginationControls
+            }
         }
-        .navigationTitle(AppCopy.libraryTitle)
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
     }
 
     /// Displays the selected local collection.
@@ -50,10 +63,19 @@ struct LibraryView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            List(records) { record in
-                LibraryRecordRow(record: record)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(records) { record in
+                        LibraryRecordRow(record: record)
+                            .padding(.horizontal)
+
+                        Divider()
+                            .padding(.leading, 100)
+                    }
+                }
+                .padding(.top, 8)
+                .padding(.bottom, 96)
             }
-            .listStyle(.plain)
         }
     }
 
@@ -61,13 +83,7 @@ struct LibraryView: View {
     @ViewBuilder
     private var siteFavoritesContent: some View {
         if siteCookieStore.hasCookieHeader {
-            SearchView(
-                viewModel: siteFavoritesViewModel,
-                embedsInNavigationStack: false,
-                searchesOnAppear: true,
-                chromeMode: .keywordOnly,
-                navigationTitle: nil
-            )
+            siteFavoritesResultList
         } else {
             ContentUnavailableView(
                 AppCopy.librarySiteFavoritesCookieTitle,
@@ -75,6 +91,124 @@ struct LibraryView: View {
                 description: Text(AppCopy.librarySiteFavoritesCookieMessage)
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Provides keyword-only search for the online favorites collection.
+    private var siteFavoritesSearchBar: some View {
+        HStack(spacing: 12) {
+            TextField(AppCopy.searchPlaceholder, text: $siteFavoritesViewModel.query)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder)
+                .submitLabel(.search)
+                .onSubmit {
+                    Task { await siteFavoritesViewModel.search() }
+                }
+
+            Button {
+                Task { await siteFavoritesViewModel.search() }
+            } label: {
+                Label(AppCopy.searchButtonTitle, systemImage: "magnifyingglass")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(siteFavoritesViewModel.isLoading)
+        }
+    }
+
+    /// Keeps online favorites pagination controls near the fixed search box.
+    private var siteFavoritesPaginationControls: some View {
+        HStack {
+            Button {
+                Task { await siteFavoritesViewModel.loadPreviousPage() }
+            } label: {
+                Label(AppCopy.searchPreviousPage, systemImage: "chevron.left")
+            }
+            .disabled(siteFavoritesViewModel.previousPageURL == nil || siteFavoritesViewModel.isLoading)
+
+            Spacer()
+
+            if siteFavoritesViewModel.isLoading {
+                ProgressView()
+            }
+
+            Spacer()
+
+            Button {
+                Task { await siteFavoritesViewModel.loadNextPage() }
+            } label: {
+                Label(AppCopy.searchNextPage, systemImage: "chevron.right")
+            }
+            .disabled(siteFavoritesViewModel.nextPageURL == nil || siteFavoritesViewModel.isLoading)
+        }
+        .buttonStyle(.bordered)
+    }
+
+    /// Displays online favorite loading, error, empty, and result states.
+    private var siteFavoritesResultList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                siteFavoritesResultsContent
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 96)
+        }
+        .refreshable {
+            await siteFavoritesViewModel.refresh()
+        }
+        .task {
+            await siteFavoritesViewModel.searchIfNeeded()
+        }
+    }
+
+    /// Builds the online favorites list content without duplicating fixed controls.
+    @ViewBuilder
+    private var siteFavoritesResultsContent: some View {
+        if siteFavoritesViewModel.isLoading && siteFavoritesViewModel.results.isEmpty {
+            ContentUnavailableView(AppCopy.searchLoadingTitle, systemImage: "hourglass")
+                .frame(maxWidth: .infinity, minHeight: 320)
+        } else if let errorMessage = siteFavoritesViewModel.errorMessage, siteFavoritesViewModel.results.isEmpty {
+            VStack(spacing: 16) {
+                ContentUnavailableView(errorMessage, systemImage: "exclamationmark.triangle")
+
+                Button {
+                    Task { await siteFavoritesViewModel.retry() }
+                } label: {
+                    Label(AppCopy.commonRetry, systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(siteFavoritesViewModel.isLoading)
+            }
+            .frame(maxWidth: .infinity, minHeight: 320)
+        } else if siteFavoritesViewModel.hasSearched && siteFavoritesViewModel.results.isEmpty {
+            ContentUnavailableView(
+                AppCopy.searchNoResultsTitle,
+                systemImage: "magnifyingglass",
+                description: Text(AppCopy.searchNoResultsMessage)
+            )
+            .frame(maxWidth: .infinity, minHeight: 320)
+        } else {
+            if let errorMessage = siteFavoritesViewModel.errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(Color.red.opacity(0.08))
+            }
+
+            ForEach(siteFavoritesViewModel.results) { result in
+                NavigationLink {
+                    GalleryDetailView(result: result)
+                } label: {
+                    SearchResultRow(result: result)
+                        .padding(.horizontal)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                Divider()
+                    .padding(.leading, 100)
+            }
         }
     }
 }
@@ -161,6 +295,7 @@ private struct LibraryRecordRow: View {
                 .buttonStyle(.bordered)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

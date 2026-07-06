@@ -143,3 +143,24 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。覆盖阅读器从底部 Tab 移出并以全屏路由打开、返回上一级关闭阅读器且保留原 Tab、缓存页通过已知图库目录继续打开未缓存下一页、解析 HTML 下一页指向自身时仍可按已知目录继续下一页、整本下载遇到单页图片失败后跳过并继续缓存后续页，以及既有搜索、图库、阅读、缓存、Cookie、书架和中文文案回归。
+
+### 书架固定控件与缓存进度回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。覆盖搜索结果行撑满宽度以修正首页和线上收藏列表错位、线上收藏使用固定关键词搜索和上一页/下一页控件、图库下载进度按真实图库缓存记录校准、清空图库缓存后进度不再显示旧已下载数、非图库图片缓存可单独清理且保留已下载图库页，以及设置页新增文案和既有搜索、图库、阅读、缓存、Cookie、书架回归。
+
+### 书架与缓存修复冒烟
+
+```sh
+xcrun simctl bootstatus 'iPhone 17 Pro' -b
+xcrun simctl install booted /Users/ikode/Library/Developer/Xcode/DerivedData/MyEHViewer-asduoirgkvnkeocmxnxbvjnwfqad/Build/Products/Debug-iphonesimulator/MyEHViewer.app
+xcrun simctl terminate booted com.ikode.MyEHViewer
+xcrun simctl launch booted com.ikode.MyEHViewer
+xcrun simctl io booted screenshot /tmp/my-ehviewer-library-cache-20260706-retry.png
+```
+
+结果：通过。应用成功安装并启动，启动 PID 为 `23416`；搜索首屏、筛选入口、底部 Tab 和深色模式下的强调色显示正常，未见明显遮挡或错位。

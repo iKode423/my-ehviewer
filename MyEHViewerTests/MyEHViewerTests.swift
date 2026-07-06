@@ -51,6 +51,7 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.readerImageRetry, "重新加载图片")
         XCTAssertEqual(AppCopy.readerToggleOrientation, "切换横竖屏")
         XCTAssertEqual(AppCopy.settingsImageCacheTitle, "图片缓存")
+        XCTAssertEqual(AppCopy.settingsClearNonGalleryImageCache, "清空非图库图片缓存")
     }
 
     /// Confirms image cache data is saved, counted, read, and cleared.
@@ -134,6 +135,43 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertNil(store.data(for: secondResponseURL))
         XCTAssertEqual(store.snapshot, .empty)
         XCTAssertTrue(store.gallerySummaries.isEmpty)
+    }
+
+    /// Confirms clearing non-gallery cache keeps downloaded reader page images.
+    @MainActor
+    func testImageCacheStoreClearsOnlyNonGalleryImages() {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let store = ImageCacheStore(directoryURL: directoryURL)
+        let identifier = EHGalleryIdentifier(gid: 100, token: "abcdef1234")
+        let thumbnailURL = URL(string: "https://example.test/thumb.jpg")!
+        let imageURL = URL(string: "https://example.test/page-1.webp")!
+        let imageData = Data([0x01, 0x02])
+
+        store.save(Data([0x09]), for: thumbnailURL)
+        store.save(
+            imageData,
+            for: imageURL,
+            responseURL: imageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: identifier,
+                galleryTitle: "Sample Gallery",
+                pageNumber: 1,
+                pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!,
+                totalPageCount: 1,
+                thumbnailURL: thumbnailURL
+            )
+        )
+
+        XCTAssertTrue(store.hasNonGalleryImageCache)
+        XCTAssertEqual(store.snapshot.fileCount, 2)
+
+        store.clearNonGalleryImages()
+
+        XCTAssertNil(store.data(for: thumbnailURL))
+        XCTAssertEqual(store.data(for: imageURL), imageData)
+        XCTAssertFalse(store.hasNonGalleryImageCache)
+        XCTAssertEqual(store.snapshot.fileCount, 1)
+        XCTAssertEqual(store.gallerySummaries.first?.cachedPageCount, 1)
     }
 
     /// Confirms GIF preview rendering can force a static first frame.
@@ -269,6 +307,12 @@ final class GalleryDownloadManagerTests: XCTestCase {
         XCTAssertEqual(cacheStore.data(for: firstImageURL), Data([0x01]))
         XCTAssertNil(cacheStore.data(for: secondImageURL))
         XCTAssertEqual(cacheStore.data(for: thirdImageURL), Data([0x03]))
+
+        cacheStore.clearGallery(identifier)
+
+        let clearedProgress = try XCTUnwrap(manager.progress(for: identifier))
+        XCTAssertEqual(clearedProgress.downloadedPageCount, 0)
+        XCTAssertEqual(clearedProgress.totalPageCount, 3)
     }
 
     /// Waits briefly for the manager's background task to finish.

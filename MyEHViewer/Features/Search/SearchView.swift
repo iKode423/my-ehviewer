@@ -46,7 +46,7 @@ struct SearchView: View {
     /// Composes the reusable search screen content.
     private var searchContent: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 searchControls
                 content
                     .padding(.top, viewModel.results.isEmpty ? 16 : 8)
@@ -83,6 +83,7 @@ struct SearchView: View {
                     .padding(.top, 12)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Provides the first visible search control for the application shell.
@@ -277,7 +278,7 @@ struct SearchView: View {
 
     /// Shows parsed search results and pagination actions.
     private var resultList: some View {
-        LazyVStack(spacing: 0) {
+        LazyVStack(alignment: .leading, spacing: 0) {
             if let errorMessage = viewModel.errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.red)
@@ -292,6 +293,7 @@ struct SearchView: View {
                 } label: {
                     SearchResultRow(result: result)
                         .padding(.horizontal)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
 

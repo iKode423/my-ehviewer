@@ -358,6 +358,25 @@ final class ImageCacheStore: ObservableObject {
         refresh()
     }
 
+    /// Returns true when cached image files are not tied to gallery reader pages.
+    var hasNonGalleryImageCache: Bool {
+        !nonGalleryCacheKeys().isEmpty
+    }
+
+    /// Removes search thumbnails, covers, and other image files not indexed as gallery pages.
+    func clearNonGalleryImages() {
+        let removableCacheKeys = nonGalleryCacheKeys()
+        guard !removableCacheKeys.isEmpty else { return }
+
+        index.aliases = index.aliases.filter { !removableCacheKeys.contains($0.value) }
+        for cacheKey in removableCacheKeys {
+            try? fileManager.removeItem(at: fileURL(forKey: cacheKey))
+        }
+
+        saveIndex()
+        refresh()
+    }
+
     /// Recomputes cache usage stats from disk.
     func refresh() {
         guard let allFileURLs = try? fileManager.contentsOfDirectory(
@@ -390,6 +409,10 @@ final class ImageCacheStore: ObservableObject {
         }
         if !duplicateKeyMap.isEmpty {
             remapIndexCacheKeys(duplicateKeyMap)
+        }
+        let validCacheKeys = Set(canonicalKeysByDigest.values)
+        let removedMissingEntries = removeMissingIndexEntries(validCacheKeys: validCacheKeys)
+        if !duplicateKeyMap.isEmpty || removedMissingEntries {
             saveIndex()
         }
         gallerySummaries = makeGallerySummaries()
@@ -522,6 +545,33 @@ final class ImageCacheStore: ObservableObject {
         }
     }
 
+    /// Drops aliases and page records whose backing cache file is no longer present.
+    private func removeMissingIndexEntries(validCacheKeys: Set<String>) -> Bool {
+        let oldAliasCount = index.aliases.count
+        let oldPageCount = index.pages.count
+        index.aliases = index.aliases.filter { validCacheKeys.contains($0.value) }
+        index.pages = index.pages.filter { validCacheKeys.contains($0.value.cacheKey) }
+        return oldAliasCount != index.aliases.count || oldPageCount != index.pages.count
+    }
+
+    /// Finds cache files that are not referenced by gallery page records.
+    private func nonGalleryCacheKeys() -> Set<String> {
+        diskCacheKeys().subtracting(Set(index.pages.values.map(\.cacheKey)))
+    }
+
+    /// Reads cache file names from disk while ignoring the JSON index.
+    private func diskCacheKeys() -> Set<String> {
+        guard let fileURLs = try? fileManager.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        return Set(fileURLs.map(\.lastPathComponent).filter { $0 != indexFileName })
+    }
+
     /// Builds a stable cache file URL for a cache key.
     private func fileURL(forKey key: String) -> URL {
         directoryURL.appending(path: key, directoryHint: .notDirectory)
@@ -599,7 +649,21 @@ final class GalleryDownloadManager: ObservableObject {
 
     /// Returns the latest progress for one gallery.
     func progress(for identifier: EHGalleryIdentifier) -> GalleryDownloadProgress? {
-        progressByGalleryID[identifier.id] ?? cachedProgress(for: identifier)
+        guard let storedProgress = progressByGalleryID[identifier.id] else {
+            return cachedProgress(for: identifier)
+        }
+
+        let cachedProgress = cachedProgress(for: identifier)
+        let downloadedPageCount = cachedProgress?.downloadedPageCount ?? 0
+        let totalPageCount = max(storedProgress.totalPageCount, cachedProgress?.totalPageCount ?? 0)
+        return GalleryDownloadProgress(
+            galleryID: storedProgress.galleryID,
+            title: cachedProgress?.title ?? storedProgress.title,
+            downloadedPageCount: downloadedPageCount,
+            totalPageCount: totalPageCount,
+            isRunning: storedProgress.isRunning,
+            errorMessage: storedProgress.errorMessage
+        )
     }
 
     /// Starts a non-blocking download for all currently known gallery page links.

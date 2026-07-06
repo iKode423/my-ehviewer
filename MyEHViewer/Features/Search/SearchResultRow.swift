@@ -41,8 +41,10 @@ struct SearchResultRow: View {
 
                 tagStrip
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Shows the remote thumbnail with a stable frame.

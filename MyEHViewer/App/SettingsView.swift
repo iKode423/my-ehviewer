@@ -13,16 +13,17 @@ struct SettingsView: View {
     @State private var showsClearConfirmation = false
     @State private var showsCookieClearConfirmation = false
     @State private var showsImageCacheClearConfirmation = false
+    @State private var showsNonGalleryImageCacheClearConfirmation = false
 
     var body: some View {
         NavigationStack {
             List {
                 appearanceSection
                 readerPreferencesSection
-                siteAccessSection
                 localDataSection
                 imageCacheSection
                 cachePolicySection
+                siteAccessSection
             }
             .navigationTitle(AppCopy.settingsTitle)
             .onAppear {
@@ -60,6 +61,17 @@ struct SettingsView: View {
                 }
             } message: {
                 Text(AppCopy.settingsImageCacheClearMessage)
+            }
+            .confirmationDialog(
+                AppCopy.settingsNonGalleryImageCacheClearTitle,
+                isPresented: $showsNonGalleryImageCacheClearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(AppCopy.settingsNonGalleryImageCacheClearConfirm, role: .destructive) {
+                    imageCacheStore.clearNonGalleryImages()
+                }
+            } message: {
+                Text(AppCopy.settingsNonGalleryImageCacheClearMessage)
             }
         }
     }
@@ -166,6 +178,13 @@ struct SettingsView: View {
                 Label(AppCopy.settingsClearImageCache, systemImage: "trash")
             }
             .disabled(imageCacheStore.snapshot.isEmpty)
+
+            Button(role: .destructive) {
+                showsNonGalleryImageCacheClearConfirmation = true
+            } label: {
+                Label(AppCopy.settingsClearNonGalleryImageCache, systemImage: "photo.badge.minus")
+            }
+            .disabled(!imageCacheStore.hasNonGalleryImageCache)
         }
     }
 
