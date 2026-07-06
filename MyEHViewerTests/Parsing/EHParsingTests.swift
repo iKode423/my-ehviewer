@@ -111,6 +111,38 @@ final class EHParsingTests: XCTestCase {
         XCTAssertEqual(detail.pageLinks.first?.thumbnailCrop, EHImageCrop(x: 40, y: 60, width: 120, height: 180))
     }
 
+    /// Confirms parent CSS sprites are preferred over inner spacer image sources.
+    func testGalleryPageParserReadsParentCSSSpriteThumbnails() throws {
+        let html = """
+        <div id="gleft"><div id="gd1"><div style="background: transparent url(https://example.test/cover.jpg) 0 0 no-repeat"></div></div></div>
+        <div id="gd2"><h1 id="gn">Sample Gallery</h1></div>
+        <div id="gdt">
+          <div class="gdtm" style="width:120px;height:180px;background:transparent url(&quot;https://example.test/sprite.webp&quot;) 0 0 no-repeat">
+            <a href="https://e-hentai.org/s/aaaabbbbcc/100-1"><img src="https://example.test/spacer.gif" width="120" height="180"></a>
+          </div>
+          <div class="gdtm" style="width:120px;height:180px;background:transparent url(&quot;https://example.test/sprite.webp&quot;) no-repeat -120px 0">
+            <a href="https://e-hentai.org/s/aaaabbbbcc/100-2"><img src="https://example.test/spacer.gif" width="120" height="180"></a>
+          </div>
+          <div class="gdtm" style="width:120px;height:180px;background-image:url(&quot;https://example.test/sprite.webp&quot;);background-position-x:-240px;background-position-y:-180px">
+            <a href="https://e-hentai.org/s/aaaabbbbcc/100-3"><img src="https://example.test/spacer.gif" width="120" height="180"></a>
+          </div>
+        </div>
+        """
+
+        let detail = try EHGalleryPageParser().parse(
+            html,
+            sourceURL: URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
+        )
+
+        XCTAssertEqual(detail.pageLinks.map(\.pageNumber), [1, 2, 3])
+        XCTAssertEqual(detail.pageLinks.map { $0.thumbnailURL?.absoluteString }, Array(repeating: "https://example.test/sprite.webp", count: 3))
+        XCTAssertEqual(detail.pageLinks.map(\.thumbnailCrop), [
+            EHImageCrop(x: 0, y: 0, width: 120, height: 180),
+            EHImageCrop(x: 120, y: 0, width: 120, height: 180),
+            EHImageCrop(x: 240, y: 180, width: 120, height: 180)
+        ])
+    }
+
     /// Confirms online favorite popup forms preserve hidden fields and selected category.
     func testFavoritePopupParserBuildsSubmissionFields() {
         let html = """

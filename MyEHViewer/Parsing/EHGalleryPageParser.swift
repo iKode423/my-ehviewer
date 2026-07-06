@@ -121,15 +121,25 @@ struct EHGalleryPageParser {
     /// Parses reader page links from the thumbnail grid.
     private func pageLinks(in html: String) -> [EHGalleryPageLink] {
         guard let gdt = EHHTMLParsing.element(in: html, id: "gdt") else { return [] }
-        return EHHTMLParsing.matches(
-            in: gdt,
-            pattern: #"<a\b[^>]*href="(https://e-hentai\.org/s/[a-z0-9]+/[0-9]+-([0-9]+))"[^>]*>(.*?)</a>"#
-        )
-        .compactMap { match in
-            guard match.count >= 4, let url = URL(string: match[1]), let pageNumber = Int(match[2]) else {
+
+        let pattern = #"<a\b[^>]*href="(https://e-hentai\.org/s/[a-z0-9]+/[0-9]+-([0-9]+))"[^>]*>.*?</a>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) else {
+            return []
+        }
+
+        let range = NSRange(gdt.startIndex..<gdt.endIndex, in: gdt)
+        return regex.matches(in: gdt, range: range).compactMap { match in
+            guard
+                let fullRange = Range(match.range(at: 0), in: gdt),
+                let urlRange = Range(match.range(at: 1), in: gdt),
+                let pageNumberRange = Range(match.range(at: 2), in: gdt),
+                let url = URL(string: String(gdt[urlRange])),
+                let pageNumber = Int(gdt[pageNumberRange])
+            else {
                 return nil
             }
-            let thumbnail = thumbnail(in: match[3])
+
+            let thumbnail = thumbnail(in: thumbnailContext(around: fullRange, in: gdt))
             return EHGalleryPageLink(
                 pageNumber: pageNumber,
                 pageURL: url,
@@ -139,8 +149,23 @@ struct EHGalleryPageParser {
         }
     }
 
+    /// Expands an anchor match to include parent thumbnail styles used by CSS sprites.
+    private func thumbnailContext(around anchorRange: Range<String.Index>, in html: String) -> String {
+        let prefix = html[..<anchorRange.lowerBound]
+        let contextStart = prefix.range(of: "</a>", options: .backwards)?.upperBound ?? html.startIndex
+        return String(html[contextStart..<anchorRange.upperBound])
+    }
+
     /// Picks the thumbnail URL and optional CSS sprite crop from one page link.
     private func thumbnail(in html: String) -> (url: URL?, crop: EHImageCrop?) {
+        let styleURL = EHHTMLParsing.firstMatch(
+            in: html,
+            pattern: #"url\((?:'|")?([^)'"]+)(?:'|")?\)"#
+        )?.dropFirst().first
+        if let url = EHHTMLParsing.url(from: styleURL) {
+            return (url, spriteCrop(in: html))
+        }
+
         if let image = EHHTMLParsing.firstMatch(in: html, pattern: #"<img\b[^>]*>"#)?.first {
             let lazyURL = EHHTMLParsing.attribute("data-src", in: image)
             let srcURL = EHHTMLParsing.attribute("src", in: image)
@@ -149,11 +174,7 @@ struct EHGalleryPageParser {
             }
         }
 
-        let styleURL = EHHTMLParsing.firstMatch(
-            in: html,
-            pattern: #"url\((?:'|")?([^)'"]+)(?:'|")?\)"#
-        )?.dropFirst().first
-        return (EHHTMLParsing.url(from: styleURL), spriteCrop(in: html))
+        return (nil, nil)
     }
 
     /// Parses a CSS background sprite crop from thumbnail style attributes.
@@ -207,17 +228,32 @@ struct EHGalleryPageParser {
 
     /// Reads background-position offsets from style fragments.
     private func backgroundOffsets(in html: String) -> (x: Double, y: Double) {
-        let positionPattern = #"background-position\s*:\s*(-?[0-9.]+)px\s+(-?[0-9.]+)px"#
+        let cssNumber = #"(-?[0-9.]+)(?:px)?"#
+        let positionPattern = #"background-position\s*:\s*\#(cssNumber)\s+\#(cssNumber)"#
         if let match = EHHTMLParsing.firstMatch(in: html, pattern: positionPattern), match.count >= 3 {
             return (Double(match[1]) ?? 0, Double(match[2]) ?? 0)
         }
 
-        let shorthandPattern = #"url\((?:'|")?[^)'"]+(?:'|")?\)\s*(-?[0-9.]+)px\s+(-?[0-9.]+)px"#
+        if let x = cssDirectionalOffset("background-position-x", in: html),
+           let y = cssDirectionalOffset("background-position-y", in: html) {
+            return (x, y)
+        }
+
+        let shorthandPattern = #"url\((?:'|")?[^)'"]+(?:'|")?\)[^;"']*?\s\#(cssNumber)\s+\#(cssNumber)"#
         if let match = EHHTMLParsing.firstMatch(in: html, pattern: shorthandPattern), match.count >= 3 {
             return (Double(match[1]) ?? 0, Double(match[2]) ?? 0)
         }
 
         return (0, 0)
+    }
+
+    /// Reads one directional background-position value with optional `px`.
+    private func cssDirectionalOffset(_ property: String, in html: String) -> Double? {
+        let escaped = NSRegularExpression.escapedPattern(for: property)
+        return EHHTMLParsing.firstMatch(in: html, pattern: #"\#(escaped)\s*:\s*(-?[0-9.]+)(?:px)?"#)?
+            .dropFirst()
+            .first
+            .flatMap(Double.init)
     }
 }
 

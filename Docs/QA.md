@@ -200,3 +200,13 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。非图库缓存清理入口文案缩短为“清空非图库缓存”，图标改用稳定可用的 `photo`；清理类确认弹窗改为挂在触发按钮自身；主题色变化时刷新设置列表并同步当前 UIKit window tint，让设置页控件无需重启即可更新颜色；既有搜索、图库、阅读、缓存、Cookie、书架回归测试通过。
+
+### 图库 CSS Sprite 预览回归
+
+```sh
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:MyEHViewerTests/EHParsingTests test
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。图库页缩略图解析改为优先使用父级/自身 CSS background sprite，并支持 `background-position-x/y` 与无 `px` 的 offset，避免无缓存时多页预览都退化成同一张 sprite 图；新增父级 CSS sprite + 内层占位图测试，既有搜索、图库、阅读、缓存、Cookie、书架回归测试通过。
