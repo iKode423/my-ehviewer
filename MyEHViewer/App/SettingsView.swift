@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @StateObject private var siteCookieStore = SiteCookieStore.shared
+    @AppStorage(AppThemeMode.storageKey) private var themeModeRaw = AppThemeMode.system.rawValue
     @AppStorage(ReaderFitMode.storageKey) private var fitModeRaw = ReaderFitMode.fitPage.rawValue
     @AppStorage(ReaderZoomLevel.storageKey) private var zoomLevelRaw = ReaderZoomLevel.x1.rawValue
     @AppStorage(ReaderBackgroundMode.storageKey) private var backgroundModeRaw = ReaderBackgroundMode.system.rawValue
@@ -14,6 +15,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                appearanceSection
                 readerPreferencesSection
                 siteAccessSection
                 localDataSection
@@ -42,6 +44,17 @@ struct SettingsView: View {
                 Button(AppCopy.settingsCookieClearConfirm, role: .destructive) {
                     siteCookieStore.clearCookieHeader()
                     cookieInput = ""
+                }
+            }
+        }
+    }
+
+    /// Shows app-wide appearance controls.
+    private var appearanceSection: some View {
+        Section(AppCopy.settingsAppearanceTitle) {
+            Picker(AppCopy.settingsThemeMode, selection: $themeModeRaw) {
+                ForEach(AppThemeMode.allCases) { mode in
+                    Text(mode.title).tag(mode.rawValue)
                 }
             }
         }

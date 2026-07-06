@@ -10,6 +10,15 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 
 结果：通过。覆盖搜索解析与分页、首页/热门/关注/收藏来源 URL、搜索筛选重置、保留筛选参数的搜索重试、初始关键词搜索、图库详情、标签继续搜索、站点链接文案、带缩略图的阅读入口、缩略图分页、阅读器翻页、缩略图目录与页码输入跳转、阅读器已知页码范围、阅读器图片重试 token、阅读器缩放偏好、本地书架持久化和继续阅读文案、最近搜索、站点 Cookie 存储和中文文案。
 
+### 外观与搜索滚动回归
+
+```sh
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+git diff --check
+```
+
+结果：通过。主题模式枚举、设置页外观入口、浅色强调色和搜索页单一纵向滚动结构可编译，筛选区展开后不再脱离滚动区域；未发现空白格式问题。
+
 ### 构建验证
 
 ```sh

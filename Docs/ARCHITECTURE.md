@@ -4,7 +4,7 @@
 
 MyEHViewer 会按以下边界逐步建设：
 
-- `App`：应用入口、根导航和通用文案。
+- `App`：应用入口、根导航、全局主题偏好和通用文案。
 - `Features/Search`：搜索输入、结果列表、高级搜索入口。
 - `Features/Gallery`：图库详情、标签和元信息展示。
 - `Features/Reader`：阅读器、图片页导航和阅读状态。
@@ -24,7 +24,7 @@ MyEHViewer 会按以下边界逐步建设：
 
 本地书架由 `LibraryStore` 通过 `UserDefaults` 保存历史、收藏和最近阅读页。`LibraryView` 可从记录打开图库详情，也可从带进度的记录直接进入阅读器。它只保存图库 URL、标题、缩略图 URL 和页码等轻量元数据，不保存远端 HTML、图片或用户凭据。
 
-设置页通过共享的 `LibraryStore` 展示本地数据数量，并提供清空历史、收藏和阅读进度的确认操作。阅读显示偏好和缩放倍率通过 `AppStorage` 在设置页和阅读器工具栏之间共享。
+设置页通过共享的 `LibraryStore` 展示本地数据数量，并提供清空历史、收藏和阅读进度的确认操作。应用主题模式、阅读显示偏好和缩放倍率通过 `AppStorage` 在设置页、根视图和阅读器工具栏之间共享；主题默认跟随系统，也允许用户切换浅色或深色。
 
 站点访问 Cookie 由 `SiteCookieStore` 保存到本机 Keychain。`URLSessionEHHTTPClient` 在请求公开站点页面时读取该 Cookie header 并注入请求，不在仓库内保存任何真实凭据。
 

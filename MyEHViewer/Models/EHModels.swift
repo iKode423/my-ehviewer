@@ -5,6 +5,25 @@ enum EHConstants {
     static let baseURL = URL(string: "https://e-hentai.org/")!
 }
 
+/// Describes the app-wide appearance preference saved on this device.
+enum AppThemeMode: String, CaseIterable, Identifiable, Codable {
+    case system
+    case light
+    case dark
+
+    static let storageKey = "App.themeMode"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: AppCopy.settingsThemeSystem
+        case .light: AppCopy.settingsThemeLight
+        case .dark: AppCopy.settingsThemeDark
+        }
+    }
+}
+
 /// Represents a gallery category supported by the search page.
 enum EHGalleryCategory: Int, CaseIterable, Identifiable, Codable {
     case misc = 1

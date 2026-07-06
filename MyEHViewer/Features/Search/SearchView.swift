@@ -29,6 +29,27 @@ struct SearchView: View {
 
     /// Composes the reusable search screen content.
     private var searchContent: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                searchControls
+                content
+                    .padding(.top, viewModel.results.isEmpty ? 16 : 8)
+            }
+            .padding(.bottom, 16)
+        }
+        .navigationTitle(AppCopy.searchTitle)
+        .refreshable {
+            await viewModel.refresh()
+        }
+        .task {
+            if searchesOnAppear {
+                await viewModel.searchIfNeeded()
+            }
+        }
+    }
+
+    /// Groups search controls inside the screen's single vertical scroll area.
+    private var searchControls: some View {
         VStack(spacing: 0) {
             searchBar
                 .padding([.horizontal, .top])
@@ -44,14 +65,6 @@ struct SearchView: View {
             filterPanel
                 .padding(.horizontal)
                 .padding(.top, 12)
-
-            content
-        }
-        .navigationTitle(AppCopy.searchTitle)
-        .task {
-            if searchesOnAppear {
-                await viewModel.searchIfNeeded()
-            }
         }
     }
 
@@ -212,7 +225,7 @@ struct SearchView: View {
     private var content: some View {
         if viewModel.isLoading && viewModel.results.isEmpty {
             ContentUnavailableView(AppCopy.searchLoadingTitle, systemImage: "hourglass")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 320)
         } else if let errorMessage = viewModel.errorMessage, viewModel.results.isEmpty {
             VStack(spacing: 16) {
                 ContentUnavailableView(errorMessage, systemImage: "exclamationmark.triangle")
@@ -225,21 +238,21 @@ struct SearchView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(viewModel.isLoading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 320)
         } else if viewModel.hasSearched && viewModel.results.isEmpty {
             ContentUnavailableView(
                 AppCopy.searchNoResultsTitle,
                 systemImage: "magnifyingglass",
                 description: Text(AppCopy.searchNoResultsMessage)
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 320)
         } else if viewModel.results.isEmpty {
             ContentUnavailableView(
                 AppCopy.searchEmptyTitle,
                 systemImage: "magnifyingglass",
                 description: Text(AppCopy.searchEmptyMessage)
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 320)
         } else {
             resultList
         }
@@ -247,10 +260,13 @@ struct SearchView: View {
 
     /// Shows parsed search results and pagination actions.
     private var resultList: some View {
-        List {
+        LazyVStack(spacing: 0) {
             if let errorMessage = viewModel.errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(Color.red.opacity(0.08))
             }
 
             ForEach(viewModel.results) { result in
@@ -258,14 +274,16 @@ struct SearchView: View {
                     GalleryDetailView(result: result)
                 } label: {
                     SearchResultRow(result: result)
+                        .padding(.horizontal)
                 }
+                .buttonStyle(.plain)
+
+                Divider()
+                    .padding(.leading, 100)
             }
 
             paginationControls
-        }
-        .listStyle(.plain)
-        .refreshable {
-            await viewModel.refresh()
+                .padding(.horizontal)
         }
     }
 
