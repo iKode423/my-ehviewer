@@ -47,7 +47,7 @@ struct SearchResultRow: View {
 
     /// Shows the remote thumbnail with a stable frame.
     private var thumbnail: some View {
-        CachedRemoteImageView(url: result.thumbnailURL, contentMode: .fill) {
+        CachedRemoteImageView(url: result.thumbnailURL, contentMode: .fill, animationMode: .staticPreview) {
             ProgressView()
         } failure: {
             Image(systemName: "photo")

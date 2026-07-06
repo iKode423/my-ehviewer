@@ -54,15 +54,21 @@ struct EHSearchPageParser {
         return EHHTMLParsing.textContent(value)
     }
 
-    /// Picks the lazy thumbnail URL when present, otherwise the normal image source.
+    /// Picks the lazy thumbnail URL, normal image source, or CSS background image.
     private func thumbnailURL(in row: String) -> URL? {
-        guard let image = EHHTMLParsing.firstMatch(in: row, pattern: #"<img\b[^>]*>"#)?.first else {
-            return nil
+        if let image = EHHTMLParsing.firstMatch(in: row, pattern: #"<img\b[^>]*>"#)?.first {
+            let lazyURL = EHHTMLParsing.attribute("data-src", in: image)
+            let srcURL = EHHTMLParsing.attribute("src", in: image)
+            if let url = EHHTMLParsing.url(from: lazyURL) ?? EHHTMLParsing.url(from: srcURL) {
+                return url
+            }
         }
 
-        let lazyURL = EHHTMLParsing.attribute("data-src", in: image)
-        let srcURL = EHHTMLParsing.attribute("src", in: image)
-        return EHHTMLParsing.url(from: lazyURL) ?? EHHTMLParsing.url(from: srcURL)
+        let styleURL = EHHTMLParsing.firstMatch(
+            in: row,
+            pattern: #"url\((?:'|")?([^)'"]+)(?:'|")?\)"#
+        )?.dropFirst().first
+        return EHHTMLParsing.url(from: styleURL)
     }
 
     /// Parses compact tag title attributes such as `artist:name`.
@@ -91,4 +97,3 @@ struct EHSearchPageParser {
         return nil
     }
 }
-

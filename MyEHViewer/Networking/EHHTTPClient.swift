@@ -41,9 +41,16 @@ protocol EHHTTPClient {
     func get(_ url: URL) async throws -> EHHTTPResponse
 }
 
+/// Submits URL-encoded site forms while preserving cookies.
+@MainActor
+protocol EHFormHTTPClient {
+    /// Sends a POST request and returns the decoded HTML body.
+    func postForm(_ url: URL, fields: [String: String]) async throws -> EHHTTPResponse
+}
+
 /// Default URLSession-backed HTTP client used by the app.
 @MainActor
-final class URLSessionEHHTTPClient: EHHTTPClient {
+final class URLSessionEHHTTPClient: EHHTTPClient, EHFormHTTPClient {
     private let session: URLSession
     private let cookieHeaderProvider: @MainActor () -> String?
 
@@ -73,6 +80,20 @@ final class URLSessionEHHTTPClient: EHHTTPClient {
         return EHDataResponse(url: httpResponse.url ?? url, statusCode: httpResponse.statusCode, data: data)
     }
 
+    /// Sends a URL-encoded POST request using the same browser-like headers.
+    func postForm(_ url: URL, fields: [String: String]) async throws -> EHHTTPResponse {
+        var request = makeRequest(url, accept: "text/html,application/xhtml+xml")
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = formBody(fields)
+
+        let (data, httpResponse) = try await responseData(for: request)
+        if let body = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) {
+            return EHHTTPResponse(url: httpResponse.url ?? url, statusCode: httpResponse.statusCode, body: body)
+        }
+        throw EHNetworkError.undecodableBody
+    }
+
     /// Builds a browser-like request with optional site cookies.
     private func makeRequest(_ url: URL, accept: String) -> URLRequest {
         var request = URLRequest(url: url)
@@ -98,6 +119,15 @@ final class URLSessionEHHTTPClient: EHHTTPClient {
         }
 
         return (data, httpResponse)
+    }
+
+    /// Encodes form fields for a site POST body.
+    private func formBody(_ fields: [String: String]) -> Data {
+        var components = URLComponents()
+        components.queryItems = fields
+            .sorted { $0.key < $1.key }
+            .map { URLQueryItem(name: $0.key, value: $0.value) }
+        return Data((components.percentEncodedQuery ?? "").utf8)
     }
 }
 

@@ -46,12 +46,14 @@ final class SearchViewModel: ObservableObject {
     /// Creates a view model with injectable dependencies for tests.
     init(
         initialQuery: String = "",
+        initialSource: EHSearchSource = .frontPage,
         client: EHHTTPClient = URLSessionEHHTTPClient(),
         parser: EHSearchPageParser = EHSearchPageParser(),
         userDefaults: UserDefaults = .standard,
         recentQueriesKey: String = "Search.recentQueries"
     ) {
         self.query = initialQuery
+        self.source = initialSource
         self.client = client
         self.parser = parser
         self.userDefaults = userDefaults

@@ -91,6 +91,17 @@ struct EHGalleryIdentifier: Hashable, Codable, Identifiable {
         baseURL.appending(path: "g/\(gid)/\(token)/")
     }
 
+    /// Builds the site popup URL used to add or update online favorites.
+    func favoritePopupURL(baseURL: URL = EHConstants.baseURL) -> URL {
+        var components = URLComponents(url: baseURL.appending(path: "gallerypopups.php"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "gid", value: String(gid)),
+            URLQueryItem(name: "t", value: token),
+            URLQueryItem(name: "act", value: "addfav")
+        ]
+        return components.url ?? baseURL.appending(path: "gallerypopups.php")
+    }
+
     /// Extracts a gallery identifier from a canonical gallery URL.
     init?(galleryURL: URL) {
         guard
@@ -187,6 +198,33 @@ struct EHGalleryDetail: Hashable, Codable, Identifiable {
     let thumbnailPageURLs: [URL]
 
     var id: String { identifier.id }
+}
+
+/// Represents one online favorite category parsed from the site popup.
+struct EHFavoriteCategory: Hashable, Codable, Identifiable {
+    let value: String
+    let title: String
+    let isSelected: Bool
+
+    var id: String { value }
+}
+
+/// Contains the favorite popup form endpoint and default fields.
+struct EHFavoritePopupForm: Hashable {
+    let actionURL: URL
+    let fields: [String: String]
+    let categories: [EHFavoriteCategory]
+
+    /// Returns fields prepared with a category and note for submission.
+    func submissionFields(categoryValue: String? = nil, note: String = "") -> [String: String] {
+        var values = fields
+        values["favcat"] = categoryValue ?? categories.first(where: \.isSelected)?.value ?? categories.first?.value ?? values["favcat"] ?? "0"
+        values["favnote"] = note
+        if !values.keys.contains(where: { ["apply", "update"].contains($0.lowercased()) }) {
+            values["update"] = "1"
+        }
+        return values
+    }
 }
 
 /// Contains the image URL and navigation links for a reader page.

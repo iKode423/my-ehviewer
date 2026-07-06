@@ -3,7 +3,14 @@ import SwiftUI
 /// Displays local favorites and reading history.
 struct LibraryView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
-    @State private var selection = LibrarySelection.favorites
+    @StateObject private var siteCookieStore = SiteCookieStore.shared
+    @StateObject private var siteFavoritesViewModel: SearchViewModel
+    @State private var selection = LibrarySelection.localFavorites
+
+    /// Creates a library view with a dedicated online favorites search model.
+    init() {
+        _siteFavoritesViewModel = StateObject(wrappedValue: SearchViewModel(initialSource: .favorites))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +30,17 @@ struct LibraryView: View {
     /// Displays the selected local collection.
     @ViewBuilder
     private var content: some View {
+        switch selection {
+        case .siteFavorites:
+            siteFavoritesContent
+        case .localFavorites, .history:
+            localRecordsContent
+        }
+    }
+
+    /// Displays local collection records.
+    @ViewBuilder
+    private var localRecordsContent: some View {
         let records = selection.records(from: libraryStore)
         if records.isEmpty {
             ContentUnavailableView(
@@ -38,39 +56,59 @@ struct LibraryView: View {
             .listStyle(.plain)
         }
     }
+
+    /// Displays the logged-in site's favorites endpoint.
+    @ViewBuilder
+    private var siteFavoritesContent: some View {
+        if siteCookieStore.hasCookieHeader {
+            SearchView(viewModel: siteFavoritesViewModel, embedsInNavigationStack: false, searchesOnAppear: true)
+        } else {
+            ContentUnavailableView(
+                AppCopy.librarySiteFavoritesCookieTitle,
+                systemImage: "key",
+                description: Text(AppCopy.librarySiteFavoritesCookieMessage)
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
 }
 
 /// Selects the active local library section.
 private enum LibrarySelection: String, CaseIterable, Identifiable {
-    case favorites
+    case localFavorites
+    case siteFavorites
     case history
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .favorites: AppCopy.libraryFavorites
+        case .localFavorites: AppCopy.libraryFavorites
+        case .siteFavorites: AppCopy.librarySiteFavorites
         case .history: AppCopy.libraryHistory
         }
     }
 
     var emptyTitle: String {
         switch self {
-        case .favorites: AppCopy.libraryEmptyFavoritesTitle
+        case .localFavorites: AppCopy.libraryEmptyFavoritesTitle
+        case .siteFavorites: AppCopy.librarySiteFavoritesCookieTitle
         case .history: AppCopy.libraryEmptyHistoryTitle
         }
     }
 
     var emptyMessage: String {
         switch self {
-        case .favorites: AppCopy.libraryEmptyFavoritesMessage
+        case .localFavorites: AppCopy.libraryEmptyFavoritesMessage
+        case .siteFavorites: AppCopy.librarySiteFavoritesCookieMessage
         case .history: AppCopy.libraryEmptyHistoryMessage
         }
     }
 
     var emptySystemImage: String {
         switch self {
-        case .favorites: "star"
+        case .localFavorites: "star"
+        case .siteFavorites: "icloud"
         case .history: "clock"
         }
     }
@@ -79,7 +117,8 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
     @MainActor
     func records(from store: LibraryStore) -> [LibraryGalleryRecord] {
         switch self {
-        case .favorites: store.favorites
+        case .localFavorites: store.favorites
+        case .siteFavorites: []
         case .history: store.history
         }
     }

@@ -5,16 +5,19 @@ import Foundation
 @MainActor
 final class ReaderViewModel: ObservableObject {
     let initialPageURL: URL?
-    let pageLinks: [EHGalleryPageLink]
 
     @Published private(set) var imagePage: EHImagePage?
+    @Published private(set) var pageLinks: [EHGalleryPageLink]
     @Published private(set) var isLoading = false
+    @Published private(set) var isLoadingPageLinks = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var imageReloadToken = 0
 
     private let client: EHHTTPClient
     private let parser: EHImagePageParser
+    private let galleryParser: EHGalleryPageParser
     private var currentPageURL: URL?
+    private var loadedGalleryPageURLStrings: Set<String> = []
 
     var sortedPageLinks: [EHGalleryPageLink] {
         pageLinks.sorted { $0.pageNumber < $1.pageNumber }
@@ -42,18 +45,24 @@ final class ReaderViewModel: ObservableObject {
         return nextPageURL != currentPageURL
     }
 
+    var canPresentPageJump: Bool {
+        !sortedPageLinks.isEmpty || imagePage?.galleryURL != nil
+    }
+
     /// Creates a reader view model with injectable dependencies for tests.
     init(
         initialPageURL: URL?,
         pageLinks: [EHGalleryPageLink] = [],
         client: EHHTTPClient = URLSessionEHHTTPClient(),
-        parser: EHImagePageParser = EHImagePageParser()
+        parser: EHImagePageParser = EHImagePageParser(),
+        galleryParser: EHGalleryPageParser = EHGalleryPageParser()
     ) {
         self.initialPageURL = initialPageURL
         self.pageLinks = pageLinks
         self.currentPageURL = initialPageURL
         self.client = client
         self.parser = parser
+        self.galleryParser = galleryParser
     }
 
     /// Loads the initial page if the reader has not loaded it yet.
@@ -94,9 +103,39 @@ final class ReaderViewModel: ObservableObject {
     /// Loads a known gallery page by its page number.
     @discardableResult
     func loadPageNumber(_ pageNumber: Int) async -> Bool {
+        if pageLink(for: pageNumber) == nil {
+            await loadAllPageLinksIfNeeded()
+        }
         guard !isLoading, let pageLink = pageLink(for: pageNumber) else { return false }
         await loadPage(pageLink)
         return true
+    }
+
+    /// Loads every known gallery page link from the gallery thumbnail pages.
+    func loadAllPageLinksIfNeeded() async {
+        guard !isLoadingPageLinks, let galleryURL = imagePage?.galleryURL else { return }
+        isLoadingPageLinks = true
+        errorMessage = nil
+        defer { isLoadingPageLinks = false }
+
+        do {
+            let response = try await client.get(galleryURL)
+            let rootDetail = try galleryParser.parse(response.body, sourceURL: response.url)
+            loadedGalleryPageURLStrings.insert(response.url.absoluteString)
+            mergePageLinks(rootDetail.pageLinks)
+
+            var thumbnailPageURLs = rootDetail.thumbnailPageURLs
+            while let nextURL = thumbnailPageURLs.first(where: { !loadedGalleryPageURLStrings.contains($0.absoluteString) }) {
+                let thumbnailResponse = try await client.get(nextURL)
+                let detail = try galleryParser.parse(thumbnailResponse.body, sourceURL: thumbnailResponse.url)
+                loadedGalleryPageURLStrings.insert(thumbnailResponse.url.absoluteString)
+                mergePageLinks(detail.pageLinks)
+                thumbnailPageURLs = Array(Set(thumbnailPageURLs + detail.thumbnailPageURLs))
+                    .sorted { $0.absoluteString < $1.absoluteString }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     /// Returns true when the page number is available in known page links.
@@ -107,6 +146,13 @@ final class ReaderViewModel: ObservableObject {
     /// Finds a known gallery page link by page number.
     private func pageLink(for pageNumber: Int) -> EHGalleryPageLink? {
         sortedPageLinks.first { $0.pageNumber == pageNumber }
+    }
+
+    /// Merges page links while keeping one URL for each page number.
+    private func mergePageLinks(_ links: [EHGalleryPageLink]) {
+        pageLinks = Dictionary(grouping: pageLinks + links, by: \.pageNumber)
+            .compactMap { $0.value.first }
+            .sorted { $0.pageNumber < $1.pageNumber }
     }
 
     /// Fetches, parses, and stores one reader page.

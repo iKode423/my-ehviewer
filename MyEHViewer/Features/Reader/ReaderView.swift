@@ -88,7 +88,7 @@ struct ReaderView: View {
 
     private var canSubmitPageJump: Bool {
         guard let pageJumpNumber else { return false }
-        return viewModel.canLoadPageNumber(pageJumpNumber)
+        return !viewModel.isLoadingPageLinks && viewModel.canLoadPageNumber(pageJumpNumber)
     }
 
     private var readerChromeVisibility: Visibility {
@@ -248,7 +248,7 @@ struct ReaderView: View {
 
     /// Shows a stable thumbnail frame for a known reader page.
     private func pageThumbnail(url: URL?) -> some View {
-        CachedRemoteImageView(url: url, contentMode: .fill) {
+        CachedRemoteImageView(url: url, contentMode: .fill, animationMode: .staticPreview) {
             ProgressView()
         } failure: {
             Image(systemName: "photo")
@@ -353,7 +353,7 @@ struct ReaderView: View {
             } label: {
                 Label(AppCopy.readerJumpPage, systemImage: "number.square")
             }
-            .disabled(viewModel.sortedPageLinks.isEmpty || viewModel.isLoading)
+            .disabled(!viewModel.canPresentPageJump || viewModel.isLoading)
 
             Spacer()
 
@@ -377,6 +377,14 @@ struct ReaderView: View {
 
                     if let knownLastPageNumber = viewModel.knownLastPageNumber {
                         Text(String(format: AppCopy.readerJumpPageRangeFormat, String(knownLastPageNumber)))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else if viewModel.isLoadingPageLinks {
+                        Label(AppCopy.readerJumpLoadingPages, systemImage: "hourglass")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else if viewModel.sortedPageLinks.isEmpty {
+                        Label(AppCopy.readerJumpUnavailable, systemImage: "exclamationmark.triangle")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -453,6 +461,9 @@ struct ReaderView: View {
     private func presentPageJump() {
         pageJumpText = String(viewModel.imagePage?.pageNumber ?? viewModel.sortedPageLinks.first?.pageNumber ?? 1)
         showsPageJumpSheet = true
+        Task {
+            await viewModel.loadAllPageLinksIfNeeded()
+        }
     }
 
     /// Loads the requested known page and dismisses the jump sheet.
@@ -566,6 +577,7 @@ enum CachedRemoteImageContentMode {
 struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
     let url: URL?
     let contentMode: CachedRemoteImageContentMode
+    let animationMode: CachedRemoteImageAnimationMode
     let reloadToken: Int
     let placeholder: () -> Placeholder
     let failure: () -> Failure
@@ -576,12 +588,14 @@ struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
     init(
         url: URL?,
         contentMode: CachedRemoteImageContentMode = .fit,
+        animationMode: CachedRemoteImageAnimationMode = .animated,
         reloadToken: Int = 0,
         @ViewBuilder placeholder: @escaping () -> Placeholder,
         @ViewBuilder failure: @escaping () -> Failure
     ) {
         self.url = url
         self.contentMode = contentMode
+        self.animationMode = animationMode
         self.reloadToken = reloadToken
         self.placeholder = placeholder
         self.failure = failure
@@ -593,7 +607,7 @@ struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
             case .idle, .loading:
                 placeholder()
             case .success(let data):
-                AnimatedImageDataView(data: data, contentMode: contentMode.uiViewContentMode)
+                AnimatedImageDataView(data: data, contentMode: contentMode.uiViewContentMode, animationMode: animationMode)
             case .failure:
                 failure()
             }
@@ -606,6 +620,12 @@ struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
     private var loadKey: String {
         "\(url?.absoluteString ?? "nil")-\(reloadToken)"
     }
+}
+
+/// Selects whether GIF data should animate or render as a static preview.
+enum CachedRemoteImageAnimationMode {
+    case animated
+    case staticPreview
 }
 
 /// Tracks one cached remote image loading operation.
@@ -669,6 +689,7 @@ enum CachedRemoteImageState: Equatable {
 struct AnimatedImageDataView: UIViewRepresentable {
     let data: Data
     let contentMode: UIView.ContentMode
+    let animationMode: CachedRemoteImageAnimationMode
 
     /// Creates a coordinator that avoids reparsing unchanged image data.
     func makeCoordinator() -> Coordinator {
@@ -689,7 +710,7 @@ struct AnimatedImageDataView: UIViewRepresentable {
         imageView.contentMode = contentMode
         if context.coordinator.data != data {
             context.coordinator.data = data
-            context.coordinator.image = ImageDataRenderer.uiImage(from: data)
+            context.coordinator.image = ImageDataRenderer.uiImage(from: data, allowsAnimation: animationMode == .animated)
         }
         imageView.image = context.coordinator.image
         if context.coordinator.image?.images?.isEmpty == false {
@@ -722,12 +743,19 @@ struct AnimatedImageDataView: UIViewRepresentable {
 /// Converts static and animated image data into UIImage values.
 enum ImageDataRenderer {
     /// Parses GIF frames with ImageIO and falls back to UIImage for static data.
-    static func uiImage(from data: Data) -> UIImage? {
+    static func uiImage(from data: Data, allowsAnimation: Bool = true) -> UIImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             return UIImage(data: data)
         }
 
         let frameCount = CGImageSourceGetCount(source)
+        guard allowsAnimation else {
+            if let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+                return UIImage(cgImage: cgImage)
+            }
+            return UIImage(data: data)
+        }
+
         guard frameCount > 1 else {
             return UIImage(data: data)
         }

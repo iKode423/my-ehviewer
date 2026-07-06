@@ -90,6 +90,29 @@ final class ReaderViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
     }
 
+    /// Confirms page jump can fetch missing gallery page links before loading the target page.
+    func testLoadPageNumberFetchesMissingGalleryLinks() async {
+        let firstURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
+        let secondURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!
+        let galleryURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
+        let thumbnailPageURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/?p=1")!
+        let client = ReaderMockHTTPClient(responses: [
+            firstURL: Self.firstPageHTML,
+            galleryURL: Self.galleryRootHTML,
+            thumbnailPageURL: Self.gallerySecondThumbnailHTML,
+            secondURL: Self.secondPageHTML
+        ])
+        let viewModel = ReaderViewModel(initialPageURL: firstURL, client: client)
+
+        await viewModel.loadIfNeeded()
+        let didLoadPage = await viewModel.loadPageNumber(2)
+
+        XCTAssertTrue(didLoadPage)
+        XCTAssertFalse(viewModel.isLoadingPageLinks)
+        XCTAssertEqual(viewModel.sortedPageLinks.map(\.pageNumber), [1, 2])
+        XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
+    }
+
     /// Confirms loading a restored progress URL does not require known page links.
     func testLoadRestoredProgressURLWithoutPageLinks() async {
         let secondURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!
@@ -169,6 +192,22 @@ final class ReaderViewModelTests: XCTestCase {
     <div id="i2"><a id="prev" href="https://e-hentai.org/s/ddddeeeeff/100-26">Prev</a><a id="next" href="https://e-hentai.org/s/zzzzxxxxcc/100-27">Next</a></div>
     <div id="i3"><img id="img" src="https://example.test/27.webp" /></div>
     <div id="i5"><a href="https://e-hentai.org/g/100/abcdef1234/">Back</a></div>
+    """
+
+    private static let galleryRootHTML = """
+    <div id="gleft"><div id="gd1"><div style="background: transparent url(https://example.test/cover.jpg) 0 0 no-repeat"></div></div></div>
+    <div id="gd2"><h1 id="gn">Sample Gallery</h1></div>
+    <div id="gd3"><div id="gdc"><div class="cs ct2">Manga</div></div></div>
+    <table class="ptt"><tr><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=1">2</a></td></tr></table>
+    <div id="gdt"><a href="https://e-hentai.org/s/aaaabbbbcc/100-1"><div title="1"></div></a></div>
+    """
+
+    private static let gallerySecondThumbnailHTML = """
+    <div id="gleft"><div id="gd1"><div style="background: transparent url(https://example.test/cover.jpg) 0 0 no-repeat"></div></div></div>
+    <div id="gd2"><h1 id="gn">Sample Gallery</h1></div>
+    <div id="gd3"><div id="gdc"><div class="cs ct2">Manga</div></div></div>
+    <table class="ptt"><tr><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=1">2</a></td></tr></table>
+    <div id="gdt"><a href="https://e-hentai.org/s/ddddeeeeff/100-2"><div title="2"></div></a></div>
     """
 }
 

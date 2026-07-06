@@ -133,13 +133,19 @@ struct EHGalleryPageParser {
 
     /// Picks the thumbnail URL from one gallery page link.
     private func thumbnailURL(in html: String) -> URL? {
-        guard let image = EHHTMLParsing.firstMatch(in: html, pattern: #"<img\b[^>]*>"#)?.first else {
-            return nil
+        if let image = EHHTMLParsing.firstMatch(in: html, pattern: #"<img\b[^>]*>"#)?.first {
+            let lazyURL = EHHTMLParsing.attribute("data-src", in: image)
+            let srcURL = EHHTMLParsing.attribute("src", in: image)
+            if let url = EHHTMLParsing.url(from: lazyURL) ?? EHHTMLParsing.url(from: srcURL) {
+                return url
+            }
         }
 
-        let lazyURL = EHHTMLParsing.attribute("data-src", in: image)
-        let srcURL = EHHTMLParsing.attribute("src", in: image)
-        return EHHTMLParsing.url(from: lazyURL) ?? EHHTMLParsing.url(from: srcURL)
+        let styleURL = EHHTMLParsing.firstMatch(
+            in: html,
+            pattern: #"url\((?:'|")?([^)'"]+)(?:'|")?\)"#
+        )?.dropFirst().first
+        return EHHTMLParsing.url(from: styleURL)
     }
 
     /// Parses thumbnail pagination URLs from the top and bottom pagination bars.
@@ -152,5 +158,78 @@ struct EHGalleryPageParser {
         .compactMap(URL.init(string:))
 
         return Array(Set(urls)).sorted { $0.absoluteString < $1.absoluteString }
+    }
+}
+
+/// Parses the online favorite popup form.
+struct EHFavoritePopupParser {
+    /// Parses a popup response into a submittable form.
+    func parse(_ html: String, sourceURL: URL) -> EHFavoritePopupForm {
+        let form = favoriteForm(in: html)
+        let resolvedActionURL = form.flatMap { actionURL(in: $0, sourceURL: sourceURL) } ?? sourceURL
+        let fields = form.map(inputFields(in:)) ?? fallbackFields()
+        let categories = form.map(categories(in:)) ?? []
+        return EHFavoritePopupForm(actionURL: resolvedActionURL, fields: fields, categories: categories)
+    }
+
+    /// Finds the form that owns favorite category controls.
+    private func favoriteForm(in html: String) -> String? {
+        EHHTMLParsing.matches(in: html, pattern: #"<form\b[^>]*>.*?</form>"#)
+            .compactMap(\.first)
+            .first { $0.localizedCaseInsensitiveContains("favcat") || $0.localizedCaseInsensitiveContains("favnote") }
+    }
+
+    /// Resolves a form action against the popup response URL.
+    private func actionURL(in form: String, sourceURL: URL) -> URL {
+        guard
+            let startTag = EHHTMLParsing.firstMatch(in: form, pattern: #"<form\b[^>]*>"#)?.first,
+            let value = EHHTMLParsing.attribute("action", in: startTag),
+            let url = URL(string: value, relativeTo: sourceURL)
+        else {
+            return sourceURL
+        }
+        return url.absoluteURL
+    }
+
+    /// Parses input and textarea fields while preserving hidden site fields.
+    private func inputFields(in form: String) -> [String: String] {
+        var fields: [String: String] = [:]
+        for input in EHHTMLParsing.matches(in: form, pattern: #"<input\b[^>]*>"#).compactMap(\.first) {
+            guard let name = EHHTMLParsing.attribute("name", in: input) else { continue }
+            let type = EHHTMLParsing.attribute("type", in: input)?.lowercased() ?? ""
+            if type == "radio", name == "favcat", !input.localizedCaseInsensitiveContains("checked") {
+                continue
+            }
+            fields[name] = EHHTMLParsing.attribute("value", in: input) ?? ""
+        }
+
+        for match in EHHTMLParsing.matches(in: form, pattern: #"<textarea\b[^>]*name=(['"])(.*?)\1[^>]*>(.*?)</textarea>"#) {
+            guard match.count >= 4 else { continue }
+            fields[EHHTMLParsing.decodeEntities(match[2])] = EHHTMLParsing.textContent(match[3])
+        }
+
+        return fields.merging(fallbackFields()) { current, _ in current }
+    }
+
+    /// Parses visible favorite categories from radio controls.
+    private func categories(in form: String) -> [EHFavoriteCategory] {
+        EHHTMLParsing.matches(
+            in: form,
+            pattern: #"(<input\b[^>]*name=(['"])favcat\2[^>]*>)(.*?)(?=<input\b[^>]*name=(['"])favcat\4|</form>|<br\s*/?>)"#
+        )
+        .compactMap { match in
+            guard match.count >= 4, let value = EHHTMLParsing.attribute("value", in: match[1]) else { return nil }
+            let title = EHHTMLParsing.textContent(match[3])
+            return EHFavoriteCategory(
+                value: value,
+                title: title.isEmpty ? value : title,
+                isSelected: match[1].localizedCaseInsensitiveContains("checked")
+            )
+        }
+    }
+
+    /// Provides a minimal favorite form for popup layouts without a form tag.
+    private func fallbackFields() -> [String: String] {
+        ["favcat": "0", "favnote": "", "update": "1"]
     }
 }

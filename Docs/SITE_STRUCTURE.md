@@ -23,7 +23,7 @@
 
 - 结果表：`table.itg.gltc`
 - 分类：`.glcat .cn`
-- 封面缩略图：`.glthumb img[src]` 或 `.glthumb img[data-src]`
+- 封面缩略图：`.glthumb img[src]`、`.glthumb img[data-src]` 或行内 CSS `url(...)`
 - 详情链接：`.glname a[href^="https://e-hentai.org/g/"]`
 - 标题：`.glink`
 - 标签：`.gt[title]`
@@ -43,8 +43,10 @@
 - 标签：`#taglist a[id^="ta_"]`
 - 标签搜索：使用标签命名空间和值回填 `f_search`
 - 缩略图阅读入口：`#gdt a[href^="https://e-hentai.org/s/"]`
-- 页面缩略图：阅读入口内的 `img[src]` 或 `img[data-src]`
+- 页面缩略图：阅读入口内的 `img[src]`、`img[data-src]` 或行内 CSS `url(...)`
 - 缩略图分页：`.ptt a[href*="?p="]`、`.ptb a[href*="?p="]`
+- 网站收藏弹窗：`gallerypopups.php?gid=<gid>&t=<token>&act=addfav`
+- 网站收藏表单：保留 `input`/`textarea` 字段，使用 `favcat` 表示收藏分类，`favnote` 表示备注，提交时沿用表单 `action`
 
 ## 图片阅读页
 

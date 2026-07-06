@@ -87,3 +87,12 @@ xcrun simctl io booted screenshot /tmp/my-ehviewer-final-20260706.png
 ```
 
 结果：通过。Debug 构建成功，应用成功安装并启动，启动 PID 为 `16278`；截图确认搜索首屏、筛选入口、底部 Tab 和 `#00a8ff` 强调色显示正常。
+
+### 网站收藏与图库预览回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。覆盖阅读器跳页时自动补齐图库页面目录、书架网站收藏初始来源、详情页网站收藏弹窗表单解析与 POST 字段、搜索/图库 CSS 背景缩略图、GIF 静态预览、本地收藏/网站收藏中文文案和既有搜索、图库、阅读、缓存、Cookie、本地书架回归。真实网站收藏端到端同步未写入或使用真实 Cookie；需要完整登录 Cookie header 才能做线上验证。

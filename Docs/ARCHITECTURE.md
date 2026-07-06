@@ -18,13 +18,13 @@ MyEHViewer 会按以下边界逐步建设：
 
 根导航由 `ContentView` 持有 `AppNavigationStore`，统一管理底部 Tab selection 和当前 `ReaderRoute`。详情页、书架继续阅读和阅读 Tab 共享这一状态，避免用户已经进入阅读器但底部 Tab 仍停在搜索、再点阅读 Tab 时出现空态。
 
-搜索界面由 `SearchViewModel` 负责浏览来源、筛选状态、请求、解析、分页、初始关键词搜索、最近搜索、失败重试 URL 和错误状态，`SearchView` 只负责 SwiftUI 展示与用户输入，并可在根页面或详情页导航栈内复用。首页、热门、关注和站点收藏来源都通过 `EHSearchRequest` 生成 URL，再复用同一解析流程。
+搜索界面由 `SearchViewModel` 负责浏览来源、筛选状态、请求、解析、分页、初始关键词搜索、初始浏览来源、最近搜索、失败重试 URL 和错误状态，`SearchView` 只负责 SwiftUI 展示与用户输入，并可在根页面、详情页导航栈或书架网站收藏页复用。首页、热门、关注和站点收藏来源都通过 `EHSearchRequest` 生成 URL，再复用同一解析流程。
 
-图库详情页由 `GalleryDetailViewModel` 负责详情请求、解析和缩略图分页合并，`GalleryDetailView` 展示封面、元信息、可继续搜索的标签、带缩略图的阅读页入口、站点网页入口和失败重试操作。
+图库详情页由 `GalleryDetailViewModel` 负责详情请求、解析、缩略图分页合并和网站收藏表单提交，`GalleryDetailView` 展示封面、默认折叠的元信息、可继续搜索的标签、带缩略图的阅读页入口、站点网页入口和失败重试操作。收藏工具栏用菜单区分本地收藏和网站收藏；网站收藏会先请求 `gallerypopups.php` 弹窗，解析表单 action、隐藏字段、已选分类和备注字段，再用 URL-encoded POST 提交，Cookie 仍由共享 HTTP 客户端注入。
 
-阅读器由 `ReaderViewModel` 负责图片页请求、解析、翻页、已知页码范围、已知页面入口跳转状态和图片资源重载 token，`ReaderView` 展示当前图片、页码、上一页、下一页、缩略图目录、页码输入跳转、图片加载失败重试、缩放控制、显示偏好、当前页/图库页链接和原图入口。阅读器默认隐藏导航栏、Tab 和控制区，只显示图片；用户点击左侧/右侧翻页，点击中间显示控制 UI，并可通过双指缩放临时放大。远端图片通过 `CachedRemoteImageView` 统一加载，先读 `ImageCacheStore` 的磁盘缓存，再请求网络；GIF 数据会交给 ImageIO 拆帧并用 `UIImageView` 播放。
+阅读器由 `ReaderViewModel` 负责图片页请求、解析、翻页、已知页码范围、页面目录自动补齐、页码入口跳转状态和图片资源重载 token，`ReaderView` 展示当前图片、页码、上一页、下一页、缩略图目录、页码输入跳转、图片加载失败重试、缩放控制、显示偏好、当前页/图库页链接和原图入口。阅读器默认隐藏导航栏、Tab 和控制区，只显示图片；用户点击左侧/右侧翻页，点击中间显示控制 UI，并可通过双指缩放临时放大。远端图片通过 `CachedRemoteImageView` 统一加载，先读 `ImageCacheStore` 的磁盘缓存，再请求网络；GIF 数据会交给 ImageIO 拆帧并用 `UIImageView` 播放，搜索结果、图库封面和缩略图等预览场景固定渲染首帧静态图。
 
-本地书架由 `LibraryStore` 通过 `UserDefaults` 保存历史、收藏和最近阅读页。`LibraryView` 可从记录打开图库详情，也可从带进度的记录直接进入阅读器。它只保存图库 URL、标题、缩略图 URL 和页码等轻量元数据，不保存远端 HTML、图片或用户凭据。
+本地书架由 `LibraryStore` 通过 `UserDefaults` 保存历史、本地收藏和最近阅读页。`LibraryView` 将收藏拆成本地收藏与网站收藏：本地收藏读取 `LibraryStore`，网站收藏在 Cookie 已配置时复用 `SearchViewModel(initialSource: .favorites)` 请求站点 `favorites.php`。本地书架只保存图库 URL、标题、缩略图 URL 和页码等轻量元数据，不保存远端 HTML、图片或用户凭据。
 
 设置页通过共享的 `LibraryStore` 展示本地数据数量，并提供清空历史、收藏和阅读进度的确认操作。应用主题模式、阅读显示偏好和缩放倍率通过 `AppStorage` 在设置页、根视图和阅读器工具栏之间共享；主题默认跟随系统，也允许用户切换浅色或深色。图片缓存页展示缓存文件数量和占用空间，并提供确认清理入口。
 

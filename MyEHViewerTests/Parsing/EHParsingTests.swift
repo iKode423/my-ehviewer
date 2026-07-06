@@ -30,6 +30,24 @@ final class EHParsingTests: XCTestCase {
         XCTAssertEqual(page.nextPageURL?.absoluteString, "https://e-hentai.org/?next=100")
     }
 
+    /// Confirms search thumbnails can be recovered from CSS background styles.
+    func testSearchPageParserReadsCSSBackgroundThumbnail() {
+        let html = """
+        <table class="itg gltc">
+          <tr>
+            <td class="gl1c glcat"><div class="cn ct2">Manga</div></td>
+            <td class="gl2c"><div class="glthumb" style="background: url('https://example.test/thumb-css.jpg') center / cover no-repeat"></div></td>
+            <td class="gl3c glname"><a href="https://e-hentai.org/g/100/abcdef1234/"><div class="glink">Sample Gallery</div></a></td>
+            <td class="gl4c glhide"><div><a href="https://e-hentai.org/uploader/demo">demo</a></div><div>12 pages</div></td>
+          </tr>
+        </table>
+        """
+
+        let page = EHSearchPageParser().parse(html)
+
+        XCTAssertEqual(page.results.first?.thumbnailURL?.absoluteString, "https://example.test/thumb-css.jpg")
+    }
+
     /// Confirms gallery metadata, tags, and reader links are parsed.
     func testGalleryPageParserReadsDetailPage() throws {
         let html = """
@@ -70,6 +88,51 @@ final class EHParsingTests: XCTestCase {
         XCTAssertEqual(detail.pageLinks.map(\.pageNumber), [1, 2])
         XCTAssertEqual(detail.pageLinks.map { $0.thumbnailURL?.absoluteString }, ["https://example.test/page-1.webp", "https://example.test/page-2.webp"])
         XCTAssertEqual(detail.thumbnailPageURLs.count, 1)
+    }
+
+    /// Confirms reader thumbnails can be recovered from CSS background styles.
+    func testGalleryPageParserReadsCSSBackgroundThumbnail() throws {
+        let html = """
+        <div id="gleft"><div id="gd1"><div style="background: transparent url(https://example.test/cover.jpg) 0 0 no-repeat"></div></div></div>
+        <div id="gd2"><h1 id="gn">Sample Gallery</h1></div>
+        <div id="gd3"><div id="gdc"><div class="cs ct2">Manga</div></div></div>
+        <div id="gdt">
+          <a href="https://e-hentai.org/s/aaaabbbbcc/100-1"><div style="background-image:url(&quot;https://example.test/page-css.webp&quot;)"><div title="1"></div></div></a>
+        </div>
+        """
+
+        let detail = try EHGalleryPageParser().parse(
+            html,
+            sourceURL: URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
+        )
+
+        XCTAssertEqual(detail.pageLinks.first?.thumbnailURL?.absoluteString, "https://example.test/page-css.webp")
+    }
+
+    /// Confirms online favorite popup forms preserve hidden fields and selected category.
+    func testFavoritePopupParserBuildsSubmissionFields() {
+        let html = """
+        <form action="/gallerypopups.php?gid=100&amp;t=abcdef1234&amp;act=addfav" method="post">
+          <input type="hidden" name="gid" value="100">
+          <label><input type="radio" name="favcat" value="0">默认</label><br>
+          <label><input type="radio" name="favcat" value="1" checked="checked">稍后阅读</label><br>
+          <textarea name='favnote'>old &amp; note</textarea>
+          <input type="submit" name="apply" value="Apply">
+        </form>
+        """
+
+        let form = EHFavoritePopupParser().parse(
+            html,
+            sourceURL: URL(string: "https://e-hentai.org/gallerypopups.php?gid=100&t=abcdef1234&act=addfav")!
+        )
+        let fields = form.submissionFields(note: "new note")
+
+        XCTAssertEqual(form.actionURL.absoluteString, "https://e-hentai.org/gallerypopups.php?gid=100&t=abcdef1234&act=addfav")
+        XCTAssertEqual(form.categories.map(\.title), ["默认", "稍后阅读"])
+        XCTAssertEqual(fields["gid"], "100")
+        XCTAssertEqual(fields["favcat"], "1")
+        XCTAssertEqual(fields["favnote"], "new note")
+        XCTAssertEqual(fields["apply"], "Apply")
     }
 
     /// Confirms image URL, navigation, and original image links are parsed.

@@ -51,8 +51,11 @@ struct EHHTMLParsing {
     /// Returns the first attribute value from an HTML element string.
     static func attribute(_ name: String, in element: String) -> String? {
         let escapedName = NSRegularExpression.escapedPattern(for: name)
-        let pattern = #"\#(escapedName)="([^"]*)""#
-        return firstMatch(in: element, pattern: pattern)?.dropFirst().first.map(decodeEntities)
+        let pattern = #"\#(escapedName)\s*=\s*(['"])(.*?)\1"#
+        guard let match = firstMatch(in: element, pattern: pattern), match.count >= 3 else {
+            return nil
+        }
+        return decodeEntities(match[2])
     }
 
     /// Removes tags and decodes common HTML entities.
@@ -104,8 +107,12 @@ struct EHHTMLParsing {
 
     /// Extracts an absolute URL from a captured string.
     static func url(from value: String?) -> URL? {
-        guard let value, !value.hasPrefix("data:") else { return nil }
-        return URL(string: decodeEntities(value))
+        guard let value else { return nil }
+        let decoded = decodeEntities(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+        guard !decoded.hasPrefix("data:") else { return nil }
+        return URL(string: decoded)
     }
 
     /// Decodes decimal or hexadecimal numeric HTML entities.

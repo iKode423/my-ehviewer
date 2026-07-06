@@ -86,6 +86,20 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.results.count, 1)
     }
 
+    /// Confirms a configured initial browse source is used for automatic searches.
+    func testSearchIfNeededUsesInitialSource() async {
+        let recorder = SearchRequestRecorder()
+        let viewModel = SearchViewModel(
+            initialSource: .favorites,
+            client: MockHTTPClient(body: Self.searchHTML, recorder: recorder),
+            userDefaults: makeUserDefaults()
+        )
+
+        await viewModel.searchIfNeeded()
+
+        XCTAssertEqual(recorder.requestedURLs.first?.absoluteString, "https://e-hentai.org/favorites.php")
+    }
+
     /// Confirms filter reset keeps the query and browse source unchanged.
     func testResetFiltersKeepsQueryAndSource() {
         let viewModel = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML), userDefaults: makeUserDefaults())

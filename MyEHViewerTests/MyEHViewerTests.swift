@@ -1,4 +1,7 @@
+import ImageIO
 import XCTest
+import UniformTypeIdentifiers
+import UIKit
 @testable import MyEHViewer
 
 /// Verifies baseline app copy used by the initial Chinese interface shell.
@@ -16,6 +19,10 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.libraryContinueReadingPage, "继续阅读第 %@ 页")
         XCTAssertEqual(AppCopy.galleryOpenInBrowser, "网页")
         XCTAssertEqual(AppCopy.searchResetFilters, "重置筛选")
+        XCTAssertEqual(AppCopy.libraryFavorites, "本地收藏")
+        XCTAssertEqual(AppCopy.librarySiteFavorites, "网站收藏")
+        XCTAssertEqual(AppCopy.galleryLocalFavorite, "本地收藏")
+        XCTAssertEqual(AppCopy.gallerySiteFavorite, "网站收藏")
     }
 
     /// Confirms reader preference labels stay localized for settings and toolbar menus.
@@ -65,6 +72,17 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(store.snapshot, .empty)
     }
 
+    /// Confirms GIF preview rendering can force a static first frame.
+    func testImageDataRendererCanRenderStaticGIFPreview() throws {
+        let data = try makeAnimatedGIFData()
+
+        let animatedImage = ImageDataRenderer.uiImage(from: data, allowsAnimation: true)
+        let staticImage = ImageDataRenderer.uiImage(from: data, allowsAnimation: false)
+
+        XCTAssertNotNil(animatedImage?.images)
+        XCTAssertNil(staticImage?.images)
+    }
+
     /// Confirms opening a reader route selects the reader tab.
     @MainActor
     func testAppNavigationStoreOpensReaderTab() {
@@ -91,5 +109,35 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(EHTag(namespace: "group", name: "sample").searchQuery, "group:sample")
         XCTAssertEqual(EHTag(namespace: "group", name: "sample tag").searchQuery, "group:\"sample tag\"")
         XCTAssertEqual(EHTag(namespace: "", name: "sample tag").searchQuery, "\"sample tag\"")
+    }
+
+    /// Builds a tiny two-frame GIF fixture for renderer tests.
+    private func makeAnimatedGIFData() throws -> Data {
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, UTType.gif.identifier as CFString, 2, nil))
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
+        let colors: [UIColor] = [.red, .blue]
+        let frameProperties = [
+            kCGImagePropertyGIFDictionary: [
+                kCGImagePropertyGIFDelayTime: 0.1
+            ]
+        ] as CFDictionary
+        let gifProperties = [
+            kCGImagePropertyGIFDictionary: [
+                kCGImagePropertyGIFLoopCount: 0
+            ]
+        ] as CFDictionary
+
+        CGImageDestinationSetProperties(destination, gifProperties)
+        for color in colors {
+            let image = renderer.image { context in
+                color.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+            }
+            CGImageDestinationAddImage(destination, try XCTUnwrap(image.cgImage), frameProperties)
+        }
+
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return data as Data
     }
 }

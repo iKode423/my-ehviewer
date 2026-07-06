@@ -59,6 +59,33 @@ final class GalleryDetailViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.canLoadMorePageLinks)
     }
 
+    /// Confirms online favorite submission parses the popup form and posts preserved fields.
+    func testAddSiteFavoriteSubmitsParsedPopupForm() async {
+        let galleryURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
+        let popupURL = EHGalleryIdentifier(gid: 100, token: "abcdef1234").favoritePopupURL()
+        let formClient = GalleryFormRecorder()
+        let viewModel = GalleryDetailViewModel(
+            pageURL: galleryURL,
+            client: GalleryMockHTTPClient(responses: [
+                galleryURL: Self.detailHTML,
+                popupURL: Self.favoritePopupHTML
+            ]),
+            formClient: formClient
+        )
+
+        await viewModel.reload()
+        await viewModel.addSiteFavorite()
+
+        XCTAssertFalse(viewModel.isUpdatingSiteFavorite)
+        XCTAssertTrue(viewModel.siteFavoriteSucceeded)
+        XCTAssertEqual(viewModel.siteFavoriteMessage, AppCopy.gallerySiteFavoriteSaved)
+        XCTAssertEqual(formClient.postedURL?.absoluteString, "https://e-hentai.org/gallerypopups.php?gid=100&t=abcdef1234&act=addfav")
+        XCTAssertEqual(formClient.postedFields["gid"], "100")
+        XCTAssertEqual(formClient.postedFields["favcat"], "2")
+        XCTAssertEqual(formClient.postedFields["favnote"], "")
+        XCTAssertEqual(formClient.postedFields["apply"], "Apply")
+    }
+
     /// Confirms loading errors are exposed as user-facing messages.
     func testReloadStoresErrorMessage() async {
         let url = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
@@ -135,6 +162,16 @@ final class GalleryDetailViewModelTests: XCTestCase {
     <table class="ptt"><tr><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=1">2</a></td><td><a href="https://e-hentai.org/g/100/abcdef1234/?p=2">3</a></td></tr></table>
     <div id="gdt"><a href="https://e-hentai.org/s/gggghhhhii/100-3"><div title="3"></div></a></div>
     """
+
+    private static let favoritePopupHTML = """
+    <form action="/gallerypopups.php?gid=100&amp;t=abcdef1234&amp;act=addfav" method="post">
+      <input type="hidden" name="gid" value="100">
+      <label><input type="radio" name="favcat" value="0">默认</label><br>
+      <label><input type="radio" name="favcat" value="2" checked="checked">测试</label><br>
+      <textarea name="favnote">old note</textarea>
+      <input type="submit" name="apply" value="Apply">
+    </form>
+    """
 }
 
 /// Provides deterministic gallery detail responses for tests.
@@ -166,5 +203,18 @@ private struct GalleryMockHTTPClient: EHHTTPClient {
             throw error
         }
         return EHHTTPResponse(url: url, statusCode: 200, body: responses[url] ?? "")
+    }
+}
+
+/// Records form submissions from gallery view model tests.
+private final class GalleryFormRecorder: EHFormHTTPClient {
+    private(set) var postedURL: URL?
+    private(set) var postedFields: [String: String] = [:]
+
+    /// Records the form request and returns a successful response.
+    func postForm(_ url: URL, fields: [String: String]) async throws -> EHHTTPResponse {
+        postedURL = url
+        postedFields = fields
+        return EHHTTPResponse(url: url, statusCode: 200, body: "ok")
     }
 }

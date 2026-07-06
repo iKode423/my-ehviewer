@@ -5,7 +5,9 @@ struct GalleryDetailView: View {
     let result: EHSearchResult
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var appNavigationStore: AppNavigationStore
+    @StateObject private var siteCookieStore = SiteCookieStore.shared
     @StateObject private var viewModel: GalleryDetailViewModel
+    @State private var showsMetadata = false
 
     /// Creates a detail view that loads the result's gallery URL.
     init(result: EHSearchResult) {
@@ -37,6 +39,7 @@ struct GalleryDetailView: View {
                     .frame(maxWidth: .infinity, minHeight: 280)
                 } else if let detail = viewModel.detail {
                     header(for: detail)
+                    siteFavoriteStatus
                     metadataSection(for: detail)
                     tagsSection(for: detail)
                     pageLinksSection(for: detail)
@@ -51,16 +54,7 @@ struct GalleryDetailView: View {
                 Label(AppCopy.galleryOpenInBrowser, systemImage: "safari")
             }
 
-            if let detail = viewModel.detail {
-                Button {
-                    libraryStore.toggleFavorite(detail: detail, fallback: result)
-                } label: {
-                    Label(
-                        libraryStore.isFavorite(detail.identifier) ? AppCopy.libraryUnfavoriteAction : AppCopy.libraryFavoriteAction,
-                        systemImage: libraryStore.isFavorite(detail.identifier) ? "star.fill" : "star"
-                    )
-                }
-            }
+            favoriteMenu
         }
         .task {
             await viewModel.loadIfNeeded()
@@ -115,7 +109,7 @@ struct GalleryDetailView: View {
 
     /// Shows a stable cover image frame.
     private func coverImage(url: URL?) -> some View {
-        CachedRemoteImageView(url: url, contentMode: .fill) {
+        CachedRemoteImageView(url: url, contentMode: .fill, animationMode: .staticPreview) {
             ProgressView()
         } failure: {
             Image(systemName: "photo")
@@ -129,21 +123,22 @@ struct GalleryDetailView: View {
 
     /// Shows parsed metadata rows from the gallery table.
     private func metadataSection(for detail: EHGalleryDetail) -> some View {
-        return VStack(alignment: .leading, spacing: 10) {
-            Text(AppCopy.galleryMetadataTitle)
-                .font(.headline)
-
-            ForEach(detail.metadata) { item in
-                HStack(alignment: .top) {
-                    Text(item.key)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 16)
-                    Text(item.value)
-                        .multilineTextAlignment(.trailing)
+        DisclosureGroup(AppCopy.galleryMetadataTitle, isExpanded: $showsMetadata) {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(detail.metadata) { item in
+                    HStack(alignment: .top) {
+                        Text(item.key)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 16)
+                        Text(item.value)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    .font(.subheadline)
                 }
-                .font(.subheadline)
             }
+            .padding(.top, 8)
         }
+        .font(.headline)
     }
 
     /// Shows a wrapping list of parsed gallery tags.
@@ -267,7 +262,7 @@ struct GalleryDetailView: View {
 
     /// Shows a stable thumbnail frame for one reader page.
     private func pageThumbnail(url: URL?) -> some View {
-        CachedRemoteImageView(url: url, contentMode: .fill) {
+        CachedRemoteImageView(url: url, contentMode: .fill, animationMode: .staticPreview) {
             ProgressView()
         } failure: {
             Image(systemName: "photo")
@@ -278,6 +273,50 @@ struct GalleryDetailView: View {
         .background(Color.secondary.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         .clipped()
+    }
+
+    /// Shows local and site favorite actions from the toolbar.
+    @ViewBuilder
+    private var favoriteMenu: some View {
+        if let detail = viewModel.detail {
+            Menu {
+                Button {
+                    libraryStore.toggleFavorite(detail: detail, fallback: result)
+                } label: {
+                    Label(
+                        libraryStore.isFavorite(detail.identifier) ? AppCopy.galleryLocalUnfavorite : AppCopy.galleryLocalFavorite,
+                        systemImage: libraryStore.isFavorite(detail.identifier) ? "star.fill" : "star"
+                    )
+                }
+
+                Button {
+                    Task { await viewModel.addSiteFavorite() }
+                } label: {
+                    if viewModel.isUpdatingSiteFavorite {
+                        Label(AppCopy.gallerySiteFavoriteSaving, systemImage: "hourglass")
+                    } else {
+                        Label(AppCopy.gallerySiteFavorite, systemImage: "icloud.and.arrow.up")
+                    }
+                }
+                .disabled(!siteCookieStore.hasCookieHeader || viewModel.isUpdatingSiteFavorite)
+
+                if !siteCookieStore.hasCookieHeader {
+                    Label(AppCopy.gallerySiteFavoriteRequiresCookie, systemImage: "key")
+                }
+            } label: {
+                Label(AppCopy.galleryFavoriteMenu, systemImage: libraryStore.isFavorite(detail.identifier) ? "star.fill" : "star")
+            }
+        }
+    }
+
+    /// Shows the latest online favorite sync result.
+    @ViewBuilder
+    private var siteFavoriteStatus: some View {
+        if let message = viewModel.siteFavoriteMessage {
+            Label(message, systemImage: viewModel.siteFavoriteSucceeded ? "checkmark.circle" : "exclamationmark.triangle")
+                .font(.footnote)
+                .foregroundStyle(viewModel.siteFavoriteSucceeded ? .green : .red)
+        }
     }
 }
 
