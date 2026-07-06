@@ -1,4 +1,6 @@
+import ImageIO
 import SwiftUI
+import UIKit
 
 /// Presents the gallery reader surface once a gallery is selected.
 struct ReaderView: View {
@@ -153,24 +155,21 @@ struct ReaderView: View {
                     HStack {
                         Spacer(minLength: 0)
 
-                        AsyncImage(url: imagePage.imageURL) { phase in
-                            switch phase {
-                            case .success(let image):
-                                readerImage(image)
-                                    .onTapGesture(count: 2) {
-                                        toggleReaderZoom()
-                                    }
-                            case .failure:
-                                imageLoadFailureView
-                            case .empty:
-                                ProgressView()
-                                    .frame(maxWidth: .infinity, minHeight: 320)
-                            @unknown default:
-                                imageLoadFailureView
-                            }
+                        CachedRemoteImageView(
+                            url: imagePage.imageURL,
+                            contentMode: .fit,
+                            reloadToken: viewModel.imageReloadToken
+                        ) {
+                            ProgressView()
+                                .frame(maxWidth: .infinity, minHeight: 320)
+                        } failure: {
+                            imageLoadFailureView
                         }
                         .id(viewModel.imageReloadToken)
                         .frame(width: readerImageWidth(availableWidth: geometry.size.width))
+                        .onTapGesture(count: 2) {
+                            toggleReaderZoom()
+                        }
                         .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: zoomLevelRaw)
 
                         Spacer(minLength: 0)
@@ -186,13 +185,6 @@ struct ReaderView: View {
             navigationControls
                 .padding()
         }
-    }
-
-    /// Applies the selected fit mode to a loaded reader image.
-    private func readerImage(_ image: Image) -> some View {
-        image
-            .resizable()
-            .scaledToFit()
     }
 
     /// Shows an inline retry action when the image resource fails to load.
@@ -219,21 +211,11 @@ struct ReaderView: View {
 
     /// Shows a stable thumbnail frame for a known reader page.
     private func pageThumbnail(url: URL?) -> some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .scaledToFill()
-            case .failure:
-                Image(systemName: "photo")
-                    .foregroundStyle(.secondary)
-            case .empty:
-                ProgressView()
-            @unknown default:
-                Image(systemName: "photo")
-                    .foregroundStyle(.secondary)
-            }
+        CachedRemoteImageView(url: url, contentMode: .fill) {
+            ProgressView()
+        } failure: {
+            Image(systemName: "photo")
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
         .aspectRatio(0.72, contentMode: .fit)
@@ -460,6 +442,206 @@ struct ReaderView: View {
         } label: {
             Label(AppCopy.readerLinksMenu, systemImage: "link")
         }
+    }
+}
+
+/// Selects how cached image data should be fitted into its view frame.
+enum CachedRemoteImageContentMode {
+    case fit
+    case fill
+
+    var uiViewContentMode: UIView.ContentMode {
+        switch self {
+        case .fit: .scaleAspectFit
+        case .fill: .scaleAspectFill
+        }
+    }
+}
+
+/// Shows a remote image from disk cache or network while preserving GIF animation.
+struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
+    let url: URL?
+    let contentMode: CachedRemoteImageContentMode
+    let reloadToken: Int
+    let placeholder: () -> Placeholder
+    let failure: () -> Failure
+
+    @StateObject private var loader = CachedRemoteImageLoader()
+
+    /// Creates a cached remote image view with custom loading and failure states.
+    init(
+        url: URL?,
+        contentMode: CachedRemoteImageContentMode = .fit,
+        reloadToken: Int = 0,
+        @ViewBuilder placeholder: @escaping () -> Placeholder,
+        @ViewBuilder failure: @escaping () -> Failure
+    ) {
+        self.url = url
+        self.contentMode = contentMode
+        self.reloadToken = reloadToken
+        self.placeholder = placeholder
+        self.failure = failure
+    }
+
+    var body: some View {
+        Group {
+            switch loader.state {
+            case .idle, .loading:
+                placeholder()
+            case .success(let data):
+                AnimatedImageDataView(data: data, contentMode: contentMode.uiViewContentMode)
+            case .failure:
+                failure()
+            }
+        }
+        .task(id: loadKey) {
+            await loader.load(url: url)
+        }
+    }
+
+    private var loadKey: String {
+        "\(url?.absoluteString ?? "nil")-\(reloadToken)"
+    }
+}
+
+/// Tracks one cached remote image loading operation.
+@MainActor
+final class CachedRemoteImageLoader: ObservableObject {
+    @Published private(set) var state: CachedRemoteImageState = .idle
+
+    private let cacheStore: ImageCacheStore
+    private let client: URLSessionEHHTTPClient
+    private var lastLoadedKey: String?
+
+    /// Creates an image loader with injectable cache and network dependencies.
+    init(
+        cacheStore: ImageCacheStore = .shared,
+        client: URLSessionEHHTTPClient = URLSessionEHHTTPClient()
+    ) {
+        self.cacheStore = cacheStore
+        self.client = client
+    }
+
+    /// Loads image data from cache first, then stores a network response on success.
+    func load(url: URL?) async {
+        guard let url else {
+            state = .failure
+            lastLoadedKey = nil
+            return
+        }
+
+        if let cachedData = cacheStore.data(for: url) {
+            state = .success(cachedData)
+            lastLoadedKey = url.absoluteString
+            return
+        }
+
+        guard lastLoadedKey != url.absoluteString || state != .loading else { return }
+        lastLoadedKey = url.absoluteString
+        state = .loading
+
+        do {
+            let response = try await client.data(url)
+            cacheStore.save(response.data, for: url)
+            if response.url != url {
+                cacheStore.save(response.data, for: response.url)
+            }
+            state = .success(response.data)
+        } catch {
+            state = .failure
+        }
+    }
+}
+
+/// Describes the loading state for cached remote image data.
+enum CachedRemoteImageState: Equatable {
+    case idle
+    case loading
+    case success(Data)
+    case failure
+}
+
+/// Bridges image data into UIImageView so animated GIF frames can play.
+struct AnimatedImageDataView: UIViewRepresentable {
+    let data: Data
+    let contentMode: UIView.ContentMode
+
+    /// Creates a coordinator that avoids reparsing unchanged image data.
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    /// Creates the underlying UIKit image view.
+    func makeUIView(context: Context) -> UIImageView {
+        let imageView = UIImageView()
+        imageView.clipsToBounds = true
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        return imageView
+    }
+
+    /// Updates the image view and starts GIF animation when multiple frames exist.
+    func updateUIView(_ imageView: UIImageView, context: Context) {
+        imageView.contentMode = contentMode
+        if context.coordinator.data != data {
+            context.coordinator.data = data
+            context.coordinator.image = ImageDataRenderer.uiImage(from: data)
+        }
+        imageView.image = context.coordinator.image
+        if context.coordinator.image?.images?.isEmpty == false {
+            imageView.startAnimating()
+        }
+    }
+
+    /// Stores parsed image data between SwiftUI updates.
+    final class Coordinator {
+        var data: Data?
+        var image: UIImage?
+    }
+}
+
+/// Converts static and animated image data into UIImage values.
+enum ImageDataRenderer {
+    /// Parses GIF frames with ImageIO and falls back to UIImage for static data.
+    static func uiImage(from data: Data) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return UIImage(data: data)
+        }
+
+        let frameCount = CGImageSourceGetCount(source)
+        guard frameCount > 1 else {
+            return UIImage(data: data)
+        }
+
+        var frames: [UIImage] = []
+        var duration: TimeInterval = 0
+
+        for index in 0..<frameCount {
+            guard let cgImage = CGImageSourceCreateImageAtIndex(source, index, nil) else { continue }
+            frames.append(UIImage(cgImage: cgImage))
+            duration += frameDuration(at: index, source: source)
+        }
+
+        guard !frames.isEmpty else {
+            return UIImage(data: data)
+        }
+
+        let resolvedDuration = duration > 0 ? duration : Double(frames.count) * 0.1
+        return UIImage.animatedImage(with: frames, duration: resolvedDuration) ?? UIImage(data: data)
+    }
+
+    /// Reads one GIF frame delay and clamps unreadably fast frames.
+    private static func frameDuration(at index: Int, source: CGImageSource) -> TimeInterval {
+        guard
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+            let gifProperties = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+        else {
+            return 0.1
+        }
+
+        let unclampedDelay = gifProperties[kCGImagePropertyGIFUnclampedDelayTime] as? TimeInterval
+        let delay = unclampedDelay ?? gifProperties[kCGImagePropertyGIFDelayTime] as? TimeInterval ?? 0.1
+        return delay < 0.02 ? 0.1 : delay
     }
 }
 

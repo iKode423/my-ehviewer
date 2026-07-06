@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @StateObject private var siteCookieStore = SiteCookieStore.shared
+    @StateObject private var imageCacheStore = ImageCacheStore.shared
     @AppStorage(AppThemeMode.storageKey) private var themeModeRaw = AppThemeMode.system.rawValue
     @AppStorage(ReaderFitMode.storageKey) private var fitModeRaw = ReaderFitMode.fitPage.rawValue
     @AppStorage(ReaderZoomLevel.storageKey) private var zoomLevelRaw = ReaderZoomLevel.x1.rawValue
@@ -11,6 +12,7 @@ struct SettingsView: View {
     @State private var cookieInput = ""
     @State private var showsClearConfirmation = false
     @State private var showsCookieClearConfirmation = false
+    @State private var showsImageCacheClearConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -19,11 +21,13 @@ struct SettingsView: View {
                 readerPreferencesSection
                 siteAccessSection
                 localDataSection
+                imageCacheSection
                 cachePolicySection
             }
             .navigationTitle(AppCopy.settingsTitle)
             .onAppear {
                 cookieInput = siteCookieStore.cookieHeader
+                imageCacheStore.refresh()
             }
             .confirmationDialog(
                 AppCopy.settingsClearConfirmationTitle,
@@ -45,6 +49,17 @@ struct SettingsView: View {
                     siteCookieStore.clearCookieHeader()
                     cookieInput = ""
                 }
+            }
+            .confirmationDialog(
+                AppCopy.settingsImageCacheClearTitle,
+                isPresented: $showsImageCacheClearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(AppCopy.settingsImageCacheClearConfirm, role: .destructive) {
+                    imageCacheStore.clear()
+                }
+            } message: {
+                Text(AppCopy.settingsImageCacheClearMessage)
             }
         }
     }
@@ -130,6 +145,32 @@ struct SettingsView: View {
             }
             .disabled(libraryStore.history.isEmpty && libraryStore.favorites.isEmpty)
         }
+    }
+
+    /// Shows image cache usage and cleanup controls.
+    private var imageCacheSection: some View {
+        Section(AppCopy.settingsImageCacheTitle) {
+            Label(imageCacheUsageText, systemImage: "photo.stack")
+                .foregroundStyle(.secondary)
+
+            Button(role: .destructive) {
+                showsImageCacheClearConfirmation = true
+            } label: {
+                Label(AppCopy.settingsClearImageCache, systemImage: "trash")
+            }
+            .disabled(imageCacheStore.snapshot.isEmpty)
+        }
+    }
+
+    private var imageCacheUsageText: String {
+        if imageCacheStore.snapshot.isEmpty {
+            return AppCopy.settingsImageCacheEmpty
+        }
+        return String(
+            format: AppCopy.settingsImageCacheUsageFormat,
+            String(imageCacheStore.snapshot.fileCount),
+            imageCacheStore.snapshot.localizedByteCount
+        )
     }
 
     /// Explains the current remote-content cache policy.

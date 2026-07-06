@@ -38,6 +38,30 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.readerJumpPageConfirm, "跳转")
         XCTAssertEqual(AppCopy.readerImageLoadFailed, "图片加载失败")
         XCTAssertEqual(AppCopy.readerImageRetry, "重新加载图片")
+        XCTAssertEqual(AppCopy.settingsImageCacheTitle, "图片缓存")
+    }
+
+    /// Confirms image cache data is saved, counted, read, and cleared.
+    @MainActor
+    func testImageCacheStoreSavesAndClearsData() {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let store = ImageCacheStore(directoryURL: directoryURL)
+        let imageURL = URL(string: "https://example.test/image.gif")!
+        let data = Data([0x47, 0x49, 0x46, 0x38])
+
+        XCTAssertNil(store.data(for: imageURL))
+        XCTAssertEqual(store.snapshot, .empty)
+
+        store.save(data, for: imageURL)
+
+        XCTAssertEqual(store.data(for: imageURL), data)
+        XCTAssertEqual(store.snapshot.fileCount, 1)
+        XCTAssertEqual(store.snapshot.byteCount, Int64(data.count))
+
+        store.clear()
+
+        XCTAssertNil(store.data(for: imageURL))
+        XCTAssertEqual(store.snapshot, .empty)
     }
 
     /// Confirms reader zoom persistence resolves unknown values safely.

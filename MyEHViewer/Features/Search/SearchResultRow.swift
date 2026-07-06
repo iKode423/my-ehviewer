@@ -47,23 +47,12 @@ struct SearchResultRow: View {
 
     /// Shows the remote thumbnail with a stable frame.
     private var thumbnail: some View {
-        AsyncImage(url: result.thumbnailURL) { phase in
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .scaledToFill()
-            case .failure:
-                Image(systemName: "photo")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-            case .empty:
-                ProgressView()
-            @unknown default:
-                Image(systemName: "photo")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-            }
+        CachedRemoteImageView(url: result.thumbnailURL, contentMode: .fill) {
+            ProgressView()
+        } failure: {
+            Image(systemName: "photo")
+                .font(.title2)
+                .foregroundStyle(.secondary)
         }
         .frame(width: 72, height: 96)
         .background(Color.secondary.opacity(0.12))

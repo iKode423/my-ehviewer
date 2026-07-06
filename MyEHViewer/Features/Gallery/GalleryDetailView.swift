@@ -114,23 +114,12 @@ struct GalleryDetailView: View {
 
     /// Shows a stable cover image frame.
     private func coverImage(url: URL?) -> some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .scaledToFill()
-            case .failure:
-                Image(systemName: "photo")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-            case .empty:
-                ProgressView()
-            @unknown default:
-                Image(systemName: "photo")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-            }
+        CachedRemoteImageView(url: url, contentMode: .fill) {
+            ProgressView()
+        } failure: {
+            Image(systemName: "photo")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
         }
         .frame(width: 128, height: 176)
         .background(Color.secondary.opacity(0.12))
@@ -277,21 +266,11 @@ struct GalleryDetailView: View {
 
     /// Shows a stable thumbnail frame for one reader page.
     private func pageThumbnail(url: URL?) -> some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .scaledToFill()
-            case .failure:
-                Image(systemName: "photo")
-                    .foregroundStyle(.secondary)
-            case .empty:
-                ProgressView()
-            @unknown default:
-                Image(systemName: "photo")
-                    .foregroundStyle(.secondary)
-            }
+        CachedRemoteImageView(url: url, contentMode: .fill) {
+            ProgressView()
+        } failure: {
+            Image(systemName: "photo")
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
         .aspectRatio(0.72, contentMode: .fit)
