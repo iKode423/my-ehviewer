@@ -153,6 +153,13 @@ struct SettingsView: View {
             Label(imageCacheUsageText, systemImage: "photo.stack")
                 .foregroundStyle(.secondary)
 
+            NavigationLink {
+                ImageCacheManagementView()
+            } label: {
+                Label(AppCopy.settingsImageCacheManage, systemImage: "externaldrive")
+            }
+            .disabled(imageCacheStore.gallerySummaries.isEmpty)
+
             Button(role: .destructive) {
                 showsImageCacheClearConfirmation = true
             } label: {
@@ -166,6 +173,13 @@ struct SettingsView: View {
         if imageCacheStore.snapshot.isEmpty {
             return AppCopy.settingsImageCacheEmpty
         }
+        if imageCacheStore.snapshot.galleryCount > 0 {
+            return String(
+                format: AppCopy.settingsImageCacheGalleryUsageFormat,
+                String(imageCacheStore.snapshot.galleryCount),
+                imageCacheStore.snapshot.localizedByteCount
+            )
+        }
         return String(
             format: AppCopy.settingsImageCacheUsageFormat,
             String(imageCacheStore.snapshot.fileCount),
@@ -178,6 +192,71 @@ struct SettingsView: View {
         Section(AppCopy.settingsCacheNoteTitle) {
             Label(AppCopy.settingsCacheNoteMessage, systemImage: "internaldrive")
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Lists cached galleries and opens their detail pages.
+private struct ImageCacheManagementView: View {
+    @StateObject private var imageCacheStore = ImageCacheStore.shared
+
+    var body: some View {
+        Group {
+            if imageCacheStore.gallerySummaries.isEmpty {
+                ContentUnavailableView(
+                    AppCopy.cacheManagementEmptyTitle,
+                    systemImage: "externaldrive",
+                    description: Text(AppCopy.cacheManagementEmptyMessage)
+                )
+            } else {
+                List {
+                    ForEach(imageCacheStore.gallerySummaries) { summary in
+                        NavigationLink {
+                            GalleryDetailView(result: summary.searchResult)
+                        } label: {
+                            cachedGalleryRow(summary)
+                        }
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                imageCacheStore.clearGallery(summary.galleryIdentifier)
+                            } label: {
+                                Label(AppCopy.cacheManagementDeleteGallery, systemImage: "trash")
+                            }
+                        }
+                    }
+                    .onDelete(perform: deleteCachedGalleries)
+                }
+            }
+        }
+        .navigationTitle(AppCopy.cacheManagementTitle)
+        .onAppear {
+            imageCacheStore.refresh()
+        }
+    }
+
+    /// Renders one cached gallery summary row.
+    private func cachedGalleryRow(_ summary: CachedGallerySummary) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(summary.title)
+                .font(.headline)
+                .lineLimit(2)
+
+            HStack {
+                Label(summary.progressText, systemImage: "checkmark.circle")
+                Spacer()
+                Text(summary.localizedByteCount)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// Removes cached data for galleries selected from the management list.
+    private func deleteCachedGalleries(at offsets: IndexSet) {
+        let summaries = imageCacheStore.gallerySummaries
+        for offset in offsets where summaries.indices.contains(offset) {
+            imageCacheStore.clearGallery(summaries[offset].galleryIdentifier)
         }
     }
 }

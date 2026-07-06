@@ -20,13 +20,15 @@ MyEHViewer 会按以下边界逐步建设：
 
 搜索界面由 `SearchViewModel` 负责浏览来源、筛选状态、请求、解析、分页、初始关键词搜索、初始浏览来源、最近搜索、失败重试 URL 和错误状态，`SearchView` 只负责 SwiftUI 展示与用户输入，并可在根页面、详情页导航栈或书架网站收藏页复用。首页、热门、关注和站点收藏来源都通过 `EHSearchRequest` 生成 URL，再复用同一解析流程。
 
-图库详情页由 `GalleryDetailViewModel` 负责详情请求、解析、缩略图分页合并和网站收藏表单提交，`GalleryDetailView` 展示封面、默认折叠的元信息、可继续搜索的标签、带缩略图的阅读页入口、站点网页入口和失败重试操作。收藏工具栏用菜单区分本地收藏和网站收藏；网站收藏会先请求 `gallerypopups.php` 弹窗，解析表单 action、隐藏字段、已选分类和备注字段，再用 URL-encoded POST 提交，Cookie 仍由共享 HTTP 客户端注入。
+图库详情页由 `GalleryDetailViewModel` 负责详情请求、解析、缩略图分页合并和线上收藏表单提交，`GalleryDetailView` 展示封面、默认折叠的元信息、可继续搜索的标签、带缩略图的阅读页入口、站点网页入口、后台下载入口和失败重试操作。收藏工具栏用菜单区分本地收藏和线上收藏；线上收藏会先请求 `gallerypopups.php` 弹窗，解析表单 action、隐藏字段、已选分类和备注字段，再用 URL-encoded POST 提交，取消收藏时提交站点使用的移除分类值，Cookie 仍由共享 HTTP 客户端注入。
 
-阅读器由 `ReaderViewModel` 负责图片页请求、解析、翻页、已知页码范围、页面目录自动补齐、页码入口跳转状态和图片资源重载 token，`ReaderView` 展示当前图片、页码、上一页、下一页、缩略图目录、页码输入跳转、图片加载失败重试、缩放控制、显示偏好、当前页/图库页链接和原图入口。阅读器默认隐藏导航栏、Tab 和控制区，只显示图片；用户点击左侧/右侧翻页，点击中间显示控制 UI，并可通过双指缩放临时放大。远端图片通过 `CachedRemoteImageView` 统一加载，先读 `ImageCacheStore` 的磁盘缓存，再请求网络；GIF 数据会交给 ImageIO 拆帧并用 `UIImageView` 播放，搜索结果、图库封面和缩略图等预览场景固定渲染首帧静态图。
+阅读器由 `ReaderViewModel` 负责图片页请求、解析、翻页、已知页码范围、页面目录自动补齐、页码入口跳转状态和图片资源重载 token，`ReaderView` 展示当前图片、页码、上一页、下一页、缩略图目录、页码输入跳转、图片加载失败重试、缩放控制、显示偏好、当前页/图库页链接和原图入口。阅读器默认隐藏导航栏、Tab 和控制区，只显示图片；用户点击左侧/右侧翻页，点击中间显示控制 UI，并可通过双指缩放临时放大。远端图片通过 `CachedRemoteImageView` 统一加载，先读 `ImageCacheStore` 的磁盘缓存，再请求网络；GIF 数据会交给 ImageIO 拆帧并用 `UIImageView` 播放，搜索结果、图库封面和缩略图等预览场景固定渲染首帧静态图。图片页 HTML 请求失败时，阅读器会根据缓存索引恢复已缓存的阅读页、图片 URL 和相邻页链接，用于离线打开已缓存页面。
 
-本地书架由 `LibraryStore` 通过 `UserDefaults` 保存历史、本地收藏和最近阅读页。`LibraryView` 将收藏拆成本地收藏与网站收藏：本地收藏读取 `LibraryStore`，网站收藏在 Cookie 已配置时复用 `SearchViewModel(initialSource: .favorites)` 请求站点 `favorites.php`。本地书架只保存图库 URL、标题、缩略图 URL 和页码等轻量元数据，不保存远端 HTML、图片或用户凭据。
+图片缓存由 `ImageCacheStore` 管理。缓存目录内保存图片二进制和 `index.json`，索引包含远端 URL alias、图库页码到图片缓存的映射，以及图库级标题、封面和总页数元数据。保存图片时会同时登记请求 URL 与最终响应 URL，避免重定向导致同图重复；刷新缓存时会按图片内容哈希清理旧重复文件，并把 alias 与页码记录重映射到保留的文件。缓存可全局清空，也可按图库删除对应页码记录和不再被引用的图片文件。`GalleryDownloadManager` 负责整本后台下载：先按阅读页链接请求 HTML，再解析真实图片 URL 并写入带图库上下文的缓存。下载进度、详情页进度和缓存管理页都读取同一个图库缓存摘要。
 
-设置页通过共享的 `LibraryStore` 展示本地数据数量，并提供清空历史、收藏和阅读进度的确认操作。应用主题模式、阅读显示偏好和缩放倍率通过 `AppStorage` 在设置页、根视图和阅读器工具栏之间共享；主题默认跟随系统，也允许用户切换浅色或深色。图片缓存页展示缓存文件数量和占用空间，并提供确认清理入口。
+本地书架由 `LibraryStore` 通过 `UserDefaults` 保存历史、本地收藏和最近阅读页。`LibraryView` 将收藏拆成本地收藏与线上收藏：本地收藏读取 `LibraryStore`，线上收藏在 Cookie 已配置时复用 `SearchViewModel(initialSource: .favorites)` 请求站点 `favorites.php?favcat=all`，界面只保留关键词搜索。阅读进度即使在用户没有先打开详情页时也会创建最小历史记录，避免书架页码落后于阅读器。本地书架只保存图库 URL、标题、缩略图 URL 和页码等轻量元数据，不保存远端 HTML、图片或用户凭据。
+
+设置页通过共享的 `LibraryStore` 展示本地数据数量，并提供清空历史、收藏和阅读进度的确认操作。应用主题模式、阅读显示偏好和缩放倍率通过 `AppStorage` 在设置页、根视图和阅读器工具栏之间共享；主题默认跟随系统，也允许用户切换浅色或深色。图片缓存页展示缓存图库数量、占用空间、按图库缓存管理入口和确认清理入口；缓存管理页列出已有缓存的图库，点击后进入对应图库页，也可滑动或通过菜单删除单个图库缓存。
 
 站点访问 Cookie 由 `SiteCookieStore` 保存到本机 Keychain。`URLSessionEHHTTPClient` 在请求公开站点页面时读取该 Cookie header 并注入请求，不在仓库内保存任何真实凭据。
 

@@ -61,7 +61,13 @@ struct LibraryView: View {
     @ViewBuilder
     private var siteFavoritesContent: some View {
         if siteCookieStore.hasCookieHeader {
-            SearchView(viewModel: siteFavoritesViewModel, embedsInNavigationStack: false, searchesOnAppear: true)
+            SearchView(
+                viewModel: siteFavoritesViewModel,
+                embedsInNavigationStack: false,
+                searchesOnAppear: true,
+                chromeMode: .keywordOnly,
+                navigationTitle: nil
+            )
         } else {
             ContentUnavailableView(
                 AppCopy.librarySiteFavoritesCookieTitle,
@@ -145,7 +151,7 @@ private struct LibraryRecordRow: View {
 
             if let lastReadPageURL = record.lastReadPageURL, let lastReadPage = record.lastReadPage {
                 Button {
-                    appNavigationStore.openReader(initialPageURL: lastReadPageURL)
+                    appNavigationStore.openReader(initialPageURL: lastReadPageURL, totalPageCount: record.pageCount)
                 } label: {
                     Label(
                         String(format: AppCopy.libraryContinueReadingPage, String(lastReadPage)),

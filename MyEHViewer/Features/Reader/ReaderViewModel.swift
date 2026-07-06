@@ -12,10 +12,12 @@ final class ReaderViewModel: ObservableObject {
     @Published private(set) var isLoadingPageLinks = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var imageReloadToken = 0
+    @Published private(set) var totalPageCount: Int?
 
     private let client: EHHTTPClient
     private let parser: EHImagePageParser
     private let galleryParser: EHGalleryPageParser
+    private let cacheStore: ImageCacheStore
     private var currentPageURL: URL?
     private var loadedGalleryPageURLStrings: Set<String> = []
 
@@ -25,7 +27,7 @@ final class ReaderViewModel: ObservableObject {
 
     /// Returns the highest page number currently known from gallery page links.
     var knownLastPageNumber: Int? {
-        sortedPageLinks.map(\.pageNumber).max()
+        [sortedPageLinks.map(\.pageNumber).max(), totalPageCount].compactMap(\.self).max()
     }
 
     /// Returns a visible upper page number that never falls behind the current page.
@@ -53,16 +55,20 @@ final class ReaderViewModel: ObservableObject {
     init(
         initialPageURL: URL?,
         pageLinks: [EHGalleryPageLink] = [],
+        totalPageCount: Int? = nil,
         client: EHHTTPClient = URLSessionEHHTTPClient(),
         parser: EHImagePageParser = EHImagePageParser(),
-        galleryParser: EHGalleryPageParser = EHGalleryPageParser()
+        galleryParser: EHGalleryPageParser = EHGalleryPageParser(),
+        cacheStore: ImageCacheStore = .shared
     ) {
         self.initialPageURL = initialPageURL
         self.pageLinks = pageLinks
+        self.totalPageCount = totalPageCount
         self.currentPageURL = initialPageURL
         self.client = client
         self.parser = parser
         self.galleryParser = galleryParser
+        self.cacheStore = cacheStore
     }
 
     /// Loads the initial page if the reader has not loaded it yet.
@@ -121,6 +127,7 @@ final class ReaderViewModel: ObservableObject {
         do {
             let response = try await client.get(galleryURL)
             let rootDetail = try galleryParser.parse(response.body, sourceURL: response.url)
+            totalPageCount = rootDetail.pageCount ?? totalPageCount
             loadedGalleryPageURLStrings.insert(response.url.absoluteString)
             mergePageLinks(rootDetail.pageLinks)
 
@@ -128,6 +135,7 @@ final class ReaderViewModel: ObservableObject {
             while let nextURL = thumbnailPageURLs.first(where: { !loadedGalleryPageURLStrings.contains($0.absoluteString) }) {
                 let thumbnailResponse = try await client.get(nextURL)
                 let detail = try galleryParser.parse(thumbnailResponse.body, sourceURL: thumbnailResponse.url)
+                totalPageCount = detail.pageCount ?? totalPageCount
                 loadedGalleryPageURLStrings.insert(thumbnailResponse.url.absoluteString)
                 mergePageLinks(detail.pageLinks)
                 thumbnailPageURLs = Array(Set(thumbnailPageURLs + detail.thumbnailPageURLs))
@@ -168,7 +176,33 @@ final class ReaderViewModel: ObservableObject {
             imageReloadToken += 1
             currentPageURL = response.url
         } catch {
-            errorMessage = error.localizedDescription
+            if let cachedPage = cachedImagePage(for: url) {
+                imagePage = cachedPage
+                imageReloadToken += 1
+                currentPageURL = cachedPage.pageURL
+                errorMessage = nil
+            } else {
+                errorMessage = error.localizedDescription
+            }
         }
+    }
+
+    /// Builds a reader page from the local image cache when network HTML is unavailable.
+    private func cachedImagePage(for url: URL) -> EHImagePage? {
+        guard let record = cacheStore.pageRecord(for: url) else { return nil }
+        totalPageCount = record.totalPageCount ?? totalPageCount
+        let previousURL = cacheStore.pageRecord(for: record.galleryIdentifier, pageNumber: record.pageNumber - 1)?.pageURL
+        let nextURL = cacheStore.pageRecord(for: record.galleryIdentifier, pageNumber: record.pageNumber + 1)?.pageURL
+        return EHImagePage(
+            galleryID: record.galleryIdentifier.gid,
+            pageNumber: record.pageNumber,
+            pageURL: record.pageURL,
+            title: record.galleryTitle,
+            imageURL: record.imageURL,
+            previousPageURL: previousURL,
+            nextPageURL: nextURL,
+            galleryURL: record.galleryIdentifier.url(),
+            originalImageURL: nil
+        )
     }
 }

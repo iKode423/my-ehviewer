@@ -116,6 +116,13 @@ struct EHGalleryIdentifier: Hashable, Codable, Identifiable {
     }
 }
 
+/// Describes a rectangular crop inside a larger remote image.
+struct EHImageCrop: Hashable, Codable {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+}
 
 /// Describes a namespace tag such as `artist:name` or `language:english`.
 struct EHTag: Hashable, Codable, Identifiable {
@@ -171,14 +178,16 @@ struct EHGalleryPageLink: Hashable, Codable, Identifiable {
     let pageNumber: Int
     let pageURL: URL
     let thumbnailURL: URL?
+    let thumbnailCrop: EHImageCrop?
 
     var id: Int { pageNumber }
 
     /// Creates a reader page link with an optional thumbnail image.
-    init(pageNumber: Int, pageURL: URL, thumbnailURL: URL? = nil) {
+    init(pageNumber: Int, pageURL: URL, thumbnailURL: URL? = nil, thumbnailCrop: EHImageCrop? = nil) {
         self.pageNumber = pageNumber
         self.pageURL = pageURL
         self.thumbnailURL = thumbnailURL
+        self.thumbnailCrop = thumbnailCrop
     }
 }
 
@@ -196,6 +205,7 @@ struct EHGalleryDetail: Hashable, Codable, Identifiable {
     let tags: [EHTag]
     let pageLinks: [EHGalleryPageLink]
     let thumbnailPageURLs: [URL]
+    let pageCount: Int?
 
     var id: String { identifier.id }
 }
@@ -214,6 +224,11 @@ struct EHFavoritePopupForm: Hashable {
     let actionURL: URL
     let fields: [String: String]
     let categories: [EHFavoriteCategory]
+
+    var isFavorited: Bool {
+        guard let selected = categories.first(where: \.isSelected) else { return false }
+        return selected.value != "-1"
+    }
 
     /// Returns fields prepared with a category and note for submission.
     func submissionFields(categoryValue: String? = nil, note: String = "") -> [String: String] {
@@ -291,6 +306,10 @@ struct EHSearchRequest: Hashable, Codable {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         components.path = source.path
         var items: [URLQueryItem] = []
+
+        if source == .favorites {
+            items.append(URLQueryItem(name: "favcat", value: "all"))
+        }
 
         let trimmedKeyword = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedKeyword.isEmpty {

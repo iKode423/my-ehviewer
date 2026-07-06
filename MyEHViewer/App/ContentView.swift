@@ -46,7 +46,7 @@ struct ContentView: View {
     @ViewBuilder
     private var readerTabContent: some View {
         if let route = appNavigationStore.readerRoute {
-            ReaderView(initialPageURL: route.initialPageURL, pageLinks: route.pageLinks)
+            ReaderView(initialPageURL: route.initialPageURL, pageLinks: route.pageLinks, totalPageCount: route.totalPageCount)
                 .id(route.id)
         } else {
             ReaderView()
@@ -79,6 +79,7 @@ struct ReaderRoute: Identifiable, Equatable {
     let id = UUID()
     let initialPageURL: URL
     let pageLinks: [EHGalleryPageLink]
+    let totalPageCount: Int?
 }
 
 /// Coordinates top-level tab selection and reader sessions.
@@ -88,8 +89,8 @@ final class AppNavigationStore: ObservableObject {
     @Published private(set) var readerRoute: ReaderRoute?
 
     /// Opens the reader tab with the requested image page.
-    func openReader(initialPageURL: URL, pageLinks: [EHGalleryPageLink] = []) {
-        readerRoute = ReaderRoute(initialPageURL: initialPageURL, pageLinks: pageLinks)
+    func openReader(initialPageURL: URL, pageLinks: [EHGalleryPageLink] = [], totalPageCount: Int? = nil) {
+        readerRoute = ReaderRoute(initialPageURL: initialPageURL, pageLinks: pageLinks, totalPageCount: totalPageCount)
         selectedTab = .reader
     }
 }

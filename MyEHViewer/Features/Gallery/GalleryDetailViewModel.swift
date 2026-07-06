@@ -104,6 +104,16 @@ final class GalleryDetailViewModel: ObservableObject {
 
     /// Submits the gallery to the site's online favorites using the logged-in cookie.
     func addSiteFavorite() async {
+        await submitSiteFavorite(categoryValue: nil, successMessage: AppCopy.gallerySiteFavoriteSaved)
+    }
+
+    /// Removes the gallery from the site's online favorites using the logged-in cookie.
+    func removeSiteFavorite() async {
+        await submitSiteFavorite(categoryValue: "-1", successMessage: AppCopy.gallerySiteFavoriteRemoved)
+    }
+
+    /// Submits the site favorite popup form with a requested category value.
+    private func submitSiteFavorite(categoryValue: String?, successMessage: String) async {
         guard !isUpdatingSiteFavorite, let detail else { return }
         isUpdatingSiteFavorite = true
         siteFavoriteMessage = nil
@@ -114,9 +124,9 @@ final class GalleryDetailViewModel: ObservableObject {
             let popupURL = detail.identifier.favoritePopupURL()
             let popupResponse = try await client.get(popupURL)
             let form = favoriteParser.parse(popupResponse.body, sourceURL: popupResponse.url)
-            _ = try await formClient.postForm(form.actionURL, fields: form.submissionFields())
+            _ = try await formClient.postForm(form.actionURL, fields: form.submissionFields(categoryValue: categoryValue))
             siteFavoriteSucceeded = true
-            siteFavoriteMessage = AppCopy.gallerySiteFavoriteSaved
+            siteFavoriteMessage = successMessage
         } catch {
             siteFavoriteSucceeded = false
             siteFavoriteMessage = error.localizedDescription
@@ -157,7 +167,8 @@ final class GalleryDetailViewModel: ObservableObject {
             ratingCount: current.ratingCount,
             tags: current.tags,
             pageLinks: pageLinks,
-            thumbnailPageURLs: thumbnailPageURLs
+            thumbnailPageURLs: thumbnailPageURLs,
+            pageCount: current.pageCount ?? incoming.pageCount
         )
     }
 }

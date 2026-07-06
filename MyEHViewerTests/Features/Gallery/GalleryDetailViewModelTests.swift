@@ -86,6 +86,30 @@ final class GalleryDetailViewModelTests: XCTestCase {
         XCTAssertEqual(formClient.postedFields["apply"], "Apply")
     }
 
+    /// Confirms online favorite removal submits the site's remove category value.
+    func testRemoveSiteFavoriteSubmitsRemovalCategory() async {
+        let galleryURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
+        let popupURL = EHGalleryIdentifier(gid: 100, token: "abcdef1234").favoritePopupURL()
+        let formClient = GalleryFormRecorder()
+        let viewModel = GalleryDetailViewModel(
+            pageURL: galleryURL,
+            client: GalleryMockHTTPClient(responses: [
+                galleryURL: Self.detailHTML,
+                popupURL: Self.favoritePopupHTML
+            ]),
+            formClient: formClient
+        )
+
+        await viewModel.reload()
+        await viewModel.removeSiteFavorite()
+
+        XCTAssertFalse(viewModel.isUpdatingSiteFavorite)
+        XCTAssertTrue(viewModel.siteFavoriteSucceeded)
+        XCTAssertEqual(viewModel.siteFavoriteMessage, AppCopy.gallerySiteFavoriteRemoved)
+        XCTAssertEqual(formClient.postedFields["favcat"], "-1")
+        XCTAssertEqual(formClient.postedFields["favnote"], "")
+    }
+
     /// Confirms loading errors are exposed as user-facing messages.
     func testReloadStoresErrorMessage() async {
         let url = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!

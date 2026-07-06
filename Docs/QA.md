@@ -96,3 +96,22 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。覆盖阅读器跳页时自动补齐图库页面目录、书架网站收藏初始来源、详情页网站收藏弹窗表单解析与 POST 字段、搜索/图库 CSS 背景缩略图、GIF 静态预览、本地收藏/网站收藏中文文案和既有搜索、图库、阅读、缓存、Cookie、本地书架回归。真实网站收藏端到端同步未写入或使用真实 Cookie；需要完整登录 Cookie header 才能做线上验证。
+
+### 图库下载、缓存管理与线上收藏回归
+
+```sh
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。覆盖图库页面 CSS sprite 预览裁剪、图库总页数解析、阅读页总页数回传、离线时通过缓存索引恢复已缓存阅读页、缓存内容去重、按图库缓存进度统计、单图库缓存删除、阅读进度直接创建历史记录、线上收藏全部分类 URL、线上收藏取消提交字段，以及既有搜索、图库、阅读、Cookie、书架和中文文案回归。
+
+### 缓存与线上收藏修复冒烟
+
+```sh
+xcrun simctl bootstatus 'iPhone 17 Pro' -b
+xcrun simctl install booted /Users/ikode/Library/Developer/Xcode/DerivedData/MyEHViewer-asduoirgkvnkeocmxnxbvjnwfqad/Build/Products/Debug-iphonesimulator/MyEHViewer.app
+xcrun simctl launch booted com.ikode.MyEHViewer
+xcrun simctl io booted screenshot /tmp/my-ehviewer-cache-favorites-20260706.png
+```
+
+结果：通过。应用成功安装并启动，启动 PID 为 `45971`；首屏搜索页在深色模式下显示正常，底部 Tab、搜索入口、筛选入口和 `#00a8ff` 强调色未见明显遮挡或错位。

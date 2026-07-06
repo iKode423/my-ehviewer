@@ -97,7 +97,7 @@ final class SearchViewModelTests: XCTestCase {
 
         await viewModel.searchIfNeeded()
 
-        XCTAssertEqual(recorder.requestedURLs.first?.absoluteString, "https://e-hentai.org/favorites.php")
+        XCTAssertEqual(recorder.requestedURLs.first?.absoluteString, "https://e-hentai.org/favorites.php?favcat=all")
     }
 
     /// Confirms filter reset keeps the query and browse source unchanged.

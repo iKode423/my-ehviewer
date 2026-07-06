@@ -6,6 +6,8 @@ struct GalleryDetailView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var appNavigationStore: AppNavigationStore
     @StateObject private var siteCookieStore = SiteCookieStore.shared
+    @StateObject private var imageCacheStore = ImageCacheStore.shared
+    @StateObject private var downloadManager = GalleryDownloadManager.shared
     @StateObject private var viewModel: GalleryDetailViewModel
     @State private var showsMetadata = false
 
@@ -54,6 +56,7 @@ struct GalleryDetailView: View {
                 Label(AppCopy.galleryOpenInBrowser, systemImage: "safari")
             }
 
+            downloadButton
             favoriteMenu
         }
         .task {
@@ -70,6 +73,7 @@ struct GalleryDetailView: View {
     private func recordLoadedDetail() {
         if let detail = viewModel.detail {
             libraryStore.record(detail: detail, fallback: result)
+            imageCacheStore.saveGalleryMetadata(detail: detail, fallback: result)
         }
     }
 
@@ -183,20 +187,22 @@ struct GalleryDetailView: View {
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(AppCopy.galleryPagesTitle)
+                Text(galleryPagesTitle(for: detail))
                     .font(.headline)
 
                 Spacer()
 
                 if let startURL {
                     Button {
-                        appNavigationStore.openReader(initialPageURL: startURL, pageLinks: detail.pageLinks)
+                        appNavigationStore.openReader(initialPageURL: startURL, pageLinks: detail.pageLinks, totalPageCount: detail.pageCount)
                     } label: {
                         Label(resumeURL == nil ? AppCopy.galleryReadFromStart : AppCopy.galleryContinueReading, systemImage: "book")
                     }
                     .buttonStyle(.borderedProminent)
                 }
             }
+
+            downloadProgress(for: detail)
 
             if detail.pageLinks.isEmpty {
                 Text(AppCopy.galleryNoPages)
@@ -239,13 +245,31 @@ struct GalleryDetailView: View {
         }
     }
 
+    /// Builds a page section title that uses the parsed gallery total when available.
+    private func galleryPagesTitle(for detail: EHGalleryDetail) -> String {
+        if let pageCount = detail.pageCount {
+            return String(format: AppCopy.galleryPagesTitleFormat, String(pageCount))
+        }
+        return AppCopy.galleryPagesTitle
+    }
+
+    /// Shows cache/download progress for the current gallery.
+    @ViewBuilder
+    private func downloadProgress(for detail: EHGalleryDetail) -> some View {
+        if let progress = downloadManager.progress(for: detail.identifier), progress.downloadedPageCount > 0 || progress.isRunning {
+            Label(progress.displayText, systemImage: progress.isRunning ? "arrow.down.circle" : "checkmark.circle")
+                .font(.footnote)
+                .foregroundStyle(progress.isRunning ? Color.secondary : Color.green)
+        }
+    }
+
     /// Shows one readable page thumbnail and opens it in the reader.
     private func pageLinkTile(_ pageLink: EHGalleryPageLink, allPageLinks: [EHGalleryPageLink]) -> some View {
         Button {
-            appNavigationStore.openReader(initialPageURL: pageLink.pageURL, pageLinks: allPageLinks)
+            appNavigationStore.openReader(initialPageURL: pageLink.pageURL, pageLinks: allPageLinks, totalPageCount: viewModel.detail?.pageCount)
         } label: {
             VStack(spacing: 6) {
-                pageThumbnail(url: pageLink.thumbnailURL)
+                pageThumbnail(url: pageLink.thumbnailURL, crop: pageLink.thumbnailCrop)
 
                 Text(String(format: AppCopy.galleryOpenPage, String(pageLink.pageNumber)))
                     .font(.caption.weight(.semibold))
@@ -261,8 +285,8 @@ struct GalleryDetailView: View {
     }
 
     /// Shows a stable thumbnail frame for one reader page.
-    private func pageThumbnail(url: URL?) -> some View {
-        CachedRemoteImageView(url: url, contentMode: .fill, animationMode: .staticPreview) {
+    private func pageThumbnail(url: URL?, crop: EHImageCrop?) -> some View {
+        CachedRemoteImageView(url: url, crop: crop, contentMode: .fill, animationMode: .staticPreview) {
             ProgressView()
         } failure: {
             Image(systemName: "photo")
@@ -300,6 +324,13 @@ struct GalleryDetailView: View {
                 }
                 .disabled(!siteCookieStore.hasCookieHeader || viewModel.isUpdatingSiteFavorite)
 
+                Button(role: .destructive) {
+                    Task { await viewModel.removeSiteFavorite() }
+                } label: {
+                    Label(AppCopy.gallerySiteUnfavorite, systemImage: "icloud.slash")
+                }
+                .disabled(!siteCookieStore.hasCookieHeader || viewModel.isUpdatingSiteFavorite)
+
                 if !siteCookieStore.hasCookieHeader {
                     Label(AppCopy.gallerySiteFavoriteRequiresCookie, systemImage: "key")
                 }
@@ -316,6 +347,38 @@ struct GalleryDetailView: View {
             Label(message, systemImage: viewModel.siteFavoriteSucceeded ? "checkmark.circle" : "exclamationmark.triangle")
                 .font(.footnote)
                 .foregroundStyle(viewModel.siteFavoriteSucceeded ? .green : .red)
+        }
+    }
+
+    /// Starts a background cache download after loading all page links.
+    private func startDownload(_ detail: EHGalleryDetail) async {
+        if viewModel.canLoadMorePageLinks {
+            await viewModel.loadAllPageLinks()
+        }
+        if let refreshedDetail = viewModel.detail {
+            downloadManager.startDownload(detail: refreshedDetail, fallback: result)
+        } else {
+            downloadManager.startDownload(detail: detail, fallback: result)
+        }
+    }
+
+    /// Shows the gallery download action.
+    @ViewBuilder
+    private var downloadButton: some View {
+        if let detail = viewModel.detail {
+            let progress = downloadManager.progress(for: detail.identifier)
+            Button {
+                Task { await startDownload(detail) }
+            } label: {
+                if progress?.isRunning == true {
+                    Label(AppCopy.galleryDownloadQueued, systemImage: "arrow.down.circle")
+                } else if let progress, progress.totalPageCount > 0, progress.downloadedPageCount >= progress.totalPageCount {
+                    Label(AppCopy.galleryDownloadComplete, systemImage: "checkmark.circle")
+                } else {
+                    Label(AppCopy.galleryDownload, systemImage: "arrow.down.to.line")
+                }
+            }
+            .disabled(progress?.isRunning == true || detail.pageLinks.isEmpty)
         }
     }
 }

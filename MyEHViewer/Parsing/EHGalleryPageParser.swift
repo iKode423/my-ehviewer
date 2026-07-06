@@ -13,6 +13,7 @@ struct EHGalleryPageParser {
             throw EHParseError.missingGalleryTitle
         }
 
+        let metadata = metadata(in: html)
         return EHGalleryDetail(
             identifier: identifier,
             title: title,
@@ -20,12 +21,13 @@ struct EHGalleryPageParser {
             category: category(in: html),
             coverURL: coverURL(in: html),
             uploader: uploader(in: html),
-            metadata: metadata(in: html),
+            metadata: metadata,
             ratingLabel: optionalTextByID("rating_label", in: html),
             ratingCount: optionalTextByID("rating_count", in: html),
             tags: tags(in: html),
             pageLinks: pageLinks(in: html),
-            thumbnailPageURLs: thumbnailPageURLs(in: html)
+            thumbnailPageURLs: thumbnailPageURLs(in: html),
+            pageCount: pageCount(from: metadata)
         )
     }
 
@@ -127,17 +129,23 @@ struct EHGalleryPageParser {
             guard match.count >= 4, let url = URL(string: match[1]), let pageNumber = Int(match[2]) else {
                 return nil
             }
-            return EHGalleryPageLink(pageNumber: pageNumber, pageURL: url, thumbnailURL: thumbnailURL(in: match[3]))
+            let thumbnail = thumbnail(in: match[3])
+            return EHGalleryPageLink(
+                pageNumber: pageNumber,
+                pageURL: url,
+                thumbnailURL: thumbnail.url,
+                thumbnailCrop: thumbnail.crop
+            )
         }
     }
 
-    /// Picks the thumbnail URL from one gallery page link.
-    private func thumbnailURL(in html: String) -> URL? {
+    /// Picks the thumbnail URL and optional CSS sprite crop from one page link.
+    private func thumbnail(in html: String) -> (url: URL?, crop: EHImageCrop?) {
         if let image = EHHTMLParsing.firstMatch(in: html, pattern: #"<img\b[^>]*>"#)?.first {
             let lazyURL = EHHTMLParsing.attribute("data-src", in: image)
             let srcURL = EHHTMLParsing.attribute("src", in: image)
             if let url = EHHTMLParsing.url(from: lazyURL) ?? EHHTMLParsing.url(from: srcURL) {
-                return url
+                return (url, nil)
             }
         }
 
@@ -145,7 +153,25 @@ struct EHGalleryPageParser {
             in: html,
             pattern: #"url\((?:'|")?([^)'"]+)(?:'|")?\)"#
         )?.dropFirst().first
-        return EHHTMLParsing.url(from: styleURL)
+        return (EHHTMLParsing.url(from: styleURL), spriteCrop(in: html))
+    }
+
+    /// Parses a CSS background sprite crop from thumbnail style attributes.
+    private func spriteCrop(in html: String) -> EHImageCrop? {
+        guard
+            let width = cssPixelValue("width", in: html),
+            let height = cssPixelValue("height", in: html)
+        else {
+            return nil
+        }
+
+        let offsets = backgroundOffsets(in: html)
+        return EHImageCrop(
+            x: max(0, -offsets.x),
+            y: max(0, -offsets.y),
+            width: width,
+            height: height
+        )
     }
 
     /// Parses thumbnail pagination URLs from the top and bottom pagination bars.
@@ -158,6 +184,40 @@ struct EHGalleryPageParser {
         .compactMap(URL.init(string:))
 
         return Array(Set(urls)).sorted { $0.absoluteString < $1.absoluteString }
+    }
+
+    /// Reads the total page count from gallery metadata.
+    private func pageCount(from metadata: [EHMetadataItem]) -> Int? {
+        metadata
+            .first { $0.key.lowercased().contains("length") }
+            .flatMap { EHHTMLParsing.firstMatch(in: $0.value, pattern: #"([0-9]+)\s*pages?"#)?.dropFirst().first }
+            .flatMap(Int.init)
+    }
+
+    /// Parses a CSS pixel value by property name.
+    private func cssPixelValue(_ property: String, in html: String) -> Double? {
+        let escaped = NSRegularExpression.escapedPattern(for: property)
+        guard
+            let value = EHHTMLParsing.firstMatch(in: html, pattern: #"\#(escaped)\s*:\s*([0-9.]+)px"#)?.dropFirst().first
+        else {
+            return nil
+        }
+        return Double(value)
+    }
+
+    /// Reads background-position offsets from style fragments.
+    private func backgroundOffsets(in html: String) -> (x: Double, y: Double) {
+        let positionPattern = #"background-position\s*:\s*(-?[0-9.]+)px\s+(-?[0-9.]+)px"#
+        if let match = EHHTMLParsing.firstMatch(in: html, pattern: positionPattern), match.count >= 3 {
+            return (Double(match[1]) ?? 0, Double(match[2]) ?? 0)
+        }
+
+        let shorthandPattern = #"url\((?:'|")?[^)'"]+(?:'|")?\)\s*(-?[0-9.]+)px\s+(-?[0-9.]+)px"#
+        if let match = EHHTMLParsing.firstMatch(in: html, pattern: shorthandPattern), match.count >= 3 {
+            return (Double(match[1]) ?? 0, Double(match[2]) ?? 0)
+        }
+
+        return (0, 0)
     }
 }
 

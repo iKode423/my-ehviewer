@@ -54,15 +54,18 @@ final class LibraryStore: ObservableObject {
     func updateProgress(imagePage: EHImagePage) {
         guard
             let galleryURL = imagePage.galleryURL,
-            let identifier = EHGalleryIdentifier(galleryURL: galleryURL),
-            let index = records.firstIndex(where: { $0.identifier == identifier })
+            let identifier = EHGalleryIdentifier(galleryURL: galleryURL)
         else {
             return
         }
 
-        records[index].lastReadPage = imagePage.pageNumber
-        records[index].lastReadPageURL = imagePage.pageURL
-        records[index].lastOpenedAt = Date()
+        if let index = records.firstIndex(where: { $0.identifier == identifier }) {
+            records[index].lastReadPage = imagePage.pageNumber
+            records[index].lastReadPageURL = imagePage.pageURL
+            records[index].lastOpenedAt = Date()
+        } else {
+            records.append(LibraryGalleryRecord(imagePage: imagePage, identifier: identifier))
+        }
         save()
     }
 
@@ -137,6 +140,12 @@ struct LibraryGalleryRecord: Codable, Hashable, Identifiable {
         )
     }
 
+    var pageCount: Int? {
+        pageCountText
+            .flatMap { EHHTMLParsing.firstMatch(in: $0, pattern: #"([0-9]+)\s*pages?"#)?.dropFirst().first }
+            .flatMap(Int.init)
+    }
+
     /// Creates a local record from parsed detail and fallback search data.
     init(detail: EHGalleryDetail, fallback: EHSearchResult, existing: LibraryGalleryRecord?) {
         self.identifier = detail.identifier
@@ -145,10 +154,24 @@ struct LibraryGalleryRecord: Codable, Hashable, Identifiable {
         self.pageURL = detail.identifier.url()
         self.thumbnailURL = detail.coverURL ?? fallback.thumbnailURL
         self.uploader = detail.uploader ?? fallback.uploader
-        self.pageCountText = detail.metadata.first { $0.key.lowercased().contains("length") }?.value ?? fallback.pageCountText
+        self.pageCountText = detail.pageCount.map { "\($0) pages" } ?? detail.metadata.first { $0.key.lowercased().contains("length") }?.value ?? fallback.pageCountText
         self.lastOpenedAt = Date()
         self.lastReadPage = existing?.lastReadPage
         self.lastReadPageURL = existing?.lastReadPageURL
+    }
+
+    /// Creates a minimal local record from reader progress.
+    init(imagePage: EHImagePage, identifier: EHGalleryIdentifier) {
+        self.identifier = identifier
+        self.title = imagePage.title ?? "图库 \(identifier.gid)"
+        self.category = ""
+        self.pageURL = identifier.url()
+        self.thumbnailURL = nil
+        self.uploader = nil
+        self.pageCountText = nil
+        self.lastOpenedAt = Date()
+        self.lastReadPage = imagePage.pageNumber
+        self.lastReadPageURL = imagePage.pageURL
     }
 }
 

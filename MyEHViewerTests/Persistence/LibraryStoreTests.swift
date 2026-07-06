@@ -50,6 +50,32 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(restored.history.first?.lastReadPageURL?.absoluteString, "https://e-hentai.org/s/ddddeeeeff/100-2")
     }
 
+    /// Confirms reader progress creates a history record when detail was not opened first.
+    func testUpdateProgressCreatesHistoryRecord() {
+        let userDefaults = makeUserDefaults()
+        let store = LibraryStore(userDefaults: userDefaults, storageKey: "library-progress-create-test")
+
+        store.updateProgress(
+            imagePage: EHImagePage(
+                galleryID: 100,
+                pageNumber: 27,
+                pageURL: URL(string: "https://e-hentai.org/s/zzzzxxxxcc/100-27")!,
+                title: "Sample Gallery - 27",
+                imageURL: URL(string: "https://example.test/27.webp")!,
+                previousPageURL: nil,
+                nextPageURL: nil,
+                galleryURL: URL(string: "https://e-hentai.org/g/100/abcdef1234/")!,
+                originalImageURL: nil
+            )
+        )
+
+        let restored = LibraryStore(userDefaults: userDefaults, storageKey: "library-progress-create-test")
+
+        XCTAssertEqual(restored.history.count, 1)
+        XCTAssertEqual(restored.history.first?.lastReadPage, 27)
+        XCTAssertEqual(restored.history.first?.pageCount, nil)
+    }
+
     /// Confirms local state can be fully removed from persistence.
     func testRemoveAllClearsPersistedState() {
         let userDefaults = makeUserDefaults()
@@ -88,7 +114,8 @@ final class LibraryStoreTests: XCTestCase {
             ratingCount: nil,
             tags: [],
             pageLinks: [],
-            thumbnailPageURLs: []
+            thumbnailPageURLs: [],
+            pageCount: 2
         )
     }
 

@@ -20,9 +20,11 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.galleryOpenInBrowser, "网页")
         XCTAssertEqual(AppCopy.searchResetFilters, "重置筛选")
         XCTAssertEqual(AppCopy.libraryFavorites, "本地收藏")
-        XCTAssertEqual(AppCopy.librarySiteFavorites, "网站收藏")
+        XCTAssertEqual(AppCopy.librarySiteFavorites, "线上收藏")
         XCTAssertEqual(AppCopy.galleryLocalFavorite, "本地收藏")
-        XCTAssertEqual(AppCopy.gallerySiteFavorite, "网站收藏")
+        XCTAssertEqual(AppCopy.gallerySiteFavorite, "加入线上收藏")
+        XCTAssertEqual(AppCopy.gallerySiteUnfavorite, "取消线上收藏")
+        XCTAssertEqual(AppCopy.cacheManagementDeleteGallery, "删除缓存")
     }
 
     /// Confirms reader preference labels stay localized for settings and toolbar menus.
@@ -70,6 +72,64 @@ final class MyEHViewerTests: XCTestCase {
 
         XCTAssertNil(store.data(for: imageURL))
         XCTAssertEqual(store.snapshot, .empty)
+    }
+
+    /// Confirms duplicate image bytes reuse one cache file while preserving page progress.
+    @MainActor
+    func testImageCacheStoreDeduplicatesAliasesAndPageRecords() throws {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let store = ImageCacheStore(directoryURL: directoryURL)
+        let identifier = EHGalleryIdentifier(gid: 100, token: "abcdef1234")
+        let firstImageURL = URL(string: "https://example.test/image-a.webp")!
+        let secondImageURL = URL(string: "https://example.test/image-b.webp")!
+        let firstResponseURL = URL(string: "https://cdn.test/image-a.webp")!
+        let secondResponseURL = URL(string: "https://cdn.test/image-b.webp")!
+        let data = Data([0x01, 0x02, 0x03, 0x04])
+
+        store.save(
+            data,
+            for: firstImageURL,
+            responseURL: firstResponseURL,
+            context: ImageCacheContext(
+                galleryIdentifier: identifier,
+                galleryTitle: "Sample Gallery",
+                pageNumber: 1,
+                pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!,
+                totalPageCount: 2,
+                thumbnailURL: URL(string: "https://example.test/cover.jpg")
+            )
+        )
+        store.save(
+            data,
+            for: secondImageURL,
+            responseURL: secondResponseURL,
+            context: ImageCacheContext(
+                galleryIdentifier: identifier,
+                galleryTitle: "Sample Gallery",
+                pageNumber: 2,
+                pageURL: URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!,
+                totalPageCount: 2,
+                thumbnailURL: URL(string: "https://example.test/cover.jpg")
+            )
+        )
+
+        let cacheFiles = try FileManager.default.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent != "index.json" }
+        XCTAssertEqual(cacheFiles.count, 1)
+        XCTAssertEqual(store.data(for: firstImageURL), data)
+        XCTAssertEqual(store.data(for: secondResponseURL), data)
+        XCTAssertEqual(store.snapshot.fileCount, 1)
+        XCTAssertEqual(store.snapshot.byteCount, Int64(data.count))
+        XCTAssertEqual(store.snapshot.galleryCount, 1)
+        XCTAssertEqual(store.gallerySummaries.first?.cachedPageCount, 2)
+        XCTAssertEqual(store.gallerySummaries.first?.totalPageCount, 2)
+
+        store.clearGallery(identifier)
+
+        XCTAssertNil(store.data(for: firstImageURL))
+        XCTAssertNil(store.data(for: secondResponseURL))
+        XCTAssertEqual(store.snapshot, .empty)
+        XCTAssertTrue(store.gallerySummaries.isEmpty)
     }
 
     /// Confirms GIF preview rendering can force a static first frame.

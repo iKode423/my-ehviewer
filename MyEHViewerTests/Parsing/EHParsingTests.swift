@@ -85,6 +85,7 @@ final class EHParsingTests: XCTestCase {
         XCTAssertEqual(detail.metadata.count, 2)
         XCTAssertEqual(detail.ratingCount, "2 ratings")
         XCTAssertEqual(detail.tags.first?.displayName, "artist:sample artist")
+        XCTAssertEqual(detail.pageCount, 2)
         XCTAssertEqual(detail.pageLinks.map(\.pageNumber), [1, 2])
         XCTAssertEqual(detail.pageLinks.map { $0.thumbnailURL?.absoluteString }, ["https://example.test/page-1.webp", "https://example.test/page-2.webp"])
         XCTAssertEqual(detail.thumbnailPageURLs.count, 1)
@@ -97,7 +98,7 @@ final class EHParsingTests: XCTestCase {
         <div id="gd2"><h1 id="gn">Sample Gallery</h1></div>
         <div id="gd3"><div id="gdc"><div class="cs ct2">Manga</div></div></div>
         <div id="gdt">
-          <a href="https://e-hentai.org/s/aaaabbbbcc/100-1"><div style="background-image:url(&quot;https://example.test/page-css.webp&quot;)"><div title="1"></div></div></a>
+          <a href="https://e-hentai.org/s/aaaabbbbcc/100-1"><div style="width:120px;height:180px;background:transparent url(&quot;https://example.test/page-css.webp&quot;) -40px -60px no-repeat"><div title="1"></div></div></a>
         </div>
         """
 
@@ -107,6 +108,7 @@ final class EHParsingTests: XCTestCase {
         )
 
         XCTAssertEqual(detail.pageLinks.first?.thumbnailURL?.absoluteString, "https://example.test/page-css.webp")
+        XCTAssertEqual(detail.pageLinks.first?.thumbnailCrop, EHImageCrop(x: 40, y: 60, width: 120, height: 180))
     }
 
     /// Confirms online favorite popup forms preserve hidden fields and selected category.
@@ -196,6 +198,6 @@ final class EHParsingTests: XCTestCase {
         XCTAssertEqual(EHSearchRequest(source: .frontPage).url().absoluteString, "https://e-hentai.org/")
         XCTAssertEqual(EHSearchRequest(source: .popular).url().absoluteString, "https://e-hentai.org/popular")
         XCTAssertEqual(EHSearchRequest(source: .watched).url().absoluteString, "https://e-hentai.org/watched")
-        XCTAssertEqual(EHSearchRequest(source: .favorites).url().absoluteString, "https://e-hentai.org/favorites.php")
+        XCTAssertEqual(EHSearchRequest(source: .favorites).url().absoluteString, "https://e-hentai.org/favorites.php?favcat=all")
     }
 }

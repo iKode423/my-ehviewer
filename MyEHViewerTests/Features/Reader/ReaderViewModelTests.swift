@@ -141,6 +141,41 @@ final class ReaderViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleLastPageNumber, 27)
     }
 
+    /// Confirms a cached reader page can open when the network page request fails.
+    func testLoadUsesCachedImagePageWhenOffline() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let pageURL = URL(string: "https://e-hentai.org/s/zzzzxxxxcc/100-27")!
+        let imageURL = URL(string: "https://example.test/27.webp")!
+        cacheStore.save(
+            Data([0x27]),
+            for: imageURL,
+            responseURL: imageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: EHGalleryIdentifier(gid: 100, token: "abcdef1234"),
+                galleryTitle: "Sample Gallery",
+                pageNumber: 27,
+                pageURL: pageURL,
+                totalPageCount: 50,
+                thumbnailURL: nil
+            )
+        )
+        let viewModel = ReaderViewModel(
+            initialPageURL: pageURL,
+            client: ReaderMockHTTPClient(error: EHParseError.missingImageURL),
+            cacheStore: cacheStore
+        )
+
+        await viewModel.loadIfNeeded()
+
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.imagePage?.pageNumber, 27)
+        XCTAssertEqual(viewModel.imagePage?.imageURL, imageURL)
+        XCTAssertEqual(viewModel.totalPageCount, 50)
+        XCTAssertEqual(viewModel.knownLastPageNumber, 50)
+        XCTAssertEqual(cacheStore.data(for: imageURL), Data([0x27]))
+    }
+
     /// Confirms retrying the current image advances the view reload token.
     func testReloadImageAdvancesRetryToken() async {
         let firstURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!

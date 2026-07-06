@@ -5,23 +5,39 @@ struct SearchView: View {
     @StateObject private var viewModel: SearchViewModel
     private let embedsInNavigationStack: Bool
     private let searchesOnAppear: Bool
+    private let chromeMode: SearchChromeMode
+    private let navigationTitle: String?
 
     /// Creates a search view with an injectable view model for previews and tests.
     init(
         viewModel: SearchViewModel = SearchViewModel(),
         embedsInNavigationStack: Bool = true,
-        searchesOnAppear: Bool = false
+        searchesOnAppear: Bool = false,
+        chromeMode: SearchChromeMode = .full,
+        navigationTitle: String? = AppCopy.searchTitle
     ) {
         _viewModel = StateObject(wrappedValue: viewModel)
         self.embedsInNavigationStack = embedsInNavigationStack
         self.searchesOnAppear = searchesOnAppear
+        self.chromeMode = chromeMode
+        self.navigationTitle = navigationTitle
     }
 
     var body: some View {
         if embedsInNavigationStack {
             NavigationStack {
-                searchContent
+                titledSearchContent
             }
+        } else {
+            titledSearchContent
+        }
+    }
+
+    /// Adds a navigation title only when this search owns the navigation context.
+    @ViewBuilder
+    private var titledSearchContent: some View {
+        if let navigationTitle {
+            searchContent.navigationTitle(navigationTitle)
         } else {
             searchContent
         }
@@ -37,7 +53,6 @@ struct SearchView: View {
             }
             .padding(.bottom, 16)
         }
-        .navigationTitle(AppCopy.searchTitle)
         .refreshable {
             await viewModel.refresh()
         }
@@ -54,17 +69,19 @@ struct SearchView: View {
             searchBar
                 .padding([.horizontal, .top])
 
-            sourcePicker
-                .padding(.horizontal)
-                .padding(.top, 8)
+            if chromeMode == .full {
+                sourcePicker
+                    .padding(.horizontal)
+                    .padding(.top, 8)
 
-            recentQueries
-                .padding(.horizontal)
-                .padding(.top, 8)
+                recentQueries
+                    .padding(.horizontal)
+                    .padding(.top, 8)
 
-            filterPanel
-                .padding(.horizontal)
-                .padding(.top, 12)
+                filterPanel
+                    .padding(.horizontal)
+                    .padding(.top, 12)
+            }
         }
     }
 
@@ -328,6 +345,12 @@ struct SearchView: View {
             }
         }
     }
+}
+
+/// Selects how much search chrome should be visible.
+enum SearchChromeMode {
+    case full
+    case keywordOnly
 }
 
 #Preview {
