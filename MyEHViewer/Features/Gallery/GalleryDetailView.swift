@@ -4,6 +4,7 @@ import SwiftUI
 struct GalleryDetailView: View {
     let result: EHSearchResult
     @EnvironmentObject private var libraryStore: LibraryStore
+    @EnvironmentObject private var appNavigationStore: AppNavigationStore
     @StateObject private var viewModel: GalleryDetailViewModel
 
     /// Creates a detail view that loads the result's gallery URL.
@@ -193,8 +194,8 @@ struct GalleryDetailView: View {
                 Spacer()
 
                 if let startURL {
-                    NavigationLink {
-                        ReaderView(initialPageURL: startURL, pageLinks: detail.pageLinks)
+                    Button {
+                        appNavigationStore.openReader(initialPageURL: startURL, pageLinks: detail.pageLinks)
                     } label: {
                         Label(resumeURL == nil ? AppCopy.galleryReadFromStart : AppCopy.galleryContinueReading, systemImage: "book")
                     }
@@ -245,8 +246,8 @@ struct GalleryDetailView: View {
 
     /// Shows one readable page thumbnail and opens it in the reader.
     private func pageLinkTile(_ pageLink: EHGalleryPageLink, allPageLinks: [EHGalleryPageLink]) -> some View {
-        NavigationLink {
-            ReaderView(initialPageURL: pageLink.pageURL, pageLinks: allPageLinks)
+        Button {
+            appNavigationStore.openReader(initialPageURL: pageLink.pageURL, pageLinks: allPageLinks)
         } label: {
             VStack(spacing: 6) {
                 pageThumbnail(url: pageLink.thumbnailURL)
@@ -297,4 +298,5 @@ struct GalleryDetailView: View {
         )
     }
     .environmentObject(LibraryStore())
+    .environmentObject(AppNavigationStore())
 }

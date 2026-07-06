@@ -65,6 +65,19 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(store.snapshot, .empty)
     }
 
+    /// Confirms opening a reader route selects the reader tab.
+    @MainActor
+    func testAppNavigationStoreOpensReaderTab() {
+        let store = AppNavigationStore()
+        let pageURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
+
+        store.openReader(initialPageURL: pageURL)
+
+        XCTAssertEqual(store.selectedTab, .reader)
+        XCTAssertEqual(store.readerRoute?.initialPageURL, pageURL)
+        XCTAssertEqual(store.readerRoute?.pageLinks, [])
+    }
+
     /// Confirms reader zoom persistence resolves unknown values safely.
     func testReaderZoomLevelResolution() {
         XCTAssertEqual(ReaderZoomLevel.resolved(rawValue: 1.5), .x15)

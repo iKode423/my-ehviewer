@@ -88,6 +88,7 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
 /// Renders one locally saved gallery record.
 private struct LibraryRecordRow: View {
     let record: LibraryGalleryRecord
+    @EnvironmentObject private var appNavigationStore: AppNavigationStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -104,8 +105,8 @@ private struct LibraryRecordRow: View {
             }
 
             if let lastReadPageURL = record.lastReadPageURL, let lastReadPage = record.lastReadPage {
-                NavigationLink {
-                    ReaderView(initialPageURL: lastReadPageURL)
+                Button {
+                    appNavigationStore.openReader(initialPageURL: lastReadPageURL)
                 } label: {
                     Label(
                         String(format: AppCopy.libraryContinueReadingPage, String(lastReadPage)),
@@ -122,5 +123,6 @@ private struct LibraryRecordRow: View {
     NavigationStack {
         LibraryView()
             .environmentObject(LibraryStore())
+            .environmentObject(AppNavigationStore())
     }
 }

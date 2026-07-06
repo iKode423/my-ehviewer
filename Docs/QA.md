@@ -37,6 +37,15 @@ git diff --check
 
 结果：通过。阅读器沉浸模式、点击分区翻页/显示控件、双指缩放、手动横竖屏切换、页码上限修正和现有阅读器流程可编译；新增当前页不低于已知上限测试通过，未发现空白格式问题。
 
+### 阅读 Tab 会话回归
+
+```sh
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+git diff --check
+```
+
+结果：通过。根 Tab selection、当前阅读会话、详情页阅读入口和书架继续阅读入口可编译；新增打开阅读会话会切换到阅读 Tab 的测试通过，未发现空白格式问题。
+
 ### 构建验证
 
 ```sh
