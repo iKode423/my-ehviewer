@@ -8,6 +8,8 @@ xcuserdata/
 # Swift Package Manager
 .build/
 
+# Local signing
+Config/Local.xcconfig
+
 # macOS
 .DS_Store
-

@@ -61,6 +61,8 @@
 		0A0000020000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		0A000002000000000000000A /* MyEHViewer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyEHViewer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A000002000000000000000B /* MyEHViewerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MyEHViewerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0A1600020000000000000001 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		0A1600020000000000000002 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		0A1000020000000000000001 /* EHModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHModels.swift; sourceTree = "<group>"; };
 		0A1000020000000000000002 /* EHHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHHTTPClient.swift; sourceTree = "<group>"; };
 		0A1000020000000000000003 /* EHHTMLParsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHHTMLParsing.swift; sourceTree = "<group>"; };
@@ -106,6 +108,7 @@
 		0A0000040000000000000001 = {
 			isa = PBXGroup;
 			children = (
+				0A1600040000000000000001 /* Config */,
 				0A0000040000000000000002 /* MyEHViewer */,
 				0A0000040000000000000008 /* MyEHViewerTests */,
 				0A0000040000000000000009 /* Products */,
@@ -194,6 +197,15 @@
 				0A000002000000000000000B /* MyEHViewerTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		0A1600040000000000000001 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				0A1600020000000000000002 /* Local.xcconfig.example */,
+				0A1600020000000000000001 /* Signing.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		0A1000040000000000000001 /* Models */ = {
@@ -567,12 +579,12 @@
 		};
 		0A0000100000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0A1600020000000000000001 /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
-				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MyEHViewer/App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "EH 阅读器";
@@ -594,12 +606,12 @@
 		};
 		0A0000100000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0A1600020000000000000001 /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
-				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MyEHViewer/App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "EH 阅读器";

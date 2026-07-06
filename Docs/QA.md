@@ -210,3 +210,14 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。图库页缩略图解析改为优先使用父级/自身 CSS background sprite，并支持 `background-position-x/y` 与无 `px` 的 offset，避免无缓存时多页预览都退化成同一张 sprite 图；新增父级 CSS sprite + 内层占位图测试，既有搜索、图库、阅读、缓存、Cookie、书架回归测试通过。
+
+### 本地签名配置回归
+
+```sh
+git diff --check
+rg -n "<local Team ID and known site cookie tokens>" .
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -showBuildSettings | rg -n "DEVELOPMENT_TEAM|LOCAL_DEVELOPMENT_TEAM"
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。App target 的签名 Team ID 改为通过 `Config/Signing.xcconfig` 可选读取本机 `Config/Local.xcconfig`；真实本机配置已被 `.gitignore` 忽略，敏感扫描未在可提交文件中发现真实 Team ID 或站点 Cookie；完整测试通过。
