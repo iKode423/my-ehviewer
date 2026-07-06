@@ -299,6 +299,7 @@ struct EHSearchRequest: Hashable, Codable {
     var disableLanguageFilter = false
     var disableUploaderFilter = false
     var disableTagFilter = false
+    var pageIndex: Int?
     var cursor: EHSearchCursor?
 
     /// Builds a site URL using the currently documented public search parameters.
@@ -331,6 +332,10 @@ struct EHSearchRequest: Hashable, Codable {
             appendFlag("f_sfl", enabled: disableLanguageFilter, to: &items)
             appendFlag("f_sfu", enabled: disableUploaderFilter, to: &items)
             appendFlag("f_sft", enabled: disableTagFilter, to: &items)
+        }
+
+        if let pageIndex {
+            items.append(URLQueryItem(name: "page", value: String(max(0, pageIndex))))
         }
 
         if let cursor {

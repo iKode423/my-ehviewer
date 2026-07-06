@@ -28,7 +28,9 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.galleryDownloadPageFailedFormat, "第 %@ 页下载失败：%@")
         XCTAssertEqual(AppCopy.cacheManagementDeleteGallery, "删除缓存")
         XCTAssertEqual(AppCopy.cacheManagementStartUnfinished, "继续未完成下载")
+        XCTAssertEqual(AppCopy.cacheManagementPauseAllDownloads, "暂停所有下载")
         XCTAssertEqual(AppCopy.cacheManagementProgressTitle, "下载进度")
+        XCTAssertEqual(AppCopy.searchJumpPage, "跳页")
     }
 
     /// Confirms reader preference labels stay localized for settings and toolbar menus.
@@ -401,6 +403,36 @@ final class GalleryDownloadManagerTests: XCTestCase {
         XCTAssertEqual(manager.aggregateProgress?.queuedDownloadCount, 2)
         XCTAssertEqual(manager.aggregateProgress?.downloadedPageCount, 7)
         XCTAssertEqual(manager.aggregateProgress?.totalPageCount, 14)
+    }
+
+    /// Confirms pausing all downloads clears active and queued task state.
+    func testPauseAllDownloadsStopsActiveAndQueuedTasks() {
+        let cacheStore = ImageCacheStore(directoryURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory))
+        let manager = GalleryDownloadManager(
+            client: GalleryDownloadMockHTTPClient(htmlResponses: [:], dataResponses: [:]),
+            cacheStore: cacheStore,
+            retryDelayRange: 0...0
+        )
+        let summaries = (1...6).map { index in
+            CachedGallerySummary(
+                galleryIdentifier: EHGalleryIdentifier(gid: 300 + index, token: "token\(index)"),
+                title: "Gallery \(index)",
+                thumbnailURL: nil,
+                cachedPageCount: 1,
+                totalPageCount: 3,
+                byteCount: 1,
+                updatedAt: Date(),
+                pageRecords: []
+            )
+        }
+
+        manager.startUnfinishedDownloads(from: summaries)
+        manager.pauseAllDownloads()
+
+        XCTAssertNil(manager.aggregateProgress)
+        for summary in summaries {
+            XCTAssertEqual(manager.progress(for: summary.galleryIdentifier)?.isRunning, false)
+        }
     }
 
     /// Waits briefly for the manager's background task to finish.

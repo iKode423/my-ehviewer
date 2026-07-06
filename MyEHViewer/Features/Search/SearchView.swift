@@ -7,6 +7,7 @@ struct SearchView: View {
     private let searchesOnAppear: Bool
     private let chromeMode: SearchChromeMode
     private let navigationTitle: String?
+    @State private var pageJumpText = ""
 
     /// Creates a search view with an injectable view model for previews and tests.
     init(
@@ -308,7 +309,7 @@ struct SearchView: View {
 
     /// Shows previous and next page actions when available.
     private var paginationControls: some View {
-        HStack {
+        HStack(spacing: 10) {
             Button {
                 Task { await viewModel.loadPreviousPage() }
             } label: {
@@ -324,6 +325,10 @@ struct SearchView: View {
 
             Spacer()
 
+            pageJumpControl
+
+            Spacer()
+
             Button {
                 Task { await viewModel.loadNextPage() }
             } label: {
@@ -333,6 +338,43 @@ struct SearchView: View {
         }
         .buttonStyle(.bordered)
         .padding(.vertical, 8)
+    }
+
+    /// Lets the user jump directly to a numbered result page.
+    private var pageJumpControl: some View {
+        HStack(spacing: 6) {
+            TextField(AppCopy.searchPageField, text: $pageJumpText)
+                .keyboardType(.numberPad)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 64)
+                .submitLabel(.go)
+                .onSubmit {
+                    Task { await loadJumpPage() }
+                }
+
+            Button {
+                Task { await loadJumpPage() }
+            } label: {
+                Label(AppCopy.searchJumpPage, systemImage: "arrow.right.to.line")
+                    .labelStyle(.iconOnly)
+            }
+            .disabled(jumpPageNumber == nil || viewModel.isLoading)
+            .accessibilityLabel(AppCopy.searchJumpPage)
+        }
+        .frame(minHeight: 44)
+    }
+
+    /// Parses and loads the page number entered in the pagination controls.
+    private func loadJumpPage() async {
+        guard let pageNumber = jumpPageNumber else { return }
+        await viewModel.loadPage(number: pageNumber)
+    }
+
+    /// Returns the positive page number entered by the user.
+    private var jumpPageNumber: Int? {
+        let trimmedText = pageJumpText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let pageNumber = Int(trimmedText), pageNumber > 0 else { return nil }
+        return pageNumber
     }
 
     /// Creates a binding for one category in the hidden category set.

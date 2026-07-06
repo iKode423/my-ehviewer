@@ -125,6 +125,12 @@ final class SearchViewModel: ObservableObject {
         await load(previousPageURL)
     }
 
+    /// Loads a numbered result page using the current search controls.
+    func loadPage(number: Int) async {
+        guard number > 0 else { return }
+        await load(currentRequest(pageIndex: number - 1).url())
+    }
+
     /// Performs the request and replaces the current page with parsed results.
     @discardableResult
     private func load(_ url: URL) async -> Bool {
@@ -160,7 +166,7 @@ final class SearchViewModel: ObservableObject {
     }
 
     /// Builds a request from the current search controls.
-    private func currentRequest(trimmedQuery: String? = nil) -> EHSearchRequest {
+    private func currentRequest(trimmedQuery: String? = nil, pageIndex: Int? = nil) -> EHSearchRequest {
         EHSearchRequest(
             source: source,
             keyword: trimmedQuery ?? query.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -172,7 +178,8 @@ final class SearchViewModel: ObservableObject {
             minimumRating: minimumRating == 0 ? nil : minimumRating,
             disableLanguageFilter: disableLanguageFilter,
             disableUploaderFilter: disableUploaderFilter,
-            disableTagFilter: disableTagFilter
+            disableTagFilter: disableTagFilter,
+            pageIndex: pageIndex
         )
     }
 }

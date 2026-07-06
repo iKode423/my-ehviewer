@@ -771,6 +771,33 @@ final class GalleryDownloadManager: ObservableObject {
         }
     }
 
+    /// Pauses every queued or running gallery download.
+    func pauseAllDownloads() {
+        let affectedIDs = Set(queuedJobs.keys).union(runningTasks.keys)
+        for task in runningTasks.values {
+            task.cancel()
+        }
+        queuedJobs.removeAll()
+        queuedJobIDs.removeAll()
+        runningTasks.removeAll()
+
+        for id in affectedIDs {
+            guard let progress = progressByGalleryID[id] else { continue }
+            progressByGalleryID[id] = GalleryDownloadProgress(
+                galleryID: progress.galleryID,
+                title: progress.title,
+                downloadedPageCount: progress.downloadedPageCount,
+                totalPageCount: progress.totalPageCount,
+                isRunning: false,
+                errorMessage: progress.errorMessage
+            )
+        }
+
+        aggregateProgress = nil
+        activeRunStartedAt = nil
+        activeRunDownloadedByteCount = 0
+    }
+
     /// Downloads reader images one page at a time.
     private func download(detail: EHGalleryDetail, fallback: EHSearchResult?) async {
         let totalPageCount = detail.pageCount ?? detail.pageLinks.count
@@ -779,6 +806,11 @@ final class GalleryDownloadManager: ObservableObject {
         updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
 
         for pageLink in detail.pageLinks.sorted(by: { $0.pageNumber < $1.pageNumber }) {
+            if Task.isCancelled {
+                updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
+                return
+            }
+
             if let record = cacheStore.pageRecord(for: detail.identifier, pageNumber: pageLink.pageNumber),
                cacheStore.containsData(for: record.imageURL) {
                 downloadedPageCount = max(downloadedPageCount, cachedPageCount(for: detail.identifier))
@@ -791,6 +823,9 @@ final class GalleryDownloadManager: ObservableObject {
                 recordDownloadedBytes(byteCount)
                 downloadedPageCount = cachedPageCount(for: detail.identifier)
                 updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
+            } catch is CancellationError {
+                updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
+                return
             } catch {
                 lastErrorMessage = String(format: AppCopy.galleryDownloadPageFailedFormat, String(pageLink.pageNumber), error.localizedDescription)
                 updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: lastErrorMessage)
@@ -868,6 +903,8 @@ final class GalleryDownloadManager: ObservableObject {
             let (detail, fallback) = try await resolvedDetailAndFallback(for: job)
             cacheStore.saveGalleryMetadata(detail: detail, fallback: fallback)
             await download(detail: detail, fallback: fallback)
+        } catch is CancellationError {
+            markJobPaused(job)
         } catch {
             let downloadedPageCount = cachedPageCount(for: job.identifier)
             progressByGalleryID[job.identifier.id] = GalleryDownloadProgress(
@@ -880,6 +917,20 @@ final class GalleryDownloadManager: ObservableObject {
             )
             updateAggregateProgress()
         }
+    }
+
+    /// Marks a cancelled job as paused instead of failed.
+    private func markJobPaused(_ job: GalleryDownloadJob) {
+        let progress = progressByGalleryID[job.identifier.id]
+        progressByGalleryID[job.identifier.id] = GalleryDownloadProgress(
+            galleryID: job.identifier.id,
+            title: progress?.title ?? job.title,
+            downloadedPageCount: cachedPageCount(for: job.identifier),
+            totalPageCount: progress?.totalPageCount ?? job.totalPageCount,
+            isRunning: false,
+            errorMessage: progress?.errorMessage
+        )
+        updateAggregateProgress()
     }
 
     /// Resolves full gallery page links for a queued job.
@@ -944,11 +995,14 @@ final class GalleryDownloadManager: ObservableObject {
         var lastError: Error?
         for attempt in 0...maxPageDownloadRetryCount {
             do {
+                try Task.checkCancellation()
                 return try await downloadPageOnce(pageLink, detail: detail, fallback: fallback, totalPageCount: totalPageCount)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 lastError = error
                 guard attempt < maxPageDownloadRetryCount else { break }
-                await waitBeforeRetry()
+                try await waitBeforeRetry()
             }
         }
         throw lastError ?? EHNetworkError.invalidResponse
@@ -961,9 +1015,12 @@ final class GalleryDownloadManager: ObservableObject {
         fallback: EHSearchResult?,
         totalPageCount: Int
     ) async throws -> Int64 {
+        try Task.checkCancellation()
         let pageResponse = try await client.get(pageLink.pageURL)
+        try Task.checkCancellation()
         let imagePage = try parser.parse(pageResponse.body, sourceURL: pageResponse.url)
         let dataResponse = try await client.data(imagePage.imageURL)
+        try Task.checkCancellation()
         let context = ImageCacheContext(
             galleryIdentifier: detail.identifier,
             galleryTitle: detail.title,
@@ -977,11 +1034,11 @@ final class GalleryDownloadManager: ObservableObject {
     }
 
     /// Waits for a short randomized retry delay to avoid hammering the image host.
-    private func waitBeforeRetry() async {
+    private func waitBeforeRetry() async throws {
         let delay = Double.random(in: retryDelayRange)
         let nanoseconds = UInt64(max(0, delay) * 1_000_000_000)
         guard nanoseconds > 0 else { return }
-        try? await Task.sleep(nanoseconds: nanoseconds)
+        try await Task.sleep(nanoseconds: nanoseconds)
     }
 
     /// Records bytes downloaded during the current active run.

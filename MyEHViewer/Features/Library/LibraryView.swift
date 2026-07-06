@@ -18,8 +18,8 @@ struct LibraryView: View {
             .navigationBarTitleDisplayMode(.large)
     }
 
-    /// Keeps library section and online favorite search controls available while content scrolls.
-    private var libraryPinnedControls: some View {
+    /// Shows library section and online favorite search controls at the top of the scroll content.
+    private var libraryControls: some View {
         VStack(spacing: 10) {
             Picker(AppCopy.libraryTitle, selection: $selection) {
                 ForEach(LibrarySelection.allCases) { item in
@@ -30,14 +30,11 @@ struct LibraryView: View {
 
             if selection == .siteFavorites, siteCookieStore.hasCookieHeader {
                 siteFavoritesSearchBar
-                siteFavoritesPaginationControls
             }
         }
         .padding(.horizontal)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
-        .background(.regularMaterial)
-        .zIndex(1)
     }
 
     /// Displays the selected local collection.
@@ -116,7 +113,7 @@ struct LibraryView: View {
         }
     }
 
-    /// Keeps online favorites pagination controls near the fixed search box.
+    /// Shows online favorites pagination controls at the bottom of the result list.
     private var siteFavoritesPaginationControls: some View {
         HStack {
             Button {
@@ -142,6 +139,8 @@ struct LibraryView: View {
             .disabled(siteFavoritesViewModel.nextPageURL == nil || siteFavoritesViewModel.isLoading)
         }
         .buttonStyle(.bordered)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
     }
 
     /// Displays online favorite loading, error, empty, and result states.
@@ -157,20 +156,18 @@ struct LibraryView: View {
         }
     }
 
-    /// Builds the main library scroller with controls pinned below the navigation title.
+    /// Builds the main library scroller with controls flowing like regular content.
     private func libraryScrollContent<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                Section {
-                    VStack(alignment: .leading, spacing: 0) {
-                        content()
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 8)
-                        .padding(.bottom, 96)
-                } header: {
-                    libraryPinnedControls
+            LazyVStack(alignment: .leading, spacing: 0) {
+                libraryControls
+
+                VStack(alignment: .leading, spacing: 0) {
+                    content()
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+                .padding(.bottom, 96)
             }
         }
     }
@@ -223,6 +220,8 @@ struct LibraryView: View {
                 Divider()
                     .padding(.leading, 100)
             }
+
+            siteFavoritesPaginationControls
         }
     }
 }

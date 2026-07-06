@@ -100,6 +100,26 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(recorder.requestedURLs.first?.absoluteString, "https://e-hentai.org/favorites.php?favcat=all")
     }
 
+    /// Confirms jump-to-page requests keep the active query and use the site's zero-based page parameter.
+    func testLoadPageNumberUsesCurrentSearchParameters() async {
+        let recorder = SearchRequestRecorder()
+        let viewModel = SearchViewModel(
+            initialSource: .favorites,
+            client: MockHTTPClient(body: Self.searchHTML, recorder: recorder),
+            userDefaults: makeUserDefaults()
+        )
+        viewModel.query = "sample"
+
+        await viewModel.loadPage(number: 3)
+
+        XCTAssertEqual(recorder.requestedURLs.count, 1)
+        let queryItems = URLComponents(url: recorder.requestedURLs[0], resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let queryByName = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
+        XCTAssertEqual(queryByName["favcat"], "all")
+        XCTAssertEqual(queryByName["f_search"], "sample")
+        XCTAssertEqual(queryByName["page"], "2")
+    }
+
     /// Confirms filter reset keeps the query and browse source unchanged.
     func testResetFiltersKeepsQueryAndSource() {
         let viewModel = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML), userDefaults: makeUserDefaults())

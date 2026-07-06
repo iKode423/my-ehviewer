@@ -242,3 +242,13 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。设置页图片缓存区域移动到本地数据区域之前；缓存管理页新增继续未完成下载入口和下载进度/网速区域，只有有任务进行时显示；图库下载队列最多同时运行 5 个图库任务；单页图片下载失败会带随机短暂延迟重试，重试仍失败后跳过该页继续后续页面；新增重试成功和并发上限测试，完整回归测试通过。
+
+### 搜索跳页、下载暂停与书架布局回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:MyEHViewerTests/SearchViewModelTests -only-testing:MyEHViewerTests/GalleryDownloadManagerTests -only-testing:MyEHViewerTests/EHParsingTests test
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。搜索结果分页区在上一页和下一页之间新增页码跳转，并按站点 zero-based `page` 参数发起请求；图库详情初始加载提示加入尊重减少动态效果的轻量旋转动画；缓存管理页有任务进行时将“继续未完成下载”切换为“暂停所有下载”，可取消运行任务并清空排队任务；书架页顶部控件不再固定，线上收藏翻页按钮移动到底部；新增搜索跳页 URL、下载暂停和文案回归测试，定向测试和完整回归测试通过。

@@ -21,7 +21,7 @@ struct GalleryDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if viewModel.isLoading && viewModel.detail == nil {
-                    ContentUnavailableView(AppCopy.galleryLoadingTitle, systemImage: "hourglass")
+                    GalleryLoadingView()
                         .frame(maxWidth: .infinity, minHeight: 280)
                 } else if let errorMessage = viewModel.errorMessage, viewModel.detail == nil {
                     VStack(spacing: 16) {
@@ -387,6 +387,44 @@ struct GalleryDetailView: View {
                 }
             }
             .disabled(progress?.isRunning == true || detail.pageLinks.isEmpty)
+        }
+    }
+}
+
+/// Shows an animated gallery loading placeholder that keeps layout stable.
+private struct GalleryLoadingView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isAnimating = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .stroke(Color.accentColor.opacity(0.2), lineWidth: 4)
+                    .frame(width: 52, height: 52)
+
+                Circle()
+                    .trim(from: 0.12, to: 0.82)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .frame(width: 52, height: 52)
+                    .rotationEffect(.degrees(isAnimating ? 360 : 0))
+
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.title3)
+                    .foregroundStyle(Color.accentColor)
+                    .scaleEffect(isAnimating && !reduceMotion ? 1.08 : 1.0)
+            }
+
+            Text(AppCopy.galleryLoadingTitle)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+                isAnimating = true
+            }
         }
     }
 }

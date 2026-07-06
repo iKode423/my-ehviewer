@@ -231,5 +231,6 @@ final class EHParsingTests: XCTestCase {
         XCTAssertEqual(EHSearchRequest(source: .popular).url().absoluteString, "https://e-hentai.org/popular")
         XCTAssertEqual(EHSearchRequest(source: .watched).url().absoluteString, "https://e-hentai.org/watched")
         XCTAssertEqual(EHSearchRequest(source: .favorites).url().absoluteString, "https://e-hentai.org/favorites.php?favcat=all")
+        XCTAssertEqual(EHSearchRequest(source: .favorites, pageIndex: 4).url().absoluteString, "https://e-hentai.org/favorites.php?favcat=all&page=4")
     }
 }

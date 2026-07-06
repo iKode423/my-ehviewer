@@ -295,12 +295,16 @@ private struct ImageCacheManagementView: View {
     private var cacheDownloadControls: some View {
         Section {
             Button {
-                downloadManager.startUnfinishedDownloads(from: imageCacheStore.gallerySummaries)
+                if downloadManager.aggregateProgress == nil {
+                    downloadManager.startUnfinishedDownloads(from: imageCacheStore.gallerySummaries)
+                } else {
+                    downloadManager.pauseAllDownloads()
+                }
             } label: {
-                Label(AppCopy.cacheManagementStartUnfinished, systemImage: "arrow.down.circle")
+                Label(cacheDownloadButtonTitle, systemImage: cacheDownloadButtonSystemImage)
                     .frame(minHeight: 44, alignment: .leading)
             }
-            .disabled(unfinishedSummaries.isEmpty)
+            .disabled(downloadManager.aggregateProgress == nil && unfinishedSummaries.isEmpty)
 
             if let aggregateProgress = downloadManager.aggregateProgress {
                 VStack(alignment: .leading, spacing: 10) {
@@ -330,6 +334,16 @@ private struct ImageCacheManagementView: View {
                 .padding(.vertical, 6)
             }
         }
+    }
+
+    /// Returns the bulk download button title for the current queue state.
+    private var cacheDownloadButtonTitle: String {
+        downloadManager.aggregateProgress == nil ? AppCopy.cacheManagementStartUnfinished : AppCopy.cacheManagementPauseAllDownloads
+    }
+
+    /// Returns the bulk download button icon for the current queue state.
+    private var cacheDownloadButtonSystemImage: String {
+        downloadManager.aggregateProgress == nil ? "arrow.down.circle" : "pause.circle"
     }
 
     /// Renders one cached gallery summary row.
