@@ -82,6 +82,7 @@ enum AppCopy {
     static let readerZoomMode = "缩放倍率"
     static let readerZoomReset = "重置缩放"
     static let readerZoomFormat = "缩放 %@"
+    static let readerToggleOrientation = "切换横竖屏"
     static let readerBackgroundMode = "阅读背景"
     static let readerBackgroundSystem = "跟随系统"
     static let readerBackgroundDark = "深色"

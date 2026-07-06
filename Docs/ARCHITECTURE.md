@@ -20,7 +20,7 @@ MyEHViewer 会按以下边界逐步建设：
 
 图库详情页由 `GalleryDetailViewModel` 负责详情请求、解析和缩略图分页合并，`GalleryDetailView` 展示封面、元信息、可继续搜索的标签、带缩略图的阅读页入口、站点网页入口和失败重试操作。
 
-阅读器由 `ReaderViewModel` 负责图片页请求、解析、翻页、已知页码范围、已知页面入口跳转状态和图片资源重载 token，`ReaderView` 展示当前图片、页码、上一页、下一页、缩略图目录、页码输入跳转、图片加载失败重试、缩放控制、显示偏好、当前页/图库页链接和原图入口。远端图片通过 `CachedRemoteImageView` 统一加载，先读 `ImageCacheStore` 的磁盘缓存，再请求网络；GIF 数据会交给 ImageIO 拆帧并用 `UIImageView` 播放。
+阅读器由 `ReaderViewModel` 负责图片页请求、解析、翻页、已知页码范围、已知页面入口跳转状态和图片资源重载 token，`ReaderView` 展示当前图片、页码、上一页、下一页、缩略图目录、页码输入跳转、图片加载失败重试、缩放控制、显示偏好、当前页/图库页链接和原图入口。阅读器默认隐藏导航栏、Tab 和控制区，只显示图片；用户点击左侧/右侧翻页，点击中间显示控制 UI，并可通过双指缩放临时放大。远端图片通过 `CachedRemoteImageView` 统一加载，先读 `ImageCacheStore` 的磁盘缓存，再请求网络；GIF 数据会交给 ImageIO 拆帧并用 `UIImageView` 播放。
 
 本地书架由 `LibraryStore` 通过 `UserDefaults` 保存历史、收藏和最近阅读页。`LibraryView` 可从记录打开图库详情，也可从带进度的记录直接进入阅读器。它只保存图库 URL、标题、缩略图 URL 和页码等轻量元数据，不保存远端 HTML、图片或用户凭据。
 
@@ -31,6 +31,7 @@ MyEHViewer 会按以下边界逐步建设：
 ## 约束
 
 - App 不内置或提交站点上的内容资源；用户查看过的图片只作为本机运行时缓存保存，并可在设置页清理。
+- `Info.plist` 允许 iPhone 横屏方向，阅读器额外提供手动横竖屏切换入口；自动旋转仍由系统方向感应处理。
 - 用户凭据不写入仓库。
 - 解析逻辑需要通过固定 HTML 样例测试，避免页面结构变动时静默失败。
 - 真实页面结构变化时，先更新 `Docs/SITE_STRUCTURE.md`，再更新解析器和测试。

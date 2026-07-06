@@ -38,6 +38,7 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.readerJumpPageConfirm, "跳转")
         XCTAssertEqual(AppCopy.readerImageLoadFailed, "图片加载失败")
         XCTAssertEqual(AppCopy.readerImageRetry, "重新加载图片")
+        XCTAssertEqual(AppCopy.readerToggleOrientation, "切换横竖屏")
         XCTAssertEqual(AppCopy.settingsImageCacheTitle, "图片缓存")
     }
 

@@ -28,6 +28,15 @@ git diff --check
 
 结果：通过。图片二进制请求、磁盘缓存、缓存统计/清理、GIF 数据渲染桥接和现有图片入口可编译；新增图片缓存存取清理测试通过，未发现空白格式问题。
 
+### 阅读器交互回归
+
+```sh
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+git diff --check
+```
+
+结果：通过。阅读器沉浸模式、点击分区翻页/显示控件、双指缩放、手动横竖屏切换、页码上限修正和现有阅读器流程可编译；新增当前页不低于已知上限测试通过，未发现空白格式问题。
+
 ### 构建验证
 
 ```sh

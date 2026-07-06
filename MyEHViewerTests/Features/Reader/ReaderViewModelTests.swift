@@ -102,6 +102,22 @@ final class ReaderViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.sortedPageLinks.isEmpty)
     }
 
+    /// Confirms the visible page range does not show an upper bound below the current page.
+    func testVisibleLastPageNumberIncludesCurrentPage() async {
+        let pageURL = URL(string: "https://e-hentai.org/s/zzzzxxxxcc/100-27")!
+        let client = ReaderMockHTTPClient(responses: [pageURL: Self.laterPageHTML])
+        let viewModel = ReaderViewModel(
+            initialPageURL: pageURL,
+            pageLinks: [EHGalleryPageLink(pageNumber: 20, pageURL: URL(string: "https://e-hentai.org/s/known/100-20")!)],
+            client: client
+        )
+
+        await viewModel.loadIfNeeded()
+
+        XCTAssertEqual(viewModel.knownLastPageNumber, 20)
+        XCTAssertEqual(viewModel.visibleLastPageNumber, 27)
+    }
+
     /// Confirms retrying the current image advances the view reload token.
     func testReloadImageAdvancesRetryToken() async {
         let firstURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
@@ -145,6 +161,13 @@ final class ReaderViewModelTests: XCTestCase {
     <div id="i1"><h1>Sample Gallery - 2</h1></div>
     <div id="i2"><a id="prev" href="https://e-hentai.org/s/aaaabbbbcc/100-1">Prev</a><a id="next" href="https://e-hentai.org/s/ddddeeeeff/100-2">Next</a></div>
     <div id="i3"><img id="img" src="https://example.test/2.webp" /></div>
+    <div id="i5"><a href="https://e-hentai.org/g/100/abcdef1234/">Back</a></div>
+    """
+
+    private static let laterPageHTML = """
+    <div id="i1"><h1>Sample Gallery - 27</h1></div>
+    <div id="i2"><a id="prev" href="https://e-hentai.org/s/ddddeeeeff/100-26">Prev</a><a id="next" href="https://e-hentai.org/s/zzzzxxxxcc/100-27">Next</a></div>
+    <div id="i3"><img id="img" src="https://example.test/27.webp" /></div>
     <div id="i5"><a href="https://e-hentai.org/g/100/abcdef1234/">Back</a></div>
     """
 }

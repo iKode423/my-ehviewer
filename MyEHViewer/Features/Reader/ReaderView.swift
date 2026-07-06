@@ -12,7 +12,10 @@ struct ReaderView: View {
     @StateObject private var viewModel: ReaderViewModel
     @State private var showsPageGridSheet = false
     @State private var showsPageJumpSheet = false
+    @State private var showsReaderChrome = false
     @State private var pageJumpText = ""
+    @State private var persistedPinchScale: CGFloat = 1.0
+    @GestureState private var transientPinchScale: CGFloat = 1.0
 
     /// Creates a reader view that can start from a parsed image page URL.
     init(initialPageURL: URL? = nil, pageLinks: [EHGalleryPageLink] = []) {
@@ -26,6 +29,9 @@ struct ReaderView: View {
         .background(readerBackgroundColor.ignoresSafeArea())
         .navigationTitle(AppCopy.readerTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(readerChromeVisibility, for: .navigationBar)
+        .toolbar(readerChromeVisibility, for: .tabBar)
+        .statusBarHidden(viewModel.imagePage != nil && !showsReaderChrome)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if !viewModel.sortedPageLinks.isEmpty {
@@ -50,6 +56,7 @@ struct ReaderView: View {
         .onChange(of: viewModel.imagePage) { _, imagePage in
             if let imagePage {
                 libraryStore.updateProgress(imagePage: imagePage)
+                resetTransientReaderState()
             }
         }
         .refreshable {
@@ -82,6 +89,14 @@ struct ReaderView: View {
     private var canSubmitPageJump: Bool {
         guard let pageJumpNumber else { return false }
         return viewModel.canLoadPageNumber(pageJumpNumber)
+    }
+
+    private var readerChromeVisibility: Visibility {
+        viewModel.imagePage == nil || showsReaderChrome ? .visible : .hidden
+    }
+
+    private var activePinchScale: CGFloat {
+        min(max(persistedPinchScale * transientPinchScale, 1.0), 4.0)
     }
 
     private var readerBackgroundColor: Color {
@@ -130,61 +145,83 @@ struct ReaderView: View {
 
     /// Shows the current image and page navigation controls.
     private func readerContent(for imagePage: EHImagePage) -> some View {
-        VStack(spacing: 0) {
+        GeometryReader { geometry in
+            ZStack {
+                readerImageStage(for: imagePage, geometry: geometry)
+
+                if showsReaderChrome {
+                    readerChromeOverlay(for: imagePage)
+                        .transition(.opacity)
+                }
+            }
+            .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: showsReaderChrome)
+        }
+    }
+
+    /// Shows the full-screen image surface with tap zones and pinch zoom.
+    private func readerImageStage(for imagePage: EHImagePage, geometry: GeometryProxy) -> some View {
+        ScrollView([.vertical, .horizontal], showsIndicators: showsReaderChrome) {
             HStack {
-                Text(pageStatusText(for: imagePage))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(readerForegroundStyle)
+                Spacer(minLength: 0)
 
-                Spacer()
-
-                if viewModel.isLoading {
+                CachedRemoteImageView(
+                    url: imagePage.imageURL,
+                    contentMode: .fit,
+                    reloadToken: viewModel.imageReloadToken
+                ) {
                     ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 320)
+                } failure: {
+                    imageLoadFailureView
                 }
+                .id(viewModel.imageReloadToken)
+                .frame(width: readerImageWidth(availableWidth: geometry.size.width))
+                .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: zoomLevelRaw)
+                .animation(reduceMotion ? nil : .snappy(duration: 0.12), value: activePinchScale)
 
-                Label(String(format: AppCopy.readerZoomFormat, zoomLevel.title), systemImage: "magnifyingglass")
-                    .font(.caption)
-                    .foregroundStyle(readerForegroundStyle.opacity(0.72))
+                Spacer(minLength: 0)
             }
-            .padding()
+            .padding(fitMode == .fitPage ? 16 : 0)
+            .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .center)
+        }
+        .background(readerBackgroundColor)
+        .contentShape(Rectangle())
+        .gesture(readerTapGesture(in: geometry.size))
+        .simultaneousGesture(readerPinchGesture)
+    }
 
-            Divider()
+    /// Shows the reader controls when the middle tap zone reveals chrome.
+    private func readerChromeOverlay(for imagePage: EHImagePage) -> some View {
+        VStack(spacing: 0) {
+            readerStatusBar(for: imagePage)
+                .background(.regularMaterial)
 
-            GeometryReader { geometry in
-                ScrollView([.vertical, .horizontal]) {
-                    HStack {
-                        Spacer(minLength: 0)
-
-                        CachedRemoteImageView(
-                            url: imagePage.imageURL,
-                            contentMode: .fit,
-                            reloadToken: viewModel.imageReloadToken
-                        ) {
-                            ProgressView()
-                                .frame(maxWidth: .infinity, minHeight: 320)
-                        } failure: {
-                            imageLoadFailureView
-                        }
-                        .id(viewModel.imageReloadToken)
-                        .frame(width: readerImageWidth(availableWidth: geometry.size.width))
-                        .onTapGesture(count: 2) {
-                            toggleReaderZoom()
-                        }
-                        .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: zoomLevelRaw)
-
-                        Spacer(minLength: 0)
-                    }
-                    .padding(fitMode == .fitPage ? 16 : 0)
-                    .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .top)
-                }
-            }
-            .background(readerBackgroundColor)
-
-            Divider()
+            Spacer()
 
             navigationControls
                 .padding()
+                .background(.regularMaterial)
         }
+        .foregroundStyle(readerForegroundStyle)
+    }
+
+    /// Shows page status and loading feedback above the image.
+    private func readerStatusBar(for imagePage: EHImagePage) -> some View {
+        HStack {
+            Text(pageStatusText(for: imagePage))
+                .font(.subheadline.weight(.semibold))
+
+            Spacer()
+
+            if viewModel.isLoading {
+                ProgressView()
+            }
+
+            Label(String(format: AppCopy.readerZoomFormat, visibleZoomTitle), systemImage: "magnifyingglass")
+                .font(.caption)
+                .foregroundStyle(readerForegroundStyle.opacity(0.72))
+        }
+        .padding()
     }
 
     /// Shows an inline retry action when the image resource fails to load.
@@ -226,7 +263,7 @@ struct ReaderView: View {
 
     /// Builds the visible page progress text from loaded reader state.
     private func pageStatusText(for imagePage: EHImagePage) -> String {
-        if let knownLastPageNumber = viewModel.knownLastPageNumber {
+        if let knownLastPageNumber = viewModel.visibleLastPageNumber {
             return String(
                 format: AppCopy.readerPageKnownFormat,
                 String(imagePage.pageNumber),
@@ -240,17 +277,63 @@ struct ReaderView: View {
     private func readerImageWidth(availableWidth: CGFloat) -> CGFloat {
         let horizontalPadding: CGFloat = fitMode == .fitPage ? 32 : 0
         let baseWidth = max(availableWidth - horizontalPadding, 44)
-        return baseWidth * CGFloat(zoomLevel.rawValue)
+        return baseWidth * visibleZoomScale
+    }
+
+    private var visibleZoomScale: CGFloat {
+        min(CGFloat(zoomLevel.rawValue) * activePinchScale, 4.0)
+    }
+
+    private var visibleZoomTitle: String {
+        "\(Int((visibleZoomScale * 100).rounded()))%"
     }
 
     /// Toggles between the default zoom and a readable close-up zoom.
     private func toggleReaderZoom() {
         zoomLevelRaw = zoomLevel.doubleTapTarget.rawValue
+        persistedPinchScale = 1.0
     }
 
     /// Restores the reader zoom to the default size.
     private func resetReaderZoom() {
         zoomLevelRaw = ReaderZoomLevel.x1.rawValue
+        persistedPinchScale = 1.0
+    }
+
+    /// Resets temporary reader UI whenever a new image page becomes active.
+    private func resetTransientReaderState() {
+        showsReaderChrome = false
+        persistedPinchScale = 1.0
+    }
+
+    /// Handles left, center, and right reading tap zones.
+    private func handleReaderTap(location: CGPoint, size: CGSize) {
+        if location.x < size.width * 0.3 {
+            Task { await viewModel.loadPreviousPage() }
+        } else if location.x > size.width * 0.7 {
+            Task { await viewModel.loadNextPage() }
+        } else {
+            showsReaderChrome.toggle()
+        }
+    }
+
+    /// Creates the reader tap gesture with location-aware zones.
+    private func readerTapGesture(in size: CGSize) -> some Gesture {
+        SpatialTapGesture()
+            .onEnded { value in
+                handleReaderTap(location: value.location, size: size)
+            }
+    }
+
+    /// Creates the pinch gesture used for temporary reader zoom.
+    private var readerPinchGesture: some Gesture {
+        MagnificationGesture()
+            .updating($transientPinchScale) { value, state, _ in
+                state = value
+            }
+            .onEnded { value in
+                persistedPinchScale = min(max(persistedPinchScale * value, 1.0), 4.0)
+            }
     }
 
     /// Provides previous and next page actions.
@@ -409,7 +492,13 @@ struct ReaderView: View {
             } label: {
                 Label(AppCopy.readerZoomReset, systemImage: "arrow.counterclockwise")
             }
-            .disabled(zoomLevel == .x1)
+            .disabled(zoomLevel == .x1 && persistedPinchScale == 1.0)
+
+            Button {
+                ReaderOrientationController.toggleOrientation()
+            } label: {
+                Label(AppCopy.readerToggleOrientation, systemImage: "rotate.right")
+            }
 
             Picker(AppCopy.readerBackgroundMode, selection: $backgroundModeRaw) {
                 ForEach(ReaderBackgroundMode.allCases) { mode in
@@ -442,6 +531,21 @@ struct ReaderView: View {
         } label: {
             Label(AppCopy.readerLinksMenu, systemImage: "link")
         }
+    }
+}
+
+/// Requests manual portrait or landscape orientation changes for the reader.
+enum ReaderOrientationController {
+    /// Toggles the active scene between portrait and landscape.
+    @MainActor
+    static func toggleOrientation() {
+        guard let windowScene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first(where: { $0.activationState == .foregroundActive }) else {
+            return
+        }
+
+        let targetOrientations: UIInterfaceOrientationMask = windowScene.interfaceOrientation.isLandscape ? .portrait : .landscapeRight
+        windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: targetOrientations)) { _ in }
+        windowScene.windows.first?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
     }
 }
 
@@ -591,6 +695,21 @@ struct AnimatedImageDataView: UIViewRepresentable {
         if context.coordinator.image?.images?.isEmpty == false {
             imageView.startAnimating()
         }
+    }
+
+    /// Calculates a SwiftUI size that preserves image aspect ratio when width is known.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIImageView, context: Context) -> CGSize? {
+        guard let image = context.coordinator.image, image.size.width > 0 else { return nil }
+
+        if let width = proposal.width, let height = proposal.height {
+            return CGSize(width: width, height: height)
+        }
+
+        if let width = proposal.width {
+            return CGSize(width: width, height: width * image.size.height / image.size.width)
+        }
+
+        return image.size
     }
 
     /// Stores parsed image data between SwiftUI updates.

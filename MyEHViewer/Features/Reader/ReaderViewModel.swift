@@ -25,6 +25,13 @@ final class ReaderViewModel: ObservableObject {
         sortedPageLinks.map(\.pageNumber).max()
     }
 
+    /// Returns a visible upper page number that never falls behind the current page.
+    var visibleLastPageNumber: Int? {
+        guard let knownLastPageNumber else { return nil }
+        guard let pageNumber = imagePage?.pageNumber else { return knownLastPageNumber }
+        return max(knownLastPageNumber, pageNumber)
+    }
+
     var canLoadPreviousPage: Bool {
         guard let previousPageURL = imagePage?.previousPageURL else { return false }
         return previousPageURL != currentPageURL
