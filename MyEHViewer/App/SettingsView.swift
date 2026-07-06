@@ -229,6 +229,7 @@ private struct ImageCacheManagementView: View {
             }
         }
         .navigationTitle(AppCopy.cacheManagementTitle)
+        .toolbar(.hidden, for: .tabBar)
         .onAppear {
             imageCacheStore.refresh()
         }

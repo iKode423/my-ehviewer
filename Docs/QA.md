@@ -115,3 +115,22 @@ xcrun simctl io booted screenshot /tmp/my-ehviewer-cache-favorites-20260706.png
 ```
 
 结果：通过。应用成功安装并启动，启动 PID 为 `45971`；首屏搜索页在深色模式下显示正常，底部 Tab、搜索入口、筛选入口和 `#00a8ff` 强调色未见明显遮挡或错位。
+
+### 缓存优先阅读与子页面导航回归
+
+```sh
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。覆盖已缓存阅读页打开和下一页切换不再请求阅读页 HTML、缓存页 URL 可用于图库/目录预览、二级图库/缓存页面隐藏底部 Tab 的编译回归，以及既有搜索、图库、阅读、缓存、Cookie、书架和中文文案回归。
+
+### 缓存优先修复冒烟
+
+```sh
+xcrun simctl bootstatus 'iPhone 17 Pro' -b
+xcrun simctl install booted /Users/ikode/Library/Developer/Xcode/DerivedData/MyEHViewer-asduoirgkvnkeocmxnxbvjnwfqad/Build/Products/Debug-iphonesimulator/MyEHViewer.app
+xcrun simctl launch booted com.ikode.MyEHViewer
+xcrun simctl io booted screenshot /tmp/my-ehviewer-cache-first-20260706.png
+```
+
+结果：通过。应用成功安装并启动，启动 PID 为 `60886`；首屏搜索页在深色模式下显示正常，底部 Tab、搜索入口和筛选入口未见明显遮挡或错位。

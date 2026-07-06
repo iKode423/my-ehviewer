@@ -123,6 +123,8 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(store.snapshot.galleryCount, 1)
         XCTAssertEqual(store.gallerySummaries.first?.cachedPageCount, 2)
         XCTAssertEqual(store.gallerySummaries.first?.totalPageCount, 2)
+        XCTAssertEqual(store.cachedImageURL(for: identifier, pageNumber: 1), firstResponseURL)
+        XCTAssertEqual(store.cachedImageURL(for: identifier, pageNumber: 2), secondResponseURL)
 
         store.clearGallery(identifier)
 

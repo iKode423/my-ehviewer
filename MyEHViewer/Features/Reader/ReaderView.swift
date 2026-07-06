@@ -432,7 +432,8 @@ struct ReaderView: View {
                             loadPageFromGrid(pageLink)
                         } label: {
                             VStack(spacing: 6) {
-                                pageThumbnail(url: pageLink.thumbnailURL, crop: pageLink.thumbnailCrop)
+                                let thumbnail = pageThumbnailSource(for: pageLink)
+                                pageThumbnail(url: thumbnail.url, crop: thumbnail.crop)
 
                                 Text(String(format: AppCopy.galleryOpenPage, String(pageLink.pageNumber)))
                                     .font(.caption.weight(.semibold))
@@ -460,6 +461,14 @@ struct ReaderView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    /// Picks cached page images first so downloaded galleries show real page previews.
+    private func pageThumbnailSource(for pageLink: EHGalleryPageLink) -> (url: URL?, crop: EHImageCrop?) {
+        if let cachedURL = viewModel.cachedPreviewImageURL(for: pageLink.pageNumber) {
+            return (cachedURL, nil)
+        }
+        return (pageLink.thumbnailURL, pageLink.thumbnailCrop)
     }
 
     /// Highlights the currently loaded reader page in the thumbnail grid.

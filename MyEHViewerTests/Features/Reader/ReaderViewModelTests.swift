@@ -176,6 +176,57 @@ final class ReaderViewModelTests: XCTestCase {
         XCTAssertEqual(cacheStore.data(for: imageURL), Data([0x27]))
     }
 
+    /// Confirms cached reader navigation does not request page HTML again.
+    func testCachedPreviousAndNextNavigationSkipsNetworkRequests() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let identifier = EHGalleryIdentifier(gid: 100, token: "abcdef1234")
+        let firstPageURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
+        let secondPageURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!
+        let firstImageURL = URL(string: "https://example.test/1.webp")!
+        let secondImageURL = URL(string: "https://example.test/2.webp")!
+        let recorder = ReaderRecordingHTTPClient()
+
+        cacheStore.save(
+            Data([0x01]),
+            for: firstImageURL,
+            responseURL: firstImageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: identifier,
+                galleryTitle: "Sample Gallery",
+                pageNumber: 1,
+                pageURL: firstPageURL,
+                totalPageCount: 2,
+                thumbnailURL: nil
+            )
+        )
+        cacheStore.save(
+            Data([0x02]),
+            for: secondImageURL,
+            responseURL: secondImageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: identifier,
+                galleryTitle: "Sample Gallery",
+                pageNumber: 2,
+                pageURL: secondPageURL,
+                totalPageCount: 2,
+                thumbnailURL: nil
+            )
+        )
+        let viewModel = ReaderViewModel(
+            initialPageURL: firstPageURL,
+            client: recorder,
+            cacheStore: cacheStore
+        )
+
+        await viewModel.loadIfNeeded()
+        await viewModel.loadNextPage()
+
+        XCTAssertTrue(recorder.requestedURLs.isEmpty)
+        XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
+        XCTAssertEqual(viewModel.imagePage?.imageURL, secondImageURL)
+    }
+
     /// Confirms retrying the current image advances the view reload token.
     func testReloadImageAdvancesRetryToken() async {
         let firstURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
@@ -269,5 +320,16 @@ private struct ReaderMockHTTPClient: EHHTTPClient {
             throw error
         }
         return EHHTTPResponse(url: url, statusCode: 200, body: responses[url] ?? "")
+    }
+}
+
+/// Records reader page requests so cache-first tests can assert no network work.
+private final class ReaderRecordingHTTPClient: EHHTTPClient {
+    private(set) var requestedURLs: [URL] = []
+
+    /// Records unexpected requests and returns an error.
+    func get(_ url: URL) async throws -> EHHTTPResponse {
+        requestedURLs.append(url)
+        throw EHParseError.missingImageURL
     }
 }

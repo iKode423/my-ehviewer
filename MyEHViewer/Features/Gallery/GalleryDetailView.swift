@@ -51,6 +51,7 @@ struct GalleryDetailView: View {
         }
         .navigationTitle(AppCopy.galleryTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             Link(destination: result.pageURL) {
                 Label(AppCopy.galleryOpenInBrowser, systemImage: "safari")
@@ -159,6 +160,7 @@ struct GalleryDetailView: View {
                             embedsInNavigationStack: false,
                             searchesOnAppear: true
                         )
+                        .toolbar(.hidden, for: .tabBar)
                     } label: {
                         Label {
                             Text(tag.displayName)
@@ -269,7 +271,8 @@ struct GalleryDetailView: View {
             appNavigationStore.openReader(initialPageURL: pageLink.pageURL, pageLinks: allPageLinks, totalPageCount: viewModel.detail?.pageCount)
         } label: {
             VStack(spacing: 6) {
-                pageThumbnail(url: pageLink.thumbnailURL, crop: pageLink.thumbnailCrop)
+                let thumbnail = pageThumbnailSource(for: pageLink)
+                pageThumbnail(url: thumbnail.url, crop: thumbnail.crop)
 
                 Text(String(format: AppCopy.galleryOpenPage, String(pageLink.pageNumber)))
                     .font(.caption.weight(.semibold))
@@ -282,6 +285,15 @@ struct GalleryDetailView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+
+    /// Picks the cached page image first, then falls back to the site thumbnail.
+    private func pageThumbnailSource(for pageLink: EHGalleryPageLink) -> (url: URL?, crop: EHImageCrop?) {
+        if let identifier = viewModel.detail?.identifier,
+           let cachedURL = imageCacheStore.cachedImageURL(for: identifier, pageNumber: pageLink.pageNumber) {
+            return (cachedURL, nil)
+        }
+        return (pageLink.thumbnailURL, pageLink.thumbnailCrop)
     }
 
     /// Shows a stable thumbnail frame for one reader page.

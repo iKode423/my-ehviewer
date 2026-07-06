@@ -263,6 +263,17 @@ final class ImageCacheStore: ObservableObject {
         index.pages[pageKey(identifier: identifier, pageNumber: pageNumber)]
     }
 
+    /// Returns the cached image URL for a gallery page when the image bytes are available.
+    func cachedImageURL(for identifier: EHGalleryIdentifier, pageNumber: Int) -> URL? {
+        guard
+            let record = pageRecord(for: identifier, pageNumber: pageNumber),
+            containsData(for: record.imageURL)
+        else {
+            return nil
+        }
+        return record.imageURL
+    }
+
     /// Stores gallery metadata so cache management can list partially downloaded galleries.
     func saveGalleryMetadata(detail: EHGalleryDetail, fallback: EHSearchResult? = nil) {
         index.galleryMetadata[detail.identifier.id] = CachedGalleryMetadata(

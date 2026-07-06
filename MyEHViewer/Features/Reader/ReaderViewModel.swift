@@ -151,6 +151,12 @@ final class ReaderViewModel: ObservableObject {
         pageLink(for: pageNumber) != nil
     }
 
+    /// Returns the cached image URL for a known page preview when available.
+    func cachedPreviewImageURL(for pageNumber: Int) -> URL? {
+        guard let identifier = activeGalleryIdentifier else { return nil }
+        return cacheStore.cachedImageURL(for: identifier, pageNumber: pageNumber)
+    }
+
     /// Finds a known gallery page link by page number.
     private func pageLink(for pageNumber: Int) -> EHGalleryPageLink? {
         sortedPageLinks.first { $0.pageNumber == pageNumber }
@@ -170,6 +176,11 @@ final class ReaderViewModel: ObservableObject {
         errorMessage = nil
         defer { isLoading = false }
 
+        if let cachedPage = cachedImagePage(for: url) {
+            applyCachedPage(cachedPage)
+            return
+        }
+
         do {
             let response = try await client.get(url)
             imagePage = try parser.parse(response.body, sourceURL: response.url)
@@ -177,19 +188,29 @@ final class ReaderViewModel: ObservableObject {
             currentPageURL = response.url
         } catch {
             if let cachedPage = cachedImagePage(for: url) {
-                imagePage = cachedPage
-                imageReloadToken += 1
-                currentPageURL = cachedPage.pageURL
-                errorMessage = nil
+                applyCachedPage(cachedPage)
             } else {
                 errorMessage = error.localizedDescription
             }
         }
     }
 
+    /// Applies a cached page without touching the network.
+    private func applyCachedPage(_ cachedPage: EHImagePage) {
+        imagePage = cachedPage
+        imageReloadToken += 1
+        currentPageURL = cachedPage.pageURL
+        errorMessage = nil
+    }
+
     /// Builds a reader page from the local image cache when network HTML is unavailable.
     private func cachedImagePage(for url: URL) -> EHImagePage? {
-        guard let record = cacheStore.pageRecord(for: url) else { return nil }
+        guard
+            let record = cacheStore.pageRecord(for: url),
+            cacheStore.containsData(for: record.imageURL)
+        else {
+            return nil
+        }
         totalPageCount = record.totalPageCount ?? totalPageCount
         let previousURL = cacheStore.pageRecord(for: record.galleryIdentifier, pageNumber: record.pageNumber - 1)?.pageURL
         let nextURL = cacheStore.pageRecord(for: record.galleryIdentifier, pageNumber: record.pageNumber + 1)?.pageURL
@@ -204,5 +225,15 @@ final class ReaderViewModel: ObservableObject {
             galleryURL: record.galleryIdentifier.url(),
             originalImageURL: nil
         )
+    }
+
+    private var activeGalleryIdentifier: EHGalleryIdentifier? {
+        imagePage?.galleryURL.flatMap(EHGalleryIdentifier.init(galleryURL:)) ?? initialGalleryIdentifier
+    }
+
+    private var initialGalleryIdentifier: EHGalleryIdentifier? {
+        pageLinks
+            .compactMap { cacheStore.pageRecord(for: $0.pageURL)?.galleryIdentifier }
+            .first
     }
 }
