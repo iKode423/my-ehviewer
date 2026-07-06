@@ -221,3 +221,14 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。App target 的签名 Team ID 改为通过 `Config/Signing.xcconfig` 可选读取本机 `Config/Local.xcconfig`；真实本机配置已被 `.gitignore` 忽略，敏感扫描未在可提交文件中发现真实 Team ID 或站点 Cookie；完整测试通过。
+
+### MIT 许可证文档验证
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'generic/platform=iOS Simulator' -derivedDataPath /private/tmp/my-ehviewer-derived build
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'generic/platform=iOS' -derivedDataPath /private/tmp/my-ehviewer-derived-ios CODE_SIGNING_ALLOWED=NO build
+```
+
+结果：`git diff --check` 通过。Xcode 测试和构建未完成，当前环境的 CoreSimulatorService 不可用，`xcodebuild test` 无法找到 `iPhone 17 Pro` 模拟器，generic 构建在 `actool` 编译资源时因无可用 Simulator runtime 失败。本轮仅新增 MIT 许可证和 README 说明。

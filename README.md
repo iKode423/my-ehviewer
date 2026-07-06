@@ -50,6 +50,10 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 - 所有面向用户的 App 文案默认使用中文。
 - 不在仓库内保存站点内容、用户凭据、Cookie 或抓取到的图片资源。
 
+## 许可证
+
+本项目使用 MIT 许可证，详见 `LICENSE`。
+
 ## 获取cookie
 
 1. 在登录的情况下，访问`https://e-hentai.org/`。
