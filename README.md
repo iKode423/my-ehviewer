@@ -2,6 +2,10 @@
 
 MyEHViewer 是一个 iOS 阅读应用项目，目标是支持浏览 `https://e-hentai.org/` 上与搜索、图库详情和阅读相关的主要功能。
 
+## 为什么开发
+
+为了方便劳资博览群书（
+
 ## 当前阶段
 
 - 已初始化 SwiftUI iOS 工程骨架。
@@ -45,3 +49,9 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 - 每完成一个明确阶段，先验证，再提交对应代码。
 - 所有面向用户的 App 文案默认使用中文。
 - 不在仓库内保存站点内容、用户凭据、Cookie 或抓取到的图片资源。
+
+## 获取cookie
+
+1. 在登录的情况下，访问`https://e-hentai.org/`。
+2. 打开调试工具，在网络里找到名称`e-hentai.org`的请求，在它的`Request Headers`中找到`cookie`那一项
+3. 复制后边一长串字符进app保存即可
