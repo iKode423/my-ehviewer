@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var showsCookieClearConfirmation = false
     @State private var showsImageCacheClearConfirmation = false
     @State private var showsNonGalleryImageCacheClearConfirmation = false
+    @State private var accentRefreshID = UUID()
 
     var body: some View {
         NavigationStack {
@@ -29,52 +30,13 @@ struct SettingsView: View {
             .navigationTitle(AppCopy.settingsTitle)
             .accentColor(settingsAccentColor)
             .tint(settingsAccentColor)
+            .id(accentRefreshID)
             .onAppear {
                 cookieInput = siteCookieStore.cookieHeader
                 imageCacheStore.refresh()
             }
-            .confirmationDialog(
-                AppCopy.settingsClearConfirmationTitle,
-                isPresented: $showsClearConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button(AppCopy.settingsClearConfirm, role: .destructive) {
-                    libraryStore.removeAll()
-                }
-            } message: {
-                Text(AppCopy.settingsClearConfirmationMessage)
-            }
-            .confirmationDialog(
-                AppCopy.settingsCookieClearTitle,
-                isPresented: $showsCookieClearConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button(AppCopy.settingsCookieClearConfirm, role: .destructive) {
-                    siteCookieStore.clearCookieHeader()
-                    cookieInput = ""
-                }
-            }
-            .confirmationDialog(
-                AppCopy.settingsImageCacheClearTitle,
-                isPresented: $showsImageCacheClearConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button(AppCopy.settingsImageCacheClearConfirm, role: .destructive) {
-                    imageCacheStore.clear()
-                }
-            } message: {
-                Text(AppCopy.settingsImageCacheClearMessage)
-            }
-            .confirmationDialog(
-                AppCopy.settingsNonGalleryImageCacheClearTitle,
-                isPresented: $showsNonGalleryImageCacheClearConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button(AppCopy.settingsNonGalleryImageCacheClearConfirm, role: .destructive) {
-                    imageCacheStore.clearNonGalleryImages()
-                }
-            } message: {
-                Text(AppCopy.settingsNonGalleryImageCacheClearMessage)
+            .onChange(of: accentColorHex) { _, _ in
+                accentRefreshID = UUID()
             }
         }
     }
@@ -165,6 +127,16 @@ struct SettingsView: View {
                 Label(AppCopy.settingsCookieClear, systemImage: "trash")
             }
             .disabled(!siteCookieStore.hasCookieHeader)
+            .confirmationDialog(
+                AppCopy.settingsCookieClearTitle,
+                isPresented: $showsCookieClearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(AppCopy.settingsCookieClearConfirm, role: .destructive) {
+                    siteCookieStore.clearCookieHeader()
+                    cookieInput = ""
+                }
+            }
 
             if let errorMessage = siteCookieStore.errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
@@ -185,6 +157,17 @@ struct SettingsView: View {
                 Label(AppCopy.settingsClearLocalData, systemImage: "trash")
             }
             .disabled(libraryStore.history.isEmpty && libraryStore.favorites.isEmpty)
+            .confirmationDialog(
+                AppCopy.settingsClearConfirmationTitle,
+                isPresented: $showsClearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(AppCopy.settingsClearConfirm, role: .destructive) {
+                    libraryStore.removeAll()
+                }
+            } message: {
+                Text(AppCopy.settingsClearConfirmationMessage)
+            }
         }
     }
 
@@ -207,13 +190,35 @@ struct SettingsView: View {
                 Label(AppCopy.settingsClearImageCache, systemImage: "trash")
             }
             .disabled(imageCacheStore.snapshot.isEmpty)
+            .confirmationDialog(
+                AppCopy.settingsImageCacheClearTitle,
+                isPresented: $showsImageCacheClearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(AppCopy.settingsImageCacheClearConfirm, role: .destructive) {
+                    imageCacheStore.clear()
+                }
+            } message: {
+                Text(AppCopy.settingsImageCacheClearMessage)
+            }
 
             Button(role: .destructive) {
                 showsNonGalleryImageCacheClearConfirmation = true
             } label: {
-                Label(AppCopy.settingsClearNonGalleryImageCache, systemImage: "photo.badge.minus")
+                Label(AppCopy.settingsClearNonGalleryImageCache, systemImage: "photo")
             }
             .disabled(!imageCacheStore.hasNonGalleryImageCache)
+            .confirmationDialog(
+                AppCopy.settingsNonGalleryImageCacheClearTitle,
+                isPresented: $showsNonGalleryImageCacheClearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(AppCopy.settingsNonGalleryImageCacheClearConfirm, role: .destructive) {
+                    imageCacheStore.clearNonGalleryImages()
+                }
+            } message: {
+                Text(AppCopy.settingsNonGalleryImageCacheClearMessage)
+            }
         }
     }
 

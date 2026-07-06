@@ -38,6 +38,12 @@ struct ContentView: View {
         .fullScreenCover(isPresented: readerPresentationBinding) {
             readerPresentation
         }
+        .onAppear {
+            applyUIKitAccentColor(accentColor)
+        }
+        .onChange(of: accentColorHex) { _, _ in
+            applyUIKitAccentColor(accentColor)
+        }
     }
 
     private var themeMode: AppThemeMode {
@@ -54,6 +60,17 @@ struct ContentView: View {
 
     private var accentColor: Color {
         AppAccentColor.color(from: accentColorHex)
+    }
+
+    /// Applies the SwiftUI accent to UIKit-backed controls that cache the window tint.
+    private func applyUIKitAccentColor(_ color: Color) {
+        let uiColor = UIColor(color)
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .forEach { window in
+                window.tintColor = uiColor
+            }
     }
 
     /// Bridges the optional reader route into a dismissible full-screen cover.

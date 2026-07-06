@@ -53,7 +53,7 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.readerToggleOrientation, "切换横竖屏")
         XCTAssertEqual(AppCopy.settingsImageCacheTitle, "图片缓存")
         XCTAssertEqual(AppCopy.settingsAccentColor, "主题颜色")
-        XCTAssertEqual(AppCopy.settingsClearNonGalleryImageCache, "清空非图库图片缓存")
+        XCTAssertEqual(AppCopy.settingsClearNonGalleryImageCache, "清空非图库缓存")
     }
 
     /// Confirms the app accent color keeps the required default and persists as hex.

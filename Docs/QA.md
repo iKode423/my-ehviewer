@@ -191,3 +191,12 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。非图库图片缓存清理按钮恢复标准图标标签；设置页显式应用自定义主题色到 tint 和 accent 控件；书架列表内容先包进稳定容器再添加外边距，避免列表项被异常撑开；阅读器顶部工具栏移除外部链接菜单；既有搜索、图库、阅读、缓存、Cookie、书架回归测试通过。
+
+### 设置页确认弹窗与主题色即时刷新回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。非图库缓存清理入口文案缩短为“清空非图库缓存”，图标改用稳定可用的 `photo`；清理类确认弹窗改为挂在触发按钮自身；主题色变化时刷新设置列表并同步当前 UIKit window tint，让设置页控件无需重启即可更新颜色；既有搜索、图库、阅读、缓存、Cookie、书架回归测试通过。
