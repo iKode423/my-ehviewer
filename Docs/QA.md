@@ -303,3 +303,16 @@ xcrun simctl io booted screenshot /tmp/my-ehviewer-compact-search-20260707c.png
 ```
 
 结果：通过。首页搜索按钮改为 32pt 自绘圆形图标，重置图标按钮改为 28pt 圆形描边，最近搜索和隐藏分类按钮改为小芯片；高级搜索里的二元筛选改为左侧勾选行，不再使用右侧系统 Switch，避免窄屏溢出；线上收藏状态同时兼容移除分类、删除收藏按钮和修改/移除收藏文案，修复已收藏图库不显示状态的问题，同时保留默认 `Favorites 0` 未收藏保护。
+
+### App 图标验证
+
+```sh
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
+sips -g pixelWidth -g pixelHeight -g hasAlpha MyEHViewer/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png MyEHViewer/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-iphone-60x60@3x.png
+plutil -p /Users/ikode/Library/Developer/Xcode/DerivedData/MyEHViewer-asduoirgkvnkeocmxnxbvjnwfqad/Build/Products/Debug-iphonesimulator/MyEHViewer.app/Info.plist | rg -n "CFBundleIcon|AppIcon|CFBundlePrimaryIcon" -C 2
+xcrun simctl uninstall booted com.ikode.MyEHViewer
+xcrun simctl install booted /Users/ikode/Library/Developer/Xcode/DerivedData/MyEHViewer-asduoirgkvnkeocmxnxbvjnwfqad/Build/Products/Debug-iphonesimulator/MyEHViewer.app
+xcrun simctl io booted screenshot /tmp/my-ehviewer-appicon-home-final.png
+```
+
+结果：通过。AppIcon 由参考图提取像素风 `eh` 与书本图形，绿色替换为默认主题色 `#00A8FF`，黑底无透明通道；生成 iPhone/iPad/marketing 所需尺寸，并在工程 Debug/Release 配置中声明 `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`。构建产物 Info.plist 已生成 `CFBundleIconName = AppIcon`，模拟器卸载重装后主屏显示新图标。
