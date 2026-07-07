@@ -265,7 +265,13 @@ struct EHFavoritePopupParser {
         let resolvedActionURL = form.flatMap { actionURL(in: $0, sourceURL: sourceURL) } ?? sourceURL
         let fields = form.map(inputFields(in:)) ?? fallbackFields()
         let categories = form.map(categories(in:)) ?? []
-        return EHFavoritePopupForm(actionURL: resolvedActionURL, fields: fields, categories: categories)
+        let indicatesFavorite = form.map(indicatesExistingFavorite(in:)) ?? false
+        return EHFavoritePopupForm(
+            actionURL: resolvedActionURL,
+            fields: fields,
+            categories: categories,
+            indicatesFavorite: indicatesFavorite
+        )
     }
 
     /// Finds the form that owns favorite category controls.
@@ -322,6 +328,36 @@ struct EHFavoritePopupParser {
                 isSelected: match[1].localizedCaseInsensitiveContains("checked")
             )
         }
+    }
+
+    /// Detects popup markers that only appear when the gallery is already favorited.
+    private func indicatesExistingFavorite(in form: String) -> Bool {
+        let lowercasedForm = form.lowercased()
+        let hasFavoriteCategory = lowercasedForm.contains("name=\"favcat\"") || lowercasedForm.contains("name='favcat'")
+        let hasRemovalCategory = lowercasedForm.contains("value=\"-1\"") || lowercasedForm.contains("value='-1'")
+        if hasFavoriteCategory && hasRemovalCategory {
+            return true
+        }
+
+        let removalFieldNames = ["favdel", "ddact", "deletefav", "delfav", "removefav"]
+        if removalFieldNames.contains(where: { fieldName in
+            lowercasedForm.contains("name=\"\(fieldName)\"") || lowercasedForm.contains("name='\(fieldName)'")
+        }) {
+            return true
+        }
+
+        let text = EHHTMLParsing.textContent(form).lowercased()
+        let markers = [
+            "modify favorite",
+            "update favorite",
+            "delete favorite",
+            "remove favorite",
+            "remove from favorites",
+            "delete from favorites",
+            "移除收藏",
+            "取消收藏"
+        ]
+        return markers.contains { text.contains($0) }
     }
 
     /// Provides a minimal favorite form for popup layouts without a form tag.

@@ -89,7 +89,7 @@ struct SearchView: View {
 
     /// Provides the first visible search control for the application shell.
     private var searchBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             TextField(AppCopy.searchPlaceholder, text: $viewModel.query)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -103,10 +103,14 @@ struct SearchView: View {
                 Task { await viewModel.search() }
             } label: {
                 Image(systemName: "magnifyingglass")
-                    .frame(width: 44, height: 44)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Color.accentColor))
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.plain)
             .disabled(viewModel.isLoading)
+            .opacity(viewModel.isLoading ? 0.5 : 1)
             .accessibilityLabel(AppCopy.searchButtonTitle)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -150,14 +154,20 @@ struct SearchView: View {
                             } label: {
                                 HStack(spacing: 4) {
                                     Image(systemName: "clock.arrow.circlepath")
+                                        .imageScale(.small)
                                     Text(recentQuery)
                                         .lineLimit(1)
                                         .truncationMode(.tail)
-                                        .frame(maxWidth: 160)
+                                        .frame(maxWidth: 130)
                                 }
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(Capsule().fill(Color.accentColor.opacity(0.22)))
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.plain)
                             .disabled(viewModel.isLoading)
+                            .opacity(viewModel.isLoading ? 0.5 : 1)
                         }
                     }
                 }
@@ -186,10 +196,17 @@ struct SearchView: View {
                 viewModel.resetFilters()
             } label: {
                 Image(systemName: "arrow.counterclockwise")
-                    .frame(width: 44, height: 44)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 28, height: 28)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
+                    )
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
             .disabled(!viewModel.hasActiveFilters || viewModel.isLoading)
+            .opacity((!viewModel.hasActiveFilters || viewModel.isLoading) ? 0.45 : 1)
             .accessibilityLabel(AppCopy.searchResetFilters)
         }
     }
@@ -200,7 +217,7 @@ struct SearchView: View {
             Text(AppCopy.searchHiddenCategoriesTitle)
                 .font(.subheadline.weight(.semibold))
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 6)], alignment: .leading, spacing: 6) {
                 ForEach(EHGalleryCategory.allCases) { category in
                     let isHidden = viewModel.excludedCategories.contains(category)
 
@@ -211,19 +228,24 @@ struct SearchView: View {
                             viewModel.excludedCategories.insert(category)
                         }
                     } label: {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 4) {
                             Image(systemName: isHidden ? "eye.slash" : "eye")
+                                .imageScale(.small)
                             Text(category.displayName)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
                         }
-                        .font(.caption.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .overlay(
+                            Capsule()
+                                .stroke(isHidden ? Color.gray.opacity(0.45) : Color.accentColor.opacity(0.45), lineWidth: 1)
+                        )
                     }
-                    .buttonStyle(.bordered)
-                    .tint(isHidden ? .gray : .accentColor)
+                    .buttonStyle(.plain)
                     .foregroundStyle(isHidden ? .secondary : .primary)
-                    .opacity(isHidden ? 0.55 : 1)
+                    .opacity(isHidden ? 0.5 : 1)
                     .accessibilityValue(isHidden ? "已隐藏" : "未隐藏")
                 }
             }
@@ -233,16 +255,14 @@ struct SearchView: View {
 
     /// Shows advanced search options documented from the current site script.
     private var advancedFilters: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(AppCopy.searchAdvancedTitle)
                 .font(.subheadline.weight(.semibold))
 
-            Toggle(AppCopy.searchBrowseExpunged, isOn: $viewModel.browseExpunged)
-                .fixedSize(horizontal: false, vertical: true)
-            Toggle(AppCopy.searchRequireTorrent, isOn: $viewModel.requireTorrent)
-                .fixedSize(horizontal: false, vertical: true)
+            compactFilterToggle(AppCopy.searchBrowseExpunged, isOn: $viewModel.browseExpunged)
+            compactFilterToggle(AppCopy.searchRequireTorrent, isOn: $viewModel.requireTorrent)
 
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 TextField(AppCopy.searchMinimumPages, text: $viewModel.minimumPagesText)
                     .keyboardType(.numberPad)
                     .textFieldStyle(.roundedBorder)
@@ -263,17 +283,39 @@ struct SearchView: View {
             }
             .pickerStyle(.menu)
             .buttonStyle(.bordered)
+            .controlSize(.small)
             .accessibilityLabel(AppCopy.searchMinimumRating)
 
-            Toggle(AppCopy.searchDisableLanguageFilter, isOn: $viewModel.disableLanguageFilter)
-                .fixedSize(horizontal: false, vertical: true)
-            Toggle(AppCopy.searchDisableUploaderFilter, isOn: $viewModel.disableUploaderFilter)
-                .fixedSize(horizontal: false, vertical: true)
-            Toggle(AppCopy.searchDisableTagFilter, isOn: $viewModel.disableTagFilter)
-                .fixedSize(horizontal: false, vertical: true)
+            compactFilterToggle(AppCopy.searchDisableLanguageFilter, isOn: $viewModel.disableLanguageFilter)
+            compactFilterToggle(AppCopy.searchDisableUploaderFilter, isOn: $viewModel.disableUploaderFilter)
+            compactFilterToggle(AppCopy.searchDisableTagFilter, isOn: $viewModel.disableTagFilter)
         }
         .font(.subheadline)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Builds a compact left-aligned boolean filter row without a trailing switch.
+    private func compactFilterToggle(_ title: String, isOn: Binding<Bool>) -> some View {
+        Button {
+            isOn.wrappedValue.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: isOn.wrappedValue ? "checkmark.circle.fill" : "circle")
+                    .imageScale(.small)
+                    .foregroundStyle(isOn.wrappedValue ? Color.accentColor : .secondary)
+
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(isOn.wrappedValue ? "已开启" : "已关闭")
     }
 
     /// Displays loading, empty, error, and result list states.

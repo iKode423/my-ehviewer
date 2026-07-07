@@ -193,6 +193,28 @@ final class EHParsingTests: XCTestCase {
         XCTAssertEqual(form.submissionFields()["favcat"], "0")
     }
 
+    /// Confirms existing favorites can be detected from removal controls without a removal category.
+    func testFavoritePopupParserDetectsFavoritedPopupWithRemovalButton() {
+        let html = """
+        <form action="/gallerypopups.php?gid=100&amp;t=abcdef1234&amp;act=addfav" method="post">
+          <h1>Modify Favorite</h1>
+          <input type="hidden" name="gid" value="100">
+          <label><input type="radio" name="favcat" value="0" checked="checked">Favorites 0</label><br>
+          <label><input type="radio" name="favcat" value="1">Favorites 1</label><br>
+          <textarea name="favnote"></textarea>
+          <input type="submit" name="favdel" value="Remove from Favorites">
+        </form>
+        """
+
+        let form = EHFavoritePopupParser().parse(
+            html,
+            sourceURL: URL(string: "https://e-hentai.org/gallerypopups.php?gid=100&t=abcdef1234&act=addfav")!
+        )
+
+        XCTAssertTrue(form.isFavorited)
+        XCTAssertEqual(form.selectedFavoriteCategory?.title, "Favorites 0")
+    }
+
     /// Confirms image URL, navigation, and original image links are parsed.
     func testImagePageParserReadsReaderPage() throws {
         let html = """

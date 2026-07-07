@@ -224,10 +224,11 @@ struct EHFavoritePopupForm: Hashable {
     let actionURL: URL
     let fields: [String: String]
     let categories: [EHFavoriteCategory]
+    let indicatesFavorite: Bool
 
-    /// Returns true only when the popup exposes the removal choice for an existing favorite.
+    /// Returns true when the popup indicates this gallery already belongs to a favorite category.
     var isFavorited: Bool {
-        selectedFavoriteCategory != nil && categories.contains { $0.value == "-1" }
+        selectedFavoriteCategory != nil && indicatesFavorite
     }
 
     /// Returns the checked favorite category while ignoring the site's removal category.

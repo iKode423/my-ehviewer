@@ -154,6 +154,26 @@ final class GalleryDetailViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.siteFavoriteCategoryTitle)
     }
 
+    /// Confirms favorite status works when the site exposes removal through a submit button.
+    func testRefreshSiteFavoriteStatusDetectsRemovalButtonFavorite() async {
+        let galleryURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
+        let popupURL = EHGalleryIdentifier(gid: 100, token: "abcdef1234").favoritePopupURL()
+        let viewModel = GalleryDetailViewModel(
+            pageURL: galleryURL,
+            client: GalleryMockHTTPClient(responses: [
+                galleryURL: Self.detailHTML,
+                popupURL: Self.favoritedRemovalButtonPopupHTML
+            ])
+        )
+
+        await viewModel.reload()
+        await viewModel.refreshSiteFavoriteStatus()
+
+        XCTAssertFalse(viewModel.isLoadingSiteFavoriteStatus)
+        XCTAssertEqual(viewModel.isSiteFavorited, true)
+        XCTAssertEqual(viewModel.siteFavoriteCategoryTitle, "Favorites 0")
+    }
+
     /// Confirms a successful add marks the gallery favorited even when the popup has no selected category.
     func testAddSiteFavoriteMarksFavoriteAfterUnselectedPopupSubmission() async {
         let galleryURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
@@ -279,6 +299,17 @@ final class GalleryDetailViewModelTests: XCTestCase {
       <label><input type="radio" name="favcat" value="2">测试</label><br>
       <textarea name="favnote"></textarea>
       <input type="submit" name="apply" value="Apply">
+    </form>
+    """
+
+    private static let favoritedRemovalButtonPopupHTML = """
+    <form action="/gallerypopups.php?gid=100&amp;t=abcdef1234&amp;act=addfav" method="post">
+      <h1>Modify Favorite</h1>
+      <input type="hidden" name="gid" value="100">
+      <label><input type="radio" name="favcat" value="0" checked="checked">Favorites 0</label><br>
+      <label><input type="radio" name="favcat" value="2">测试</label><br>
+      <textarea name="favnote"></textarea>
+      <input type="submit" name="favdel" value="Remove from Favorites">
     </form>
     """
 }

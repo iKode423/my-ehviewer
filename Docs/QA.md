@@ -288,3 +288,18 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。首页搜索和重置筛选按钮改为仅显示图标并保留无障碍标签；隐藏分类选中后改为灰色弱化状态；高级搜索区域改为不会把右侧控件挤出屏幕的宽度约束和菜单式评分选择；阅读页长按保存手势提高优先级，避免被翻页点击区吞掉；线上收藏状态改为必须同时解析到已选收藏分类和移除选项才显示已收藏，避免默认 `Favorites 0` 让所有图库都显示线上收藏；`.serena/` 已加入 `.gitignore`，本地工具状态不会进入提交列表。
+
+### 搜索筛选紧凑布局与线上收藏状态回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:MyEHViewerTests/EHParsingTests -only-testing:MyEHViewerTests/GalleryDetailViewModelTests test
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+xcrun simctl boot 'iPhone 17 Pro'
+xcrun simctl bootstatus 'iPhone 17 Pro' -b
+xcrun simctl install booted /Users/ikode/Library/Developer/Xcode/DerivedData/MyEHViewer-asduoirgkvnkeocmxnxbvjnwfqad/Build/Products/Debug-iphonesimulator/MyEHViewer.app
+xcrun simctl launch booted com.ikode.MyEHViewer
+xcrun simctl io booted screenshot /tmp/my-ehviewer-compact-search-20260707c.png
+```
+
+结果：通过。首页搜索按钮改为 32pt 自绘圆形图标，重置图标按钮改为 28pt 圆形描边，最近搜索和隐藏分类按钮改为小芯片；高级搜索里的二元筛选改为左侧勾选行，不再使用右侧系统 Switch，避免窄屏溢出；线上收藏状态同时兼容移除分类、删除收藏按钮和修改/移除收藏文案，修复已收藏图库不显示状态的问题，同时保留默认 `Favorites 0` 未收藏保护。
