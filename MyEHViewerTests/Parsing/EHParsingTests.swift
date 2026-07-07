@@ -150,6 +150,7 @@ final class EHParsingTests: XCTestCase {
           <input type="hidden" name="gid" value="100">
           <label><input type="radio" name="favcat" value="0">默认</label><br>
           <label><input type="radio" name="favcat" value="1" checked="checked">稍后阅读</label><br>
+          <label><input type="radio" name="favcat" value="-1">移除收藏</label><br>
           <textarea name='favnote'>old &amp; note</textarea>
           <input type="submit" name="apply" value="Apply">
         </form>
@@ -162,11 +163,34 @@ final class EHParsingTests: XCTestCase {
         let fields = form.submissionFields(note: "new note")
 
         XCTAssertEqual(form.actionURL.absoluteString, "https://e-hentai.org/gallerypopups.php?gid=100&t=abcdef1234&act=addfav")
-        XCTAssertEqual(form.categories.map(\.title), ["默认", "稍后阅读"])
+        XCTAssertTrue(form.isFavorited)
+        XCTAssertEqual(form.categories.map(\.title), ["默认", "稍后阅读", "移除收藏"])
         XCTAssertEqual(fields["gid"], "100")
         XCTAssertEqual(fields["favcat"], "1")
         XCTAssertEqual(fields["favnote"], "new note")
         XCTAssertEqual(fields["apply"], "Apply")
+    }
+
+    /// Confirms the site's default checked category is not treated as already favorited by itself.
+    func testFavoritePopupParserDoesNotMarkDefaultCategoryAsFavorited() {
+        let html = """
+        <form action="/gallerypopups.php?gid=100&amp;t=abcdef1234&amp;act=addfav" method="post">
+          <input type="hidden" name="gid" value="100">
+          <label><input type="radio" name="favcat" value="0" checked="checked">Favorites 0</label><br>
+          <label><input type="radio" name="favcat" value="1">Favorites 1</label><br>
+          <textarea name="favnote"></textarea>
+          <input type="submit" name="apply" value="Apply">
+        </form>
+        """
+
+        let form = EHFavoritePopupParser().parse(
+            html,
+            sourceURL: URL(string: "https://e-hentai.org/gallerypopups.php?gid=100&t=abcdef1234&act=addfav")!
+        )
+
+        XCTAssertFalse(form.isFavorited)
+        XCTAssertEqual(form.selectedFavoriteCategory?.title, "Favorites 0")
+        XCTAssertEqual(form.submissionFields()["favcat"], "0")
     }
 
     /// Confirms image URL, navigation, and original image links are parsed.

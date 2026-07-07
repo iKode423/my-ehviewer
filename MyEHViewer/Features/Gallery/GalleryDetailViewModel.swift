@@ -159,9 +159,8 @@ final class GalleryDetailViewModel: ObservableObject {
 
     /// Updates published online favorite state from a parsed popup form.
     private func updateSiteFavoriteStatus(from form: EHFavoritePopupForm) {
-        let selectedCategory = form.categories.first(where: \.isSelected)
         isSiteFavorited = form.isFavorited
-        siteFavoriteCategoryTitle = form.isFavorited ? selectedCategory?.title : nil
+        siteFavoriteCategoryTitle = form.isFavorited ? form.selectedFavoriteCategory?.title : nil
     }
 
     /// Updates online favorite state after a successful form submission.

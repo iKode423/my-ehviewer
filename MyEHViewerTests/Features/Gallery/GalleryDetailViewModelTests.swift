@@ -134,6 +134,26 @@ final class GalleryDetailViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.siteFavoriteCategoryTitle, "测试")
     }
 
+    /// Confirms a default selected category without a remove option stays unfavorited.
+    func testRefreshSiteFavoriteStatusIgnoresDefaultSelectedUnfavoritedCategory() async {
+        let galleryURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
+        let popupURL = EHGalleryIdentifier(gid: 100, token: "abcdef1234").favoritePopupURL()
+        let viewModel = GalleryDetailViewModel(
+            pageURL: galleryURL,
+            client: GalleryMockHTTPClient(responses: [
+                galleryURL: Self.detailHTML,
+                popupURL: Self.defaultSelectedUnfavoritedPopupHTML
+            ])
+        )
+
+        await viewModel.reload()
+        await viewModel.refreshSiteFavoriteStatus()
+
+        XCTAssertFalse(viewModel.isLoadingSiteFavoriteStatus)
+        XCTAssertEqual(viewModel.isSiteFavorited, false)
+        XCTAssertNil(viewModel.siteFavoriteCategoryTitle)
+    }
+
     /// Confirms a successful add marks the gallery favorited even when the popup has no selected category.
     func testAddSiteFavoriteMarksFavoriteAfterUnselectedPopupSubmission() async {
         let galleryURL = URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
@@ -236,6 +256,7 @@ final class GalleryDetailViewModelTests: XCTestCase {
       <input type="hidden" name="gid" value="100">
       <label><input type="radio" name="favcat" value="0">默认</label><br>
       <label><input type="radio" name="favcat" value="2" checked="checked">测试</label><br>
+      <label><input type="radio" name="favcat" value="-1">移除收藏</label><br>
       <textarea name="favnote">old note</textarea>
       <input type="submit" name="apply" value="Apply">
     </form>
@@ -245,6 +266,16 @@ final class GalleryDetailViewModelTests: XCTestCase {
     <form action="/gallerypopups.php?gid=100&amp;t=abcdef1234&amp;act=addfav" method="post">
       <input type="hidden" name="gid" value="100">
       <label><input type="radio" name="favcat" value="0">默认</label><br>
+      <label><input type="radio" name="favcat" value="2">测试</label><br>
+      <textarea name="favnote"></textarea>
+      <input type="submit" name="apply" value="Apply">
+    </form>
+    """
+
+    private static let defaultSelectedUnfavoritedPopupHTML = """
+    <form action="/gallerypopups.php?gid=100&amp;t=abcdef1234&amp;act=addfav" method="post">
+      <input type="hidden" name="gid" value="100">
+      <label><input type="radio" name="favcat" value="0" checked="checked">Favorites 0</label><br>
       <label><input type="radio" name="favcat" value="2">测试</label><br>
       <textarea name="favnote"></textarea>
       <input type="submit" name="apply" value="Apply">

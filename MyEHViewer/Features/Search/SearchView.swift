@@ -102,11 +102,14 @@ struct SearchView: View {
             Button {
                 Task { await viewModel.search() }
             } label: {
-                Label(AppCopy.searchButtonTitle, systemImage: "magnifyingglass")
+                Image(systemName: "magnifyingglass")
+                    .frame(width: 44, height: 44)
             }
-                .buttonStyle(.borderedProminent)
-                .disabled(viewModel.isLoading)
+            .buttonStyle(.borderedProminent)
+            .disabled(viewModel.isLoading)
+            .accessibilityLabel(AppCopy.searchButtonTitle)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Lets the user browse the front page or the popular endpoint.
@@ -182,10 +185,12 @@ struct SearchView: View {
             Button {
                 viewModel.resetFilters()
             } label: {
-                Label(AppCopy.searchResetFilters, systemImage: "arrow.counterclockwise")
+                Image(systemName: "arrow.counterclockwise")
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.bordered)
             .disabled(!viewModel.hasActiveFilters || viewModel.isLoading)
+            .accessibilityLabel(AppCopy.searchResetFilters)
         }
     }
 
@@ -197,12 +202,33 @@ struct SearchView: View {
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], alignment: .leading, spacing: 8) {
                 ForEach(EHGalleryCategory.allCases) { category in
-                    Toggle(category.displayName, isOn: hiddenCategoryBinding(for: category))
-                        .toggleStyle(.button)
-                        .font(.caption)
+                    let isHidden = viewModel.excludedCategories.contains(category)
+
+                    Button {
+                        if isHidden {
+                            viewModel.excludedCategories.remove(category)
+                        } else {
+                            viewModel.excludedCategories.insert(category)
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: isHidden ? "eye.slash" : "eye")
+                            Text(category.displayName)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(isHidden ? .gray : .accentColor)
+                    .foregroundStyle(isHidden ? .secondary : .primary)
+                    .opacity(isHidden ? 0.55 : 1)
+                    .accessibilityValue(isHidden ? "已隐藏" : "未隐藏")
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Shows advanced search options documented from the current site script.
@@ -212,17 +238,22 @@ struct SearchView: View {
                 .font(.subheadline.weight(.semibold))
 
             Toggle(AppCopy.searchBrowseExpunged, isOn: $viewModel.browseExpunged)
+                .fixedSize(horizontal: false, vertical: true)
             Toggle(AppCopy.searchRequireTorrent, isOn: $viewModel.requireTorrent)
+                .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 12) {
                 TextField(AppCopy.searchMinimumPages, text: $viewModel.minimumPagesText)
                     .keyboardType(.numberPad)
                     .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 0, maxWidth: .infinity)
 
                 TextField(AppCopy.searchMaximumPages, text: $viewModel.maximumPagesText)
                     .keyboardType(.numberPad)
                     .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 0, maxWidth: .infinity)
             }
+            .frame(maxWidth: .infinity)
 
             Picker(AppCopy.searchMinimumRating, selection: $viewModel.minimumRating) {
                 Text(AppCopy.searchAnyRating).tag(0)
@@ -230,13 +261,19 @@ struct SearchView: View {
                     Text("\(value) 星").tag(value)
                 }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
+            .buttonStyle(.bordered)
+            .accessibilityLabel(AppCopy.searchMinimumRating)
 
             Toggle(AppCopy.searchDisableLanguageFilter, isOn: $viewModel.disableLanguageFilter)
+                .fixedSize(horizontal: false, vertical: true)
             Toggle(AppCopy.searchDisableUploaderFilter, isOn: $viewModel.disableUploaderFilter)
+                .fixedSize(horizontal: false, vertical: true)
             Toggle(AppCopy.searchDisableTagFilter, isOn: $viewModel.disableTagFilter)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .font(.subheadline)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Displays loading, empty, error, and result list states.

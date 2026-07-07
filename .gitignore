@@ -11,5 +11,8 @@ xcuserdata/
 # Local signing
 Config/Local.xcconfig
 
+# Local agent state
+.serena/
+
 # macOS
 .DS_Store

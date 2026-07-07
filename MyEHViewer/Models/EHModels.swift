@@ -225,15 +225,24 @@ struct EHFavoritePopupForm: Hashable {
     let fields: [String: String]
     let categories: [EHFavoriteCategory]
 
+    /// Returns true only when the popup exposes the removal choice for an existing favorite.
     var isFavorited: Bool {
-        guard let selected = categories.first(where: \.isSelected) else { return false }
-        return selected.value != "-1"
+        selectedFavoriteCategory != nil && categories.contains { $0.value == "-1" }
+    }
+
+    /// Returns the checked favorite category while ignoring the site's removal category.
+    var selectedFavoriteCategory: EHFavoriteCategory? {
+        categories.first { $0.isSelected && $0.value != "-1" }
     }
 
     /// Returns fields prepared with a category and note for submission.
     func submissionFields(categoryValue: String? = nil, note: String = "") -> [String: String] {
         var values = fields
-        values["favcat"] = categoryValue ?? categories.first(where: \.isSelected)?.value ?? categories.first?.value ?? values["favcat"] ?? "0"
+        let fallbackCategory = selectedFavoriteCategory?.value
+            ?? categories.first { $0.value != "-1" }?.value
+            ?? values["favcat"]
+            ?? "0"
+        values["favcat"] = categoryValue ?? fallbackCategory
         values["favnote"] = note
         if !values.keys.contains(where: { ["apply", "update"].contains($0.lowercased()) }) {
             values["update"] = "1"

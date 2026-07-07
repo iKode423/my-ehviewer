@@ -278,3 +278,13 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。真机 Debug 构建显式关闭 `ENABLE_DEBUG_DYLIB`，避免 Xcode 使用 stub 可执行文件加载 `MyEHViewer.debug.dylib` 时在真机调试启动阶段停到 `0x00000000`；重新构建后包内不再包含 `MyEHViewer.debug.dylib` 或 `__preview.dylib`，Mach-O 不再包含 `__debug_dylib` 和 debug dylib 加载项。设备锁屏时 `devicectl` 会被 SpringBoard 拒绝启动，需要先解锁真机再运行；解锁后安装、启动成功，设备进程列表可见 `MyEHViewer.app/MyEHViewer`；完整模拟器回归测试通过。
+
+### 搜索筛选、阅读长按与线上收藏误判回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:MyEHViewerTests/EHParsingTests -only-testing:MyEHViewerTests/GalleryDetailViewModelTests test
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。首页搜索和重置筛选按钮改为仅显示图标并保留无障碍标签；隐藏分类选中后改为灰色弱化状态；高级搜索区域改为不会把右侧控件挤出屏幕的宽度约束和菜单式评分选择；阅读页长按保存手势提高优先级，避免被翻页点击区吞掉；线上收藏状态改为必须同时解析到已选收藏分类和移除选项才显示已收藏，避免默认 `Favorites 0` 让所有图库都显示线上收藏；`.serena/` 已加入 `.gitignore`，本地工具状态不会进入提交列表。

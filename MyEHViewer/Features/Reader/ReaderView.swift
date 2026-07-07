@@ -242,7 +242,8 @@ struct ReaderView: View {
                 }
                 .id(viewModel.imageReloadToken)
                 .frame(width: readerImageWidth(availableWidth: geometry.size.width))
-                .simultaneousGesture(readerImageSaveLongPress(for: imagePage))
+                .contentShape(Rectangle())
+                .highPriorityGesture(readerImageSaveLongPress(for: imagePage))
                 .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: zoomLevelRaw)
                 .animation(reduceMotion ? nil : .snappy(duration: 0.12), value: activePinchScale)
 
@@ -253,7 +254,7 @@ struct ReaderView: View {
         }
         .background(readerBackgroundColor)
         .contentShape(Rectangle())
-        .gesture(readerTapGesture(in: geometry.size))
+        .simultaneousGesture(readerTapGesture(in: geometry.size))
         .simultaneousGesture(readerPinchGesture)
     }
 
