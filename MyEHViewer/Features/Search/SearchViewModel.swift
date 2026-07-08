@@ -24,6 +24,9 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var hasSearched = false
     @Published private(set) var recentQueries: [String] = []
     @Published private(set) var currentPageNumber = 1
+    @Published private(set) var totalResultCount: Int?
+    @Published private(set) var totalPageCount: Int?
+    @Published private(set) var isTotalResultCountApproximate = false
 
     /// Returns true when any category or advanced filter is enabled.
     var hasActiveFilters: Bool {
@@ -84,6 +87,9 @@ final class SearchViewModel: ObservableObject {
         errorMessage = nil
         hasSearched = false
         currentPageNumber = 1
+        totalResultCount = nil
+        totalPageCount = nil
+        isTotalResultCountApproximate = false
         lastURL = nil
         lastRequestedURL = nil
     }
@@ -221,9 +227,7 @@ final class SearchViewModel: ObservableObject {
         do {
             let response = try await client.get(url)
             let page = parser.parse(response.body)
-            results = page.results
-            nextPageURL = page.nextPageURL
-            previousPageURL = page.previousPageURL
+            apply(page)
             lastURL = response.url
             return true
         } catch {
@@ -248,9 +252,7 @@ final class SearchViewModel: ObservableObject {
                 keyword: trimmedQuery ?? query.trimmingCharacters(in: .whitespacesAndNewlines),
                 pageNumber: safePageNumber
             )
-            results = page.results
-            nextPageURL = page.nextPageURL
-            previousPageURL = page.previousPageURL
+            apply(page)
             lastURL = hitomiPageURL(number: safePageNumber)
             return true
         } catch {
@@ -265,6 +267,16 @@ final class SearchViewModel: ObservableObject {
         components.path = "/"
         components.queryItems = [URLQueryItem(name: "page", value: String(max(1, number)))]
         return components.url ?? ContentSite.hitomi.baseURL
+    }
+
+    /// Applies one parsed page to all result and pagination state.
+    private func apply(_ page: EHSearchPage) {
+        results = page.results
+        nextPageURL = page.nextPageURL
+        previousPageURL = page.previousPageURL
+        totalResultCount = page.totalResultCount
+        totalPageCount = page.totalPageCount
+        isTotalResultCountApproximate = page.isTotalResultCountApproximate
     }
 
     /// Saves a successful non-empty query at the front of recent searches.

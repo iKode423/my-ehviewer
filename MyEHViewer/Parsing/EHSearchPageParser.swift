@@ -2,16 +2,22 @@ import Foundation
 
 /// Parses the site's compact search result table into app models.
 struct EHSearchPageParser {
+    private let resultsPerPage = 25
+
     /// Parses a search HTML page and returns result rows with pagination links.
     func parse(_ html: String) -> EHSearchPage {
         let rows = EHHTMLParsing.matches(in: html, pattern: #"<tr\b[^>]*>.*?</tr>"#)
             .compactMap(\.first)
             .filter { $0.contains("/g/") && $0.contains("glname") }
+        let totalResultCount = totalResultCount(in: html)
 
         return EHSearchPage(
             results: rows.compactMap(parseResult),
             nextPageURL: paginationURL(in: html, ids: ["unext", "dnext"]),
-            previousPageURL: paginationURL(in: html, ids: ["uprev", "dprev"])
+            previousPageURL: paginationURL(in: html, ids: ["uprev", "dprev"]),
+            totalResultCount: totalResultCount?.count,
+            totalPageCount: totalResultCount.map { pageCount(for: $0.count) },
+            isTotalResultCountApproximate: totalResultCount?.isApproximate ?? false
         )
     }
 
@@ -95,5 +101,24 @@ struct EHSearchPageParser {
             }
         }
         return nil
+    }
+
+    /// Reads the aggregate result count shown above E-Hentai search results.
+    private func totalResultCount(in html: String) -> (count: Int, isApproximate: Bool)? {
+        guard
+            let match = EHHTMLParsing.firstMatch(in: html, pattern: #"Found( about)?\s+([0-9,]+)\s+results?"#),
+            match.count >= 3
+        else {
+            return nil
+        }
+        let rawCount = match[2].replacingOccurrences(of: ",", with: "")
+        guard let count = Int(rawCount) else { return nil }
+        return (count, match[1].isEmpty == false)
+    }
+
+    /// Estimates total search pages using the compact result page size.
+    private func pageCount(for totalResultCount: Int) -> Int {
+        guard totalResultCount > 0 else { return 0 }
+        return Int(ceil(Double(totalResultCount) / Double(resultsPerPage)))
     }
 }

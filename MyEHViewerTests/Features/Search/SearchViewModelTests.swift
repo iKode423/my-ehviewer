@@ -17,6 +17,9 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.results.count, 1)
         XCTAssertEqual(viewModel.results.first?.title, "Sample Gallery")
         XCTAssertEqual(viewModel.nextPageURL?.absoluteString, "https://e-hentai.org/?next=100")
+        XCTAssertEqual(viewModel.totalResultCount, 51)
+        XCTAssertEqual(viewModel.totalPageCount, 3)
+        XCTAssertTrue(viewModel.isTotalResultCountApproximate)
     }
 
     /// Confirms network errors become Chinese user-facing messages.
@@ -228,6 +231,7 @@ final class SearchViewModelTests: XCTestCase {
         <td class="gl4c glhide"><div><a href="https://e-hentai.org/uploader/demo">demo</a></div><div>12 pages</div></td>
       </tr>
     </table>
+    <div class="searchtext"><p>Found about 51 results.</p></div>
     <a id="unext" href="https://e-hentai.org/?next=100">Next</a>
     """
 

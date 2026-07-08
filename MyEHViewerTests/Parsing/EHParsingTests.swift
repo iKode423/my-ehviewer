@@ -14,6 +14,7 @@ final class EHParsingTests: XCTestCase {
             <td class="gl4c glhide"><div><a href="https://e-hentai.org/uploader/demo">demo</a></div><div>12 pages</div></td>
           </tr>
         </table>
+        <div class="searchtext"><p>Found about 1,234 results.</p></div>
         <a id="unext" href="https://e-hentai.org/?next=100">Next</a>
         """
 
@@ -28,6 +29,9 @@ final class EHParsingTests: XCTestCase {
         XCTAssertEqual(page.results[0].pageCountText, "12 pages")
         XCTAssertEqual(page.results[0].tags.first?.displayName, "artist:sample artist")
         XCTAssertEqual(page.nextPageURL?.absoluteString, "https://e-hentai.org/?next=100")
+        XCTAssertEqual(page.totalResultCount, 1_234)
+        XCTAssertEqual(page.totalPageCount, 50)
+        XCTAssertTrue(page.isTotalResultCountApproximate)
     }
 
     /// Confirms search thumbnails can be recovered from CSS background styles.

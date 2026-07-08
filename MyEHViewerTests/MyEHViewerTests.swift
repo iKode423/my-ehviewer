@@ -36,6 +36,9 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.searchJumpPage, "跳页")
         XCTAssertEqual(AppCopy.settingsContentSiteTitle, "图库来源")
         XCTAssertEqual(AppCopy.galleryRelatedTitle, "关联图库")
+        XCTAssertEqual(AppCopy.searchResultsCountFormat, "共 %@ 个结果")
+        XCTAssertEqual(AppCopy.searchApproxResultsCountFormat, "约 %@ 个结果")
+        XCTAssertEqual(AppCopy.searchTotalPagesFormat, "%@ 页")
         XCTAssertEqual(ContentSite.hitomi.title, "Hitomi")
     }
 
@@ -94,6 +97,9 @@ final class MyEHViewerTests: XCTestCase {
 
         XCTAssertEqual(page.results.map(\.identifier.gid), galleryIDs)
         XCTAssertEqual(page.results.map(\.identifier.site), [.hitomi, .hitomi])
+        XCTAssertEqual(page.totalResultCount, 2)
+        XCTAssertEqual(page.totalPageCount, 1)
+        XCTAssertNil(page.nextPageURL)
         XCTAssertEqual(client.requestedGalleryInfoIDs, galleryIDs)
     }
 
@@ -118,6 +124,31 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(client.requestedDataPaths, ["/n/group/baby lop-all.nozomi"])
     }
 
+    /// Confirms search rows surface language before other tags.
+    func testSearchRowTagsPreferLanguage() {
+        let result = EHSearchResult(
+            identifier: EHGalleryIdentifier(gid: 100, token: "abcdef1234"),
+            title: "Sample Gallery",
+            category: "Manga",
+            pageURL: URL(string: "https://e-hentai.org/g/100/abcdef1234/")!,
+            thumbnailURL: nil,
+            uploader: nil,
+            postedText: nil,
+            pageCountText: nil,
+            tags: [
+                EHTag(namespace: "artist", name: "sample"),
+                EHTag(namespace: "language", name: "english"),
+                EHTag(namespace: "parody", name: "original")
+            ]
+        )
+
+        XCTAssertEqual(result.searchRowTags.map(\.displayName), [
+            "language:english",
+            "artist:sample",
+            "parody:original"
+        ])
+    }
+
 
     /// Confirms Hitomi search, cover, and preview thumbnails use AVIF when available.
     @MainActor
@@ -140,6 +171,9 @@ final class MyEHViewerTests: XCTestCase {
         let detail = try await dataSource.galleryDetail(from: URL(string: "https://hitomi.la/galleries/\(galleryID).html")!)
 
         XCTAssertEqual(searchPage.results.first?.thumbnailURL?.absoluteString, expectedThumbnailURL)
+        XCTAssertEqual(searchPage.results.first?.searchRowTags.first?.displayName, "language:english")
+        XCTAssertNil(searchPage.totalResultCount)
+        XCTAssertNil(searchPage.totalPageCount)
         XCTAssertEqual(detail.coverURL?.absoluteString, expectedThumbnailURL)
         XCTAssertEqual(detail.pageLinks.first?.thumbnailURL?.absoluteString, expectedThumbnailURL)
     }

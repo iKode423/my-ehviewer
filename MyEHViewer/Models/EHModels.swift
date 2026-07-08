@@ -268,6 +268,14 @@ struct EHSearchResult: Hashable, Codable, Identifiable {
     let tags: [EHTag]
 
     var id: String { identifier.id }
+
+    /// Returns tags for search rows with language surfaced first when available.
+    var searchRowTags: [EHTag] {
+        guard let languageTag = tags.first(where: { $0.namespace == "language" }) else {
+            return tags
+        }
+        return [languageTag] + tags.filter { $0.id != languageTag.id }
+    }
 }
 
 /// Contains one parsed search response and its pagination links.
@@ -275,6 +283,26 @@ struct EHSearchPage: Hashable, Codable {
     let results: [EHSearchResult]
     let nextPageURL: URL?
     let previousPageURL: URL?
+    let totalResultCount: Int?
+    let totalPageCount: Int?
+    let isTotalResultCountApproximate: Bool
+
+    /// Creates a search page with optional aggregate result metadata.
+    init(
+        results: [EHSearchResult],
+        nextPageURL: URL?,
+        previousPageURL: URL?,
+        totalResultCount: Int? = nil,
+        totalPageCount: Int? = nil,
+        isTotalResultCountApproximate: Bool = false
+    ) {
+        self.results = results
+        self.nextPageURL = nextPageURL
+        self.previousPageURL = previousPageURL
+        self.totalResultCount = totalResultCount
+        self.totalPageCount = totalPageCount
+        self.isTotalResultCountApproximate = isTotalResultCountApproximate
+    }
 }
 
 /// Represents a link to a readable image page in a gallery.

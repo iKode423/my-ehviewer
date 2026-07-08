@@ -68,6 +68,11 @@ private struct HitomiTag: Decodable {
     let female: String?
 }
 
+private struct HitomiSearchIDPage {
+    let ids: [Int]
+    let totalCount: Int?
+}
+
 @MainActor
 final class HitomiDataSource {
     private let client: EHDataHTTPClient
@@ -100,21 +105,24 @@ final class HitomiDataSource {
     func searchPage(keyword: String, pageNumber: Int) async throws -> EHSearchPage {
         let trimmedKeyword = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         let safePageNumber = max(1, pageNumber)
-        let galleryIDs: [Int]
+        let idPage: HitomiSearchIDPage
         if trimmedKeyword.isEmpty {
-            galleryIDs = try await loadGalleryIDs(pageNumber: safePageNumber)
+            idPage = HitomiSearchIDPage(ids: try await loadGalleryIDs(pageNumber: safePageNumber), totalCount: nil)
         } else {
-            galleryIDs = try await hitomiSearchGalleryIDs(query: trimmedKeyword, pageNumber: safePageNumber)
+            idPage = try await hitomiSearchGalleryIDs(query: trimmedKeyword, pageNumber: safePageNumber)
         }
-        let details = try await loadGalleryInfos(for: galleryIDs)
+        let details = try await loadGalleryInfos(for: idPage.ids)
         var results: [EHSearchResult] = []
         for detail in details {
             results.append(try await searchResult(from: detail))
         }
+        let totalPageCount = idPage.totalCount.map { pageCount(for: $0) }
         return EHSearchPage(
             results: results,
-            nextPageURL: hitomiPageURL(pageNumber: safePageNumber + 1),
-            previousPageURL: safePageNumber > 1 ? hitomiPageURL(pageNumber: safePageNumber - 1) : nil
+            nextPageURL: nextHitomiPageURL(currentPageNumber: safePageNumber, totalPageCount: totalPageCount),
+            previousPageURL: safePageNumber > 1 ? hitomiPageURL(pageNumber: safePageNumber - 1) : nil,
+            totalResultCount: idPage.totalCount,
+            totalPageCount: totalPageCount
         )
     }
 
@@ -186,7 +194,7 @@ final class HitomiDataSource {
     }
 
     /// Resolves a Hitomi search query using the same positive, negative, and OR term rules as the web page.
-    private func hitomiSearchGalleryIDs(query: String, pageNumber: Int) async throws -> [Int] {
+    private func hitomiSearchGalleryIDs(query: String, pageNumber: Int) async throws -> HitomiSearchIDPage {
         let plan = HitomiSearchPlan(query: query)
         var positiveTerms = plan.positiveTerms
         var results: [Int]
@@ -218,10 +226,13 @@ final class HitomiDataSource {
             results = results.filter { !ids.contains($0) }
         }
 
+        let totalCount = results.count
         let startIndex = max(0, (pageNumber - 1) * resultsPerPage)
-        guard startIndex < results.count else { return [] }
+        guard startIndex < results.count else {
+            return HitomiSearchIDPage(ids: [], totalCount: totalCount)
+        }
         let endIndex = min(results.count, startIndex + resultsPerPage)
-        return Array(results[startIndex..<endIndex])
+        return HitomiSearchIDPage(ids: Array(results[startIndex..<endIndex]), totalCount: totalCount)
     }
 
     /// Loads gallery ids for one Hitomi term, routing namespaced terms to nozomi lists.
@@ -455,7 +466,7 @@ final class HitomiDataSource {
             uploader: firstContributor(from: info),
             postedText: info.date,
             pageCountText: "\(info.files.count) pages",
-            tags: tags(from: info)
+            tags: searchResultTags(from: info)
         )
     }
 
@@ -499,6 +510,17 @@ final class HitomiDataSource {
             }
             return EHTag(namespace: namespace, name: tag.tag)
         } ?? []
+    }
+
+    /// Builds search row tags with the gallery language first.
+    private func searchResultTags(from info: HitomiGalleryInfo) -> [EHTag] {
+        var result = tags(from: info)
+        if let language = info.language, !language.isEmpty {
+            let languageTag = EHTag(namespace: "language", name: language)
+            result.removeAll { $0.id == languageTag.id }
+            result.insert(languageTag, at: 0)
+        }
+        return result
     }
 
     /// Returns a primary artist or group label.
@@ -560,6 +582,20 @@ final class HitomiDataSource {
         components.path = "/"
         components.queryItems = [URLQueryItem(name: "page", value: String(pageNumber))]
         return components.url ?? siteBaseURL
+    }
+
+    /// Returns the next page URL only when a known result set has more pages.
+    private func nextHitomiPageURL(currentPageNumber: Int, totalPageCount: Int?) -> URL? {
+        if let totalPageCount {
+            return currentPageNumber < totalPageCount ? hitomiPageURL(pageNumber: currentPageNumber + 1) : nil
+        }
+        return hitomiPageURL(pageNumber: currentPageNumber + 1)
+    }
+
+    /// Calculates Hitomi result pages from the exact matched id count.
+    private func pageCount(for totalResultCount: Int) -> Int {
+        guard totalResultCount > 0 else { return 0 }
+        return Int(ceil(Double(totalResultCount) / Double(resultsPerPage)))
     }
 
     /// Generates Hitomi image URLs using the public common.js path rules.

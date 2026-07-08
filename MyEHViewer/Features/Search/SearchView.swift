@@ -411,78 +411,132 @@ struct SearchView: View {
 
     /// Shows previous and next page actions when available.
     private var paginationControls: some View {
-        HStack(spacing: 6) {
-            Button {
-                Task {
-                    await viewModel.loadPreviousPage()
-                    syncPageJumpText()
+        VStack(spacing: 8) {
+            if let searchStatsText {
+                Text(searchStatsText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+
+            HStack(spacing: 12) {
+                paginationButton(
+                    systemImage: "chevron.left",
+                    label: AppCopy.searchPreviousPage,
+                    isDisabled: viewModel.previousPageURL == nil || viewModel.isLoading
+                ) {
+                    Task {
+                        await viewModel.loadPreviousPage()
+                        syncPageJumpText()
+                    }
                 }
-            } label: {
-                Label(AppCopy.searchPreviousPage, systemImage: "chevron.left")
-                    .labelStyle(.iconOnly)
-                    .font(.footnote.weight(.semibold))
-                    .frame(width: 22, height: 22)
-            }
-            .disabled(viewModel.previousPageURL == nil || viewModel.isLoading)
-            .accessibilityLabel(AppCopy.searchPreviousPage)
 
-            Spacer()
+                Spacer(minLength: 8)
 
-            if viewModel.isLoading {
-                ProgressView()
-                    .scaleEffect(0.7)
-                    .frame(width: 22, height: 22)
-            }
+                pageJumpControl
 
-            Spacer()
+                Spacer(minLength: 8)
 
-            pageJumpControl
-
-            Spacer()
-
-            Button {
-                Task {
-                    await viewModel.loadNextPage()
-                    syncPageJumpText()
+                paginationButton(
+                    systemImage: "chevron.right",
+                    label: AppCopy.searchNextPage,
+                    isDisabled: viewModel.nextPageURL == nil || viewModel.isLoading
+                ) {
+                    Task {
+                        await viewModel.loadNextPage()
+                        syncPageJumpText()
+                    }
                 }
-            } label: {
-                Label(AppCopy.searchNextPage, systemImage: "chevron.right")
-                    .labelStyle(.iconOnly)
-                    .font(.footnote.weight(.semibold))
-                    .frame(width: 22, height: 22)
             }
-            .disabled(viewModel.nextPageURL == nil || viewModel.isLoading)
-            .accessibilityLabel(AppCopy.searchNextPage)
+        }
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
+    /// Builds a compact icon button for result pagination.
+    private func paginationButton(systemImage: String, label: String, isDisabled: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 30, height: 30)
+                .foregroundStyle(isDisabled ? Color.secondary.opacity(0.45) : Color.primary)
+                .overlay(
+                    Circle()
+                        .stroke(Color.secondary.opacity(isDisabled ? 0.18 : 0.32), lineWidth: 1)
+                )
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .padding(.vertical, 4)
+        .disabled(isDisabled)
+        .accessibilityLabel(label)
     }
 
     /// Lets the user jump directly to a numbered result page.
     private var pageJumpControl: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 6) {
             TextField(AppCopy.searchPageField, text: $pageJumpText)
                 .keyboardType(.numberPad)
-                .textFieldStyle(.roundedBorder)
-                .font(.footnote)
-                .frame(width: 32)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.center)
+                .font(.subheadline.weight(.semibold))
+                .frame(width: pageJumpFieldWidth, height: 30)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
+                )
                 .submitLabel(.go)
                 .onSubmit {
                     Task { await loadJumpPage() }
                 }
 
-            Button {
-                Task { await loadJumpPage() }
-            } label: {
-                Label(AppCopy.searchJumpPage, systemImage: "arrow.right.to.line")
-                    .labelStyle(.iconOnly)
-                    .font(.footnote.weight(.semibold))
-                    .frame(width: 22, height: 22)
+            if let totalPageCount = viewModel.totalPageCount, totalPageCount > 0 {
+                Text("/ \(formattedNumber(totalPageCount))")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .disabled(jumpPageNumber == nil || viewModel.isLoading)
-            .accessibilityLabel(AppCopy.searchJumpPage)
+
+            paginationButton(
+                systemImage: "arrow.right.to.line",
+                label: AppCopy.searchJumpPage,
+                isDisabled: jumpPageNumber == nil || viewModel.isLoading
+            ) {
+                Task { await loadJumpPage() }
+            }
         }
-        .frame(minHeight: 44)
+        .frame(minHeight: 34)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// Returns the aggregate result summary shown above pagination controls.
+    private var searchStatsText: String? {
+        var parts: [String] = []
+        if let totalResultCount = viewModel.totalResultCount {
+            let format = viewModel.isTotalResultCountApproximate ? AppCopy.searchApproxResultsCountFormat : AppCopy.searchResultsCountFormat
+            parts.append(String(format: format, formattedNumber(totalResultCount)))
+        }
+        if let totalPageCount = viewModel.totalPageCount, totalPageCount > 0 {
+            parts.append(String(format: AppCopy.searchTotalPagesFormat, formattedNumber(totalPageCount)))
+        }
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Formats counters with locale-aware grouping separators.
+    private func formattedNumber(_ value: Int) -> String {
+        NumberFormatter.localizedString(from: NSNumber(value: value), number: .decimal)
+    }
+
+    /// Keeps the jump field wide enough for the current page number.
+    private var pageJumpFieldWidth: CGFloat {
+        min(72, max(42, CGFloat(max(pageJumpText.count, 1)) * 11 + 24))
     }
 
     /// Parses and loads the page number entered in the pagination controls.

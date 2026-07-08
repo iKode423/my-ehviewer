@@ -69,7 +69,7 @@ struct SearchResultRow: View {
         if !result.tags.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(result.tags.prefix(4)) { tag in
+                    ForEach(result.searchRowTags.prefix(4)) { tag in
                         Text(tag.displayName)
                             .font(.caption2)
                             .padding(.horizontal, 6)
