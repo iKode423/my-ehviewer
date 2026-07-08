@@ -131,18 +131,24 @@ struct LibraryView: View {
 
     /// Shows online favorites pagination controls at the bottom of the result list.
     private var siteFavoritesPaginationControls: some View {
-        HStack {
+        HStack(spacing: 6) {
             Button {
                 Task { await siteFavoritesViewModel.loadPreviousPage() }
             } label: {
                 Label(AppCopy.searchPreviousPage, systemImage: "chevron.left")
+                    .labelStyle(.iconOnly)
+                    .font(.footnote.weight(.semibold))
+                    .frame(width: 22, height: 22)
             }
             .disabled(siteFavoritesViewModel.previousPageURL == nil || siteFavoritesViewModel.isLoading)
+            .accessibilityLabel(AppCopy.searchPreviousPage)
 
             Spacer()
 
             if siteFavoritesViewModel.isLoading {
                 ProgressView()
+                    .scaleEffect(0.7)
+                    .frame(width: 22, height: 22)
             }
 
             Spacer()
@@ -151,12 +157,16 @@ struct LibraryView: View {
                 Task { await siteFavoritesViewModel.loadNextPage() }
             } label: {
                 Label(AppCopy.searchNextPage, systemImage: "chevron.right")
+                    .labelStyle(.iconOnly)
+                    .font(.footnote.weight(.semibold))
+                    .frame(width: 22, height: 22)
             }
             .disabled(siteFavoritesViewModel.nextPageURL == nil || siteFavoritesViewModel.isLoading)
+            .accessibilityLabel(AppCopy.searchNextPage)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.plain)
         .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 
     /// Displays online favorite loading, error, empty, and result states.

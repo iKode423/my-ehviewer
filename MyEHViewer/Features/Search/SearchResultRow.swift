@@ -49,7 +49,7 @@ struct SearchResultRow: View {
 
     /// Shows the remote thumbnail with a stable frame.
     private var thumbnail: some View {
-        CachedRemoteImageView(url: result.thumbnailURL, contentMode: .fill, animationMode: .staticPreview, decodeMaxPixelSize: 320) {
+        CachedRemoteImageView(url: result.thumbnailURL, referer: result.pageURL, contentMode: .fill, animationMode: .staticPreview, decodeMaxPixelSize: 320) {
             Image(systemName: "photo")
                 .font(.title2)
                 .foregroundStyle(.secondary.opacity(0.55))

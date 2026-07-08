@@ -8,6 +8,7 @@ enum AppCopy {
     static let settingsTitle = "设置"
     static let commonRetry = "重试"
     static let commonOK = "好"
+    static let commonCopy = "复制"
     static let siteEHentai = "E-Hentai"
     static let siteHitomi = "Hitomi"
     static let settingsContentSiteTitle = "图库来源"

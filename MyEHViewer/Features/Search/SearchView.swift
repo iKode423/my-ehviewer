@@ -403,7 +403,7 @@ struct SearchView: View {
 
     /// Shows previous and next page actions when available.
     private var paginationControls: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 6) {
             Button {
                 Task {
                     await viewModel.loadPreviousPage()
@@ -412,7 +412,8 @@ struct SearchView: View {
             } label: {
                 Label(AppCopy.searchPreviousPage, systemImage: "chevron.left")
                     .labelStyle(.iconOnly)
-                    .frame(width: 44, height: 44)
+                    .font(.footnote.weight(.semibold))
+                    .frame(width: 22, height: 22)
             }
             .disabled(viewModel.previousPageURL == nil || viewModel.isLoading)
             .accessibilityLabel(AppCopy.searchPreviousPage)
@@ -421,6 +422,8 @@ struct SearchView: View {
 
             if viewModel.isLoading {
                 ProgressView()
+                    .scaleEffect(0.7)
+                    .frame(width: 22, height: 22)
             }
 
             Spacer()
@@ -437,22 +440,24 @@ struct SearchView: View {
             } label: {
                 Label(AppCopy.searchNextPage, systemImage: "chevron.right")
                     .labelStyle(.iconOnly)
-                    .frame(width: 44, height: 44)
+                    .font(.footnote.weight(.semibold))
+                    .frame(width: 22, height: 22)
             }
             .disabled(viewModel.nextPageURL == nil || viewModel.isLoading)
             .accessibilityLabel(AppCopy.searchNextPage)
         }
-        .buttonStyle(.bordered)
-        .padding(.vertical, 8)
+        .buttonStyle(.plain)
+        .padding(.vertical, 4)
     }
 
     /// Lets the user jump directly to a numbered result page.
     private var pageJumpControl: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 3) {
             TextField(AppCopy.searchPageField, text: $pageJumpText)
                 .keyboardType(.numberPad)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 64)
+                .font(.footnote)
+                .frame(width: 32)
                 .submitLabel(.go)
                 .onSubmit {
                     Task { await loadJumpPage() }
@@ -463,7 +468,8 @@ struct SearchView: View {
             } label: {
                 Label(AppCopy.searchJumpPage, systemImage: "arrow.right.to.line")
                     .labelStyle(.iconOnly)
-                    .frame(width: 44, height: 44)
+                    .font(.footnote.weight(.semibold))
+                    .frame(width: 22, height: 22)
             }
             .disabled(jumpPageNumber == nil || viewModel.isLoading)
             .accessibilityLabel(AppCopy.searchJumpPage)

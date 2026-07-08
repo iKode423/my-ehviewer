@@ -432,8 +432,10 @@ private struct CachedGalleryEntryView: View {
                     openCachedReader()
                 } label: {
                     Label(cachedReaderButtonTitle, systemImage: "book")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.plain)
                 .disabled(cachedPageLinks.isEmpty)
 
                 NavigationLink {

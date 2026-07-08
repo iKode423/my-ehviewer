@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Displays a gallery detail page loaded from a search result.
 struct GalleryDetailView: View {
@@ -84,7 +85,7 @@ struct GalleryDetailView: View {
     /// Shows cover art and primary gallery metadata.
     private func header(for detail: EHGalleryDetail) -> some View {
         HStack(alignment: .top, spacing: 16) {
-            coverImage(url: detail.coverURL ?? result.thumbnailURL)
+            coverImage(url: detail.coverURL ?? result.thumbnailURL, referer: result.pageURL)
 
             VStack(alignment: .leading, spacing: 10) {
                 Text(detail.title)
@@ -103,9 +104,7 @@ struct GalleryDetailView: View {
                 siteFavoriteBadge
 
                 if let uploader = detail.uploader {
-                    Label(uploader, systemImage: "person")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    uploaderLabel(uploader)
                 }
 
                 if let ratingLabel = detail.ratingLabel {
@@ -124,8 +123,8 @@ struct GalleryDetailView: View {
     }
 
     /// Shows a stable cover image frame.
-    private func coverImage(url: URL?) -> some View {
-        CachedRemoteImageView(url: url, contentMode: .fill, animationMode: .staticPreview, decodeMaxPixelSize: 560) {
+    private func coverImage(url: URL?, referer: URL?) -> some View {
+        CachedRemoteImageView(url: url, referer: referer, contentMode: .fill, animationMode: .staticPreview, decodeMaxPixelSize: 560) {
             ProgressView()
         } failure: {
             Image(systemName: "photo")
@@ -135,6 +134,21 @@ struct GalleryDetailView: View {
         .frame(width: 128, height: 176)
         .background(Color.secondary.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    /// Shows the author/uploader name and offers a long-press copy action.
+    private func uploaderLabel(_ uploader: String) -> some View {
+        Label(uploader, systemImage: "person")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .contextMenu {
+                Button {
+                    UIPasteboard.general.string = uploader
+                } label: {
+                    Label(AppCopy.commonCopy, systemImage: "doc.on.doc")
+                }
+            }
     }
 
     /// Shows parsed metadata rows from the gallery table.
@@ -362,7 +376,7 @@ struct GalleryDetailView: View {
         } label: {
             VStack(spacing: 6) {
                 let thumbnail = pageThumbnailSource(for: pageLink, galleryIdentifier: galleryIdentifier)
-                pageThumbnail(url: thumbnail.url, crop: thumbnail.crop)
+                pageThumbnail(url: thumbnail.url, crop: thumbnail.crop, referer: thumbnail.referer)
 
                 Text(String(format: AppCopy.galleryOpenPage, String(pageLink.pageNumber)))
                     .font(.caption.weight(.semibold))
@@ -378,16 +392,16 @@ struct GalleryDetailView: View {
     }
 
     /// Picks the cached page image first, then falls back to the site thumbnail.
-    private func pageThumbnailSource(for pageLink: EHGalleryPageLink, galleryIdentifier: EHGalleryIdentifier) -> (url: URL?, crop: EHImageCrop?) {
+    private func pageThumbnailSource(for pageLink: EHGalleryPageLink, galleryIdentifier: EHGalleryIdentifier) -> (url: URL?, crop: EHImageCrop?, referer: URL?) {
         if let cachedURL = imageCacheStore.cachedImageURL(for: galleryIdentifier, pageNumber: pageLink.pageNumber) {
-            return (cachedURL, nil)
+            return (cachedURL, nil, nil)
         }
-        return (pageLink.thumbnailURL, pageLink.thumbnailCrop)
+        return (pageLink.thumbnailURL, pageLink.thumbnailCrop, pageLink.pageURL)
     }
 
     /// Shows a stable thumbnail frame for one reader page.
-    private func pageThumbnail(url: URL?, crop: EHImageCrop?) -> some View {
-        CachedRemoteImageView(url: url, crop: crop, contentMode: .fill, animationMode: .staticPreview, decodeMaxPixelSize: 420) {
+    private func pageThumbnail(url: URL?, crop: EHImageCrop?, referer: URL?) -> some View {
+        CachedRemoteImageView(url: url, referer: referer, crop: crop, contentMode: .fill, animationMode: .staticPreview, decodeMaxPixelSize: 420) {
             Image(systemName: "photo")
                 .foregroundStyle(.secondary.opacity(0.55))
         } failure: {

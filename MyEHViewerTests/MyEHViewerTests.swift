@@ -97,6 +97,32 @@ final class MyEHViewerTests: XCTestCase {
     }
 
 
+    /// Confirms Hitomi search, cover, and preview thumbnails use AVIF when available.
+    @MainActor
+    func testHitomiSearchAndDetailUseAVIFThumbnails() async throws {
+        let galleryID = 4_037_854
+        let hash = "0123456789abcdef"
+        let expectedThumbnailURL = "https://tn.gold-usergeneratedcontent.net/avifsmalltn/f/de/\(hash).avif"
+        let rangeData = HitomiSearchMockData(query: "", galleryIDs: [], frontPageIDs: [galleryID])
+        let client = HitomiMockHTTPClient(
+            indexVersion: "1783485646",
+            galleryInfos: [
+                galleryID: Self.hitomiGalleryInfoJSON(id: galleryID, title: "AVIF Gallery", hash: hash, hasAVIF: true)
+            ]
+        )
+        let dataSource = HitomiDataSource(client: client) { url, range in
+            try rangeData.data(for: url, range: range)
+        }
+
+        let searchPage = try await dataSource.searchPage(keyword: "", pageNumber: 1)
+        let detail = try await dataSource.galleryDetail(from: URL(string: "https://hitomi.la/galleries/\(galleryID).html")!)
+
+        XCTAssertEqual(searchPage.results.first?.thumbnailURL?.absoluteString, expectedThumbnailURL)
+        XCTAssertEqual(detail.coverURL?.absoluteString, expectedThumbnailURL)
+        XCTAssertEqual(detail.pageLinks.first?.thumbnailURL?.absoluteString, expectedThumbnailURL)
+    }
+
+
     /// Confirms Hitomi image pages prefer current AVIF hosts when gallery metadata supports AVIF.
     @MainActor
     func testHitomiImagePageUsesCurrentAVIFURL() async throws {
@@ -135,6 +161,7 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.readerLinksMenu, "链接")
         XCTAssertEqual(AppCopy.readerCurrentPage, "当前页")
         XCTAssertEqual(AppCopy.readerGalleryPage, "图库页")
+        XCTAssertEqual(AppCopy.commonCopy, "复制")
         XCTAssertEqual(AppCopy.readerJumpPageTitle, "跳到页码")
         XCTAssertEqual(AppCopy.readerJumpPageConfirm, "跳转")
         XCTAssertEqual(AppCopy.readerImageLoadFailed, "图片加载失败")
