@@ -841,9 +841,10 @@ final class CachedRemoteImageLoader: ObservableObject {
             return
         }
 
-        if let cachedData = cacheStore.data(for: url) {
+        if let cachedFileURL = cacheStore.cachedDataFileURL(for: url),
+           let cachedData = await Self.readData(at: cachedFileURL) {
             if context != nil {
-                cacheStore.save(cachedData, for: url, responseURL: url, context: context)
+                cacheStore.recordExistingData(for: url, responseURL: url, byteCount: Int64(cachedData.count), context: context)
             }
             state = .success(cachedData)
             lastLoadedKey = url.absoluteString
@@ -861,6 +862,13 @@ final class CachedRemoteImageLoader: ObservableObject {
         } catch {
             state = .failure
         }
+    }
+
+    /// Reads cached bytes off the main actor to keep scrolling and paging responsive.
+    nonisolated private static func readData(at fileURL: URL) async -> Data? {
+        await Task.detached(priority: .utility) {
+            try? Data(contentsOf: fileURL)
+        }.value
     }
 }
 

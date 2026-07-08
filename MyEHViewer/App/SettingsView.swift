@@ -360,6 +360,12 @@ private struct ImageCacheManagementView: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            if summary.isDownloadUnavailable {
+                Label(AppCopy.cacheManagementUnavailable, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
         .padding(.vertical, 4)
     }
@@ -376,7 +382,7 @@ private struct ImageCacheManagementView: View {
     private var unfinishedSummaries: [CachedGallerySummary] {
         imageCacheStore.gallerySummaries.filter { summary in
             guard let totalPageCount = summary.totalPageCount else { return false }
-            return summary.cachedPageCount < totalPageCount
+            return !summary.isDownloadUnavailable && summary.cachedPageCount < totalPageCount
         }
     }
 }

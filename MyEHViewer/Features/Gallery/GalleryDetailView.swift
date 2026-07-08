@@ -38,6 +38,10 @@ struct GalleryDetailView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(viewModel.isLoading)
+
+                        if let summary = cachedSummary {
+                            cachedPageLinksSection(for: summary)
+                        }
                     }
                     .frame(maxWidth: .infinity, minHeight: 280)
                 } else if let detail = viewModel.detail {
@@ -219,7 +223,12 @@ struct GalleryDetailView: View {
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], alignment: .leading, spacing: 10) {
                     ForEach(detail.pageLinks) { pageLink in
-                        pageLinkTile(pageLink, allPageLinks: detail.pageLinks)
+                        pageLinkTile(
+                            pageLink,
+                            allPageLinks: detail.pageLinks,
+                            galleryIdentifier: detail.identifier,
+                            totalPageCount: detail.pageCount
+                        )
                     }
                 }
 
@@ -253,6 +262,71 @@ struct GalleryDetailView: View {
         }
     }
 
+    /// Shows locally cached pages when the live gallery page cannot be loaded.
+    private func cachedPageLinksSection(for summary: CachedGallerySummary) -> some View {
+        let pageLinks = cachedPageLinks(for: summary)
+        let resumeURL = libraryStore.record(for: summary.galleryIdentifier)?.lastReadPageURL
+        let cachedPageURLs = Set(pageLinks.map(\.pageURL))
+        let cachedResumeURL = resumeURL.flatMap { cachedPageURLs.contains($0) ? $0 : nil }
+        let startURL = cachedResumeURL ?? pageLinks.first?.pageURL
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(AppCopy.galleryCachedPagesTitle)
+                        .font(.headline)
+                    Text(AppCopy.galleryCachedPagesMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if let startURL {
+                    Button {
+                        appNavigationStore.openReader(
+                            initialPageURL: startURL,
+                            pageLinks: pageLinks,
+                            totalPageCount: summary.totalPageCount
+                        )
+                    } label: {
+                        Label(cachedResumeURL == nil ? AppCopy.galleryReadFromStart : AppCopy.galleryContinueReading, systemImage: "book")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], alignment: .leading, spacing: 10) {
+                ForEach(pageLinks) { pageLink in
+                    pageLinkTile(
+                        pageLink,
+                        allPageLinks: pageLinks,
+                        galleryIdentifier: summary.galleryIdentifier,
+                        totalPageCount: summary.totalPageCount
+                    )
+                }
+            }
+        }
+        .padding(.top, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Returns cached pages for this gallery when the cache index has local records.
+    private var cachedSummary: CachedGallerySummary? {
+        imageCacheStore.gallerySummaries.first { $0.galleryIdentifier == result.identifier }
+    }
+
+    /// Converts cached page records into reader page links.
+    private func cachedPageLinks(for summary: CachedGallerySummary) -> [EHGalleryPageLink] {
+        summary.pageRecords.map { record in
+            EHGalleryPageLink(
+                pageNumber: record.pageNumber,
+                pageURL: record.pageURL,
+                thumbnailURL: record.thumbnailURL
+            )
+        }
+    }
+
     /// Builds a page section title that uses the parsed gallery total when available.
     private func galleryPagesTitle(for detail: EHGalleryDetail) -> String {
         if let pageCount = detail.pageCount {
@@ -272,12 +346,17 @@ struct GalleryDetailView: View {
     }
 
     /// Shows one readable page thumbnail and opens it in the reader.
-    private func pageLinkTile(_ pageLink: EHGalleryPageLink, allPageLinks: [EHGalleryPageLink]) -> some View {
+    private func pageLinkTile(
+        _ pageLink: EHGalleryPageLink,
+        allPageLinks: [EHGalleryPageLink],
+        galleryIdentifier: EHGalleryIdentifier,
+        totalPageCount: Int?
+    ) -> some View {
         Button {
-            appNavigationStore.openReader(initialPageURL: pageLink.pageURL, pageLinks: allPageLinks, totalPageCount: viewModel.detail?.pageCount)
+            appNavigationStore.openReader(initialPageURL: pageLink.pageURL, pageLinks: allPageLinks, totalPageCount: totalPageCount)
         } label: {
             VStack(spacing: 6) {
-                let thumbnail = pageThumbnailSource(for: pageLink)
+                let thumbnail = pageThumbnailSource(for: pageLink, galleryIdentifier: galleryIdentifier)
                 pageThumbnail(url: thumbnail.url, crop: thumbnail.crop)
 
                 Text(String(format: AppCopy.galleryOpenPage, String(pageLink.pageNumber)))
@@ -294,9 +373,8 @@ struct GalleryDetailView: View {
     }
 
     /// Picks the cached page image first, then falls back to the site thumbnail.
-    private func pageThumbnailSource(for pageLink: EHGalleryPageLink) -> (url: URL?, crop: EHImageCrop?) {
-        if let identifier = viewModel.detail?.identifier,
-           let cachedURL = imageCacheStore.cachedImageURL(for: identifier, pageNumber: pageLink.pageNumber) {
+    private func pageThumbnailSource(for pageLink: EHGalleryPageLink, galleryIdentifier: EHGalleryIdentifier) -> (url: URL?, crop: EHImageCrop?) {
+        if let cachedURL = imageCacheStore.cachedImageURL(for: galleryIdentifier, pageNumber: pageLink.pageNumber) {
             return (cachedURL, nil)
         }
         return (pageLink.thumbnailURL, pageLink.thumbnailCrop)

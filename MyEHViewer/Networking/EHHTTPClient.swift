@@ -34,6 +34,17 @@ enum EHNetworkError: LocalizedError, Equatable {
     }
 }
 
+private extension Error {
+    /// Returns true when an HTTP response explicitly reports 404.
+    var isHTTPNotFound: Bool {
+        guard let networkError = self as? EHNetworkError else { return false }
+        if case .unacceptableStatusCode(404) = networkError {
+            return true
+        }
+        return false
+    }
+}
+
 /// Loads public HTML pages while preserving cookies in the shared URL session.
 @MainActor
 protocol EHHTTPClient {
@@ -83,7 +94,11 @@ final class URLSessionEHHTTPClient: EHDataHTTPClient, EHFormHTTPClient {
 
     /// Sends a GET request and returns the raw binary response data.
     func data(_ url: URL) async throws -> EHDataResponse {
-        let (data, httpResponse) = try await responseData(for: makeRequest(url, accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"))
+        let (data, httpResponse) = try await responseData(for: makeRequest(
+            url,
+            accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            referer: EHConstants.baseURL
+        ))
         return EHDataResponse(url: httpResponse.url ?? url, statusCode: httpResponse.statusCode, data: data)
     }
 
@@ -102,12 +117,18 @@ final class URLSessionEHHTTPClient: EHDataHTTPClient, EHFormHTTPClient {
     }
 
     /// Builds a browser-like request with optional site cookies.
-    private func makeRequest(_ url: URL, accept: String) -> URLRequest {
+    private func makeRequest(_ url: URL, accept: String, referer: URL? = nil) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Mozilla/5.0 MyEHViewer/0.1", forHTTPHeaderField: "User-Agent")
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 MyEHViewer/0.1",
+            forHTTPHeaderField: "User-Agent"
+        )
         request.setValue("zh-CN,zh;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
         request.setValue(accept, forHTTPHeaderField: "Accept")
+        if let referer {
+            request.setValue(referer.absoluteString, forHTTPHeaderField: "Referer")
+        }
         if let cookieHeader = cookieHeaderProvider(), !cookieHeader.isEmpty {
             request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
         }
@@ -191,6 +212,30 @@ struct CachedGallerySummary: Hashable, Identifiable {
     let byteCount: Int64
     let updatedAt: Date
     let pageRecords: [CachedImagePageRecord]
+    let isDownloadUnavailable: Bool
+
+    /// Creates a cache summary while keeping the 404 marker optional for older call sites.
+    init(
+        galleryIdentifier: EHGalleryIdentifier,
+        title: String,
+        thumbnailURL: URL?,
+        cachedPageCount: Int,
+        totalPageCount: Int?,
+        byteCount: Int64,
+        updatedAt: Date,
+        pageRecords: [CachedImagePageRecord],
+        isDownloadUnavailable: Bool = false
+    ) {
+        self.galleryIdentifier = galleryIdentifier
+        self.title = title
+        self.thumbnailURL = thumbnailURL
+        self.cachedPageCount = cachedPageCount
+        self.totalPageCount = totalPageCount
+        self.byteCount = byteCount
+        self.updatedAt = updatedAt
+        self.pageRecords = pageRecords
+        self.isDownloadUnavailable = isDownloadUnavailable
+    }
 
     var id: String { galleryIdentifier.id }
 
@@ -232,6 +277,8 @@ final class ImageCacheStore: ObservableObject {
     private let fileManager: FileManager
     private let indexFileName = "index.json"
     private var index = ImageCacheIndex()
+    private var contentDigestByCacheKey: [String: String] = [:]
+    private var cacheKeyByContentDigest: [String: String] = [:]
 
     /// Creates a cache store rooted in the app caches directory by default.
     init(directoryURL: URL? = nil, fileManager: FileManager = .default) {
@@ -243,21 +290,35 @@ final class ImageCacheStore: ObservableObject {
             self.directoryURL = baseURL.appending(path: "ImageCache", directoryHint: .isDirectory)
         }
         loadIndex()
-        refresh()
+        refresh(compactsDuplicates: false)
     }
 
     /// Returns cached image data for the remote URL when it exists.
     func data(for url: URL) -> Data? {
-        if let cacheKey = index.aliases[url.absoluteString],
-           let data = try? Data(contentsOf: fileURL(forKey: cacheKey)) {
-            return data
-        }
-        return try? Data(contentsOf: legacyFileURL(for: url))
+        guard let fileURL = cachedDataFileURL(for: url) else { return nil }
+        return try? Data(contentsOf: fileURL)
     }
 
     /// Returns true when image data exists for a URL.
     func containsData(for url: URL) -> Bool {
-        data(for: url) != nil
+        cachedDataFileURL(for: url) != nil
+    }
+
+    /// Returns the local cache file URL for a remote image URL when bytes exist.
+    func cachedDataFileURL(for url: URL) -> URL? {
+        if let cacheKey = index.aliases[url.absoluteString] {
+            let fileURL = fileURL(forKey: cacheKey)
+            if fileManager.fileExists(atPath: fileURL.path) {
+                return fileURL
+            }
+        }
+
+        let legacyURL = legacyFileURL(for: url)
+        if fileManager.fileExists(atPath: legacyURL.path) {
+            return legacyURL
+        }
+
+        return nil
     }
 
     /// Returns a cached reader page for a specific reader URL.
@@ -288,10 +349,31 @@ final class ImageCacheStore: ObservableObject {
             title: detail.title,
             thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL,
             totalPageCount: detail.pageCount,
-            updatedAt: Date()
+            updatedAt: Date(),
+            isDownloadUnavailable: false
         )
         saveIndex()
-        refresh()
+        refresh(compactsDuplicates: false)
+    }
+
+    /// Marks a cached gallery as unavailable for future bulk download resumes.
+    func markGalleryDownloadUnavailable(
+        _ identifier: EHGalleryIdentifier,
+        title: String? = nil,
+        thumbnailURL: URL? = nil,
+        totalPageCount: Int? = nil
+    ) {
+        let existing = index.galleryMetadata[identifier.id]
+        index.galleryMetadata[identifier.id] = CachedGalleryMetadata(
+            identifier: identifier,
+            title: title ?? existing?.title ?? "图库 \(identifier.gid)",
+            thumbnailURL: thumbnailURL ?? existing?.thumbnailURL,
+            totalPageCount: totalPageCount ?? existing?.totalPageCount,
+            updatedAt: Date(),
+            isDownloadUnavailable: true
+        )
+        saveIndex()
+        refresh(compactsDuplicates: false)
     }
 
     /// Saves image data and refreshes cache usage stats.
@@ -303,10 +385,11 @@ final class ImageCacheStore: ObservableObject {
     func save(_ data: Data, for requestedURL: URL, responseURL: URL, context: ImageCacheContext?) {
         do {
             try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            let dataDigest = contentDigest(for: data)
             var cacheKey = cacheKeyForSave(requestedURL: requestedURL, responseURL: responseURL)
             var destinationURL = fileURL(forKey: cacheKey)
             if !fileManager.fileExists(atPath: destinationURL.path),
-               let existingCacheKey = cacheKeyForExistingContent(matching: data) {
+               let existingCacheKey = cacheKeyForExistingContent(matchingDigest: dataDigest) {
                 cacheKey = existingCacheKey
                 destinationURL = fileURL(forKey: existingCacheKey)
             }
@@ -314,14 +397,32 @@ final class ImageCacheStore: ObservableObject {
                 try data.write(to: destinationURL, options: [.atomic])
             }
 
+            contentDigestByCacheKey[cacheKey] = dataDigest
+            cacheKeyByContentDigest[dataDigest] = cacheKey
             index.aliases[requestedURL.absoluteString] = cacheKey
             index.aliases[responseURL.absoluteString] = cacheKey
             upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: Int64(data.count))
             saveIndex()
-            refresh()
+            refresh(compactsDuplicates: false)
         } catch {
             assertionFailure("Failed to save image cache: \(error.localizedDescription)")
         }
+    }
+
+    /// Adds gallery page metadata for bytes that already exist in the cache.
+    func recordExistingData(for requestedURL: URL, responseURL: URL, byteCount: Int64, context: ImageCacheContext?) {
+        guard
+            let fileURL = cachedDataFileURL(for: responseURL) ?? cachedDataFileURL(for: requestedURL)
+        else {
+            return
+        }
+
+        let cacheKey = fileURL.lastPathComponent
+        index.aliases[requestedURL.absoluteString] = cacheKey
+        index.aliases[responseURL.absoluteString] = cacheKey
+        upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: byteCount)
+        saveIndex()
+        refresh(compactsDuplicates: false)
     }
 
     /// Removes all cached image files from disk.
@@ -331,6 +432,8 @@ final class ImageCacheStore: ObservableObject {
                 try fileManager.removeItem(at: directoryURL)
             }
             index = ImageCacheIndex()
+            contentDigestByCacheKey = [:]
+            cacheKeyByContentDigest = [:]
             snapshot = .empty
             gallerySummaries = []
         } catch {
@@ -352,10 +455,13 @@ final class ImageCacheStore: ObservableObject {
         index.aliases = index.aliases.filter { !removableCacheKeys.contains($0.value) }
         for cacheKey in removableCacheKeys {
             try? fileManager.removeItem(at: fileURL(forKey: cacheKey))
+            if let digest = contentDigestByCacheKey.removeValue(forKey: cacheKey) {
+                cacheKeyByContentDigest[digest] = nil
+            }
         }
 
         saveIndex()
-        refresh()
+        refresh(compactsDuplicates: false)
     }
 
     /// Returns true when cached image files are not tied to gallery reader pages.
@@ -371,19 +477,24 @@ final class ImageCacheStore: ObservableObject {
         index.aliases = index.aliases.filter { !removableCacheKeys.contains($0.value) }
         for cacheKey in removableCacheKeys {
             try? fileManager.removeItem(at: fileURL(forKey: cacheKey))
+            if let digest = contentDigestByCacheKey.removeValue(forKey: cacheKey) {
+                cacheKeyByContentDigest[digest] = nil
+            }
         }
 
         saveIndex()
-        refresh()
+        refresh(compactsDuplicates: false)
     }
 
     /// Recomputes cache usage stats from disk.
-    func refresh() {
+    func refresh(compactsDuplicates: Bool = false) {
         guard let allFileURLs = try? fileManager.contentsOfDirectory(
             at: directoryURL,
             includingPropertiesForKeys: [.fileSizeKey],
             options: [.skipsHiddenFiles]
         ) else {
+            contentDigestByCacheKey = [:]
+            cacheKeyByContentDigest = [:]
             snapshot = .empty
             gallerySummaries = []
             return
@@ -395,14 +506,18 @@ final class ImageCacheStore: ObservableObject {
         var uniqueFileCount = 0
         var uniqueByteCount: Int64 = 0
         for fileURL in fileURLs {
-            guard let digest = contentDigest(for: fileURL) else { continue }
             let cacheKey = fileURL.lastPathComponent
-            if let canonicalKey = canonicalKeysByDigest[digest] {
-                duplicateKeyMap[cacheKey] = canonicalKey
-                try? fileManager.removeItem(at: fileURL)
-                continue
+            if compactsDuplicates {
+                guard let digest = contentDigest(for: fileURL) else { continue }
+                if let canonicalKey = canonicalKeysByDigest[digest] {
+                    duplicateKeyMap[cacheKey] = canonicalKey
+                    try? fileManager.removeItem(at: fileURL)
+                    continue
+                }
+                canonicalKeysByDigest[digest] = cacheKey
+                contentDigestByCacheKey[cacheKey] = digest
+                cacheKeyByContentDigest[digest] = cacheKey
             }
-            canonicalKeysByDigest[digest] = cacheKey
             uniqueFileCount += 1
             let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey])
             uniqueByteCount += Int64(values?.fileSize ?? 0)
@@ -410,7 +525,9 @@ final class ImageCacheStore: ObservableObject {
         if !duplicateKeyMap.isEmpty {
             remapIndexCacheKeys(duplicateKeyMap)
         }
-        let validCacheKeys = Set(canonicalKeysByDigest.values)
+        let validCacheKeys = compactsDuplicates ? Set(canonicalKeysByDigest.values) : Set(fileURLs.map(\.lastPathComponent))
+        contentDigestByCacheKey = contentDigestByCacheKey.filter { validCacheKeys.contains($0.key) }
+        rebuildContentDigestLookup()
         let removedMissingEntries = removeMissingIndexEntries(validCacheKeys: validCacheKeys)
         if !duplicateKeyMap.isEmpty || removedMissingEntries {
             saveIndex()
@@ -451,7 +568,8 @@ final class ImageCacheStore: ObservableObject {
             title: title,
             thumbnailURL: thumbnailURL,
             totalPageCount: context.totalPageCount ?? metadata?.totalPageCount,
-            updatedAt: Date()
+            updatedAt: Date(),
+            isDownloadUnavailable: metadata?.isDownloadUnavailable ?? false
         )
         index.aliases[requestedURL.absoluteString] = cacheKey
         index.aliases[responseURL.absoluteString] = cacheKey
@@ -476,7 +594,8 @@ final class ImageCacheStore: ObservableObject {
                     totalPageCount: metadata?.totalPageCount ?? records.compactMap(\.totalPageCount).max(),
                     byteCount: byteCount,
                     updatedAt: records.map(\.updatedAt).max() ?? metadata?.updatedAt ?? .distantPast,
-                    pageRecords: sortedRecords
+                    pageRecords: sortedRecords,
+                    isDownloadUnavailable: metadata?.isDownloadUnavailable ?? false
                 )
             }
             .sorted { $0.updatedAt > $1.updatedAt }
@@ -520,19 +639,9 @@ final class ImageCacheStore: ObservableObject {
     }
 
     /// Reuses an existing cache file when another URL has already stored identical bytes.
-    private func cacheKeyForExistingContent(matching data: Data) -> String? {
-        guard let fileURLs = try? fileManager.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else {
-            return nil
-        }
-        let targetDigest = contentDigest(for: data)
-        return fileURLs
-            .filter { $0.lastPathComponent != indexFileName }
-            .first { contentDigest(for: $0) == targetDigest }?
-            .lastPathComponent
+    private func cacheKeyForExistingContent(matchingDigest digest: String) -> String? {
+        guard let cacheKey = cacheKeyByContentDigest[digest] else { return nil }
+        return fileManager.fileExists(atPath: fileURL(forKey: cacheKey).path) ? cacheKey : nil
     }
 
     /// Points aliases and page records at canonical cache files after duplicate cleanup.
@@ -543,6 +652,12 @@ final class ImageCacheStore: ObservableObject {
             record.cacheKey = replacement
             index.pages[pageKey] = record
         }
+        for (oldKey, newKey) in replacements {
+            if let digest = contentDigestByCacheKey.removeValue(forKey: oldKey) {
+                contentDigestByCacheKey[newKey] = digest
+                cacheKeyByContentDigest[digest] = newKey
+            }
+        }
     }
 
     /// Drops aliases and page records whose backing cache file is no longer present.
@@ -551,7 +666,17 @@ final class ImageCacheStore: ObservableObject {
         let oldPageCount = index.pages.count
         index.aliases = index.aliases.filter { validCacheKeys.contains($0.value) }
         index.pages = index.pages.filter { validCacheKeys.contains($0.value.cacheKey) }
+        contentDigestByCacheKey = contentDigestByCacheKey.filter { validCacheKeys.contains($0.key) }
+        rebuildContentDigestLookup()
         return oldAliasCount != index.aliases.count || oldPageCount != index.pages.count
+    }
+
+    /// Rebuilds the reverse digest lookup without assuming every digest is unique.
+    private func rebuildContentDigestLookup() {
+        cacheKeyByContentDigest = [:]
+        for (cacheKey, digest) in contentDigestByCacheKey {
+            cacheKeyByContentDigest[digest] = cacheKey
+        }
     }
 
     /// Finds cache files that are not referenced by gallery page records.
@@ -746,7 +871,7 @@ final class GalleryDownloadManager: ObservableObject {
     func startUnfinishedDownloads(from summaries: [CachedGallerySummary]) {
         let unfinishedSummaries = summaries.filter { summary in
             guard let totalPageCount = summary.totalPageCount else { return false }
-            return summary.cachedPageCount < totalPageCount
+            return !summary.isDownloadUnavailable && summary.cachedPageCount < totalPageCount
         }
 
         for summary in unfinishedSummaries where !hasPendingOrRunningJob(for: summary.galleryIdentifier) {
@@ -827,6 +952,14 @@ final class GalleryDownloadManager: ObservableObject {
                 updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
                 return
             } catch {
+                if error.isHTTPNotFound {
+                    cacheStore.markGalleryDownloadUnavailable(
+                        detail.identifier,
+                        title: detail.title,
+                        thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL,
+                        totalPageCount: totalPageCount
+                    )
+                }
                 lastErrorMessage = String(format: AppCopy.galleryDownloadPageFailedFormat, String(pageLink.pageNumber), error.localizedDescription)
                 updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: lastErrorMessage)
                 continue
@@ -906,6 +1039,9 @@ final class GalleryDownloadManager: ObservableObject {
         } catch is CancellationError {
             markJobPaused(job)
         } catch {
+            if error.isHTTPNotFound {
+                cacheStore.markGalleryDownloadUnavailable(job.identifier, title: job.title, totalPageCount: job.totalPageCount)
+            }
             let downloadedPageCount = cachedPageCount(for: job.identifier)
             progressByGalleryID[job.identifier.id] = GalleryDownloadProgress(
                 galleryID: job.identifier.id,
@@ -1001,6 +1137,9 @@ final class GalleryDownloadManager: ObservableObject {
                 throw CancellationError()
             } catch {
                 lastError = error
+                if error.isHTTPNotFound {
+                    break
+                }
                 guard attempt < maxPageDownloadRetryCount else { break }
                 try await waitBeforeRetry()
             }
@@ -1109,4 +1248,33 @@ private struct CachedGalleryMetadata: Codable, Hashable {
     let thumbnailURL: URL?
     let totalPageCount: Int?
     let updatedAt: Date
+    let isDownloadUnavailable: Bool
+
+    /// Creates metadata and defaults the download marker to available.
+    init(
+        identifier: EHGalleryIdentifier,
+        title: String,
+        thumbnailURL: URL?,
+        totalPageCount: Int?,
+        updatedAt: Date,
+        isDownloadUnavailable: Bool = false
+    ) {
+        self.identifier = identifier
+        self.title = title
+        self.thumbnailURL = thumbnailURL
+        self.totalPageCount = totalPageCount
+        self.updatedAt = updatedAt
+        self.isDownloadUnavailable = isDownloadUnavailable
+    }
+
+    /// Decodes older cache indexes that do not contain the 404 marker.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        identifier = try container.decode(EHGalleryIdentifier.self, forKey: .identifier)
+        title = try container.decode(String.self, forKey: .title)
+        thumbnailURL = try container.decodeIfPresent(URL.self, forKey: .thumbnailURL)
+        totalPageCount = try container.decodeIfPresent(Int.self, forKey: .totalPageCount)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        isDownloadUnavailable = try container.decodeIfPresent(Bool.self, forKey: .isDownloadUnavailable) ?? false
+    }
 }

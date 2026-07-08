@@ -316,3 +316,13 @@ xcrun simctl io booted screenshot /tmp/my-ehviewer-appicon-home-final.png
 ```
 
 结果：通过。AppIcon 由参考图提取像素风 `eh` 与书本图形，绿色替换为默认主题色 `#00A8FF`，黑底无透明通道；生成 iPhone/iPad/marketing 所需尺寸，并在工程 Debug/Release 配置中声明 `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`。构建产物 Info.plist 已生成 `CFBundleIconName = AppIcon`，模拟器卸载重装后主屏显示新图标。
+
+### 缓存阅读、下载 404 与图片加载性能回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:MyEHViewerTests/GalleryDownloadManagerTests -only-testing:MyEHViewerTests/ReaderViewModelTests test
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+结果：通过。图库详情加载失败时会继续展示本地已缓存页面入口，已有缓存的 404 图库仍可进入阅读器查看本地图片；缓存管理页会显示 HTTP 404 标记，批量继续未完成下载会跳过这些图库，但不删除已有缓存；下载中遇到 404 不再做无意义重试，其它页仍会继续下载；图片请求补充移动 Safari 风格 User-Agent 和图片 Referer；缓存保存路径不再每张图全量哈希整个缓存目录，缓存命中读取改为后台读文件，减少缓存较多时的主线程卡顿和下载拖慢。新增 404 页面和 404 详情页下载跳过测试，完整回归测试通过。

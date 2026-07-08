@@ -380,6 +380,108 @@ final class GalleryDownloadManagerTests: XCTestCase {
         XCTAssertEqual(client.dataRequestCount(for: firstImageURL), 2)
     }
 
+    /// Confirms a 404 page marks the gallery so later bulk resumes skip it.
+    func testDownloadMarksNotFoundPageAndSkipsFutureBulkResume() async throws {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let identifier = EHGalleryIdentifier(gid: 102, token: "abcdef1234")
+        let firstPageURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/102-1")!
+        let secondPageURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/102-2")!
+        let thirdPageURL = URL(string: "https://e-hentai.org/s/eeeeffffgg/102-3")!
+        let firstImageURL = URL(string: "https://example.test/102-1.webp")!
+        let secondImageURL = URL(string: "https://example.test/102-2.webp")!
+        let thirdImageURL = URL(string: "https://example.test/102-3.webp")!
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: [
+                firstPageURL: Self.imagePageHTML(pageNumber: 1, imageURL: firstImageURL),
+                secondPageURL: Self.imagePageHTML(pageNumber: 2, imageURL: secondImageURL),
+                thirdPageURL: Self.imagePageHTML(pageNumber: 3, imageURL: thirdImageURL)
+            ],
+            dataResponses: [
+                firstImageURL: .success(Data([0x01])),
+                secondImageURL: .failure(EHNetworkError.unacceptableStatusCode(404)),
+                thirdImageURL: .success(Data([0x03]))
+            ]
+        )
+        let manager = GalleryDownloadManager(client: client, cacheStore: cacheStore, retryDelayRange: 0...0)
+        let detail = EHGalleryDetail(
+            identifier: identifier,
+            title: "Not Found Page Gallery",
+            japaneseTitle: nil,
+            category: "Manga",
+            coverURL: nil,
+            uploader: nil,
+            metadata: [],
+            ratingLabel: nil,
+            ratingCount: nil,
+            tags: [],
+            pageLinks: [
+                EHGalleryPageLink(pageNumber: 1, pageURL: firstPageURL),
+                EHGalleryPageLink(pageNumber: 2, pageURL: secondPageURL),
+                EHGalleryPageLink(pageNumber: 3, pageURL: thirdPageURL)
+            ],
+            thumbnailPageURLs: [],
+            pageCount: 3
+        )
+
+        manager.startDownload(detail: detail)
+        await waitForFinishedDownload(manager: manager, identifier: identifier)
+
+        let progress = try XCTUnwrap(manager.progress(for: identifier))
+        XCTAssertFalse(progress.isRunning)
+        XCTAssertEqual(progress.downloadedPageCount, 2)
+        XCTAssertEqual(progress.errorMessage, "第 2 页下载失败：服务器返回状态码 404。")
+        XCTAssertEqual(client.dataRequestCount(for: secondImageURL), 1)
+        XCTAssertEqual(cacheStore.gallerySummaries.first?.isDownloadUnavailable, true)
+
+        let retryManager = GalleryDownloadManager(client: client, cacheStore: cacheStore, retryDelayRange: 0...0)
+        retryManager.startUnfinishedDownloads(from: cacheStore.gallerySummaries)
+
+        XCTAssertNil(retryManager.aggregateProgress)
+    }
+
+    /// Confirms a cached gallery detail 404 is marked and skipped by later bulk resumes.
+    func testCachedGalleryDetailNotFoundSkipsFutureBulkResume() async throws {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let identifier = EHGalleryIdentifier(gid: 103, token: "abcdef1234")
+        let pageURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/103-1")!
+        let imageURL = URL(string: "https://example.test/103-1.webp")!
+        cacheStore.save(
+            Data([0x01]),
+            for: imageURL,
+            responseURL: imageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: identifier,
+                galleryTitle: "Unavailable Detail Gallery",
+                pageNumber: 1,
+                pageURL: pageURL,
+                totalPageCount: 2,
+                thumbnailURL: nil
+            )
+        )
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: [:],
+            dataResponses: [:],
+            htmlErrors: [identifier.url(): EHNetworkError.unacceptableStatusCode(404)]
+        )
+        let manager = GalleryDownloadManager(client: client, cacheStore: cacheStore, retryDelayRange: 0...0)
+
+        manager.startUnfinishedDownloads(from: cacheStore.gallerySummaries)
+        await waitForFinishedDownload(manager: manager, identifier: identifier)
+
+        let progress = try XCTUnwrap(manager.progress(for: identifier))
+        XCTAssertFalse(progress.isRunning)
+        XCTAssertEqual(progress.downloadedPageCount, 1)
+        XCTAssertEqual(progress.errorMessage, "服务器返回状态码 404。")
+        XCTAssertEqual(cacheStore.gallerySummaries.first?.isDownloadUnavailable, true)
+
+        let retryManager = GalleryDownloadManager(client: client, cacheStore: cacheStore, retryDelayRange: 0...0)
+        retryManager.startUnfinishedDownloads(from: cacheStore.gallerySummaries)
+
+        XCTAssertNil(retryManager.aggregateProgress)
+    }
+
     /// Confirms bulk cache downloads only run up to five gallery tasks at once.
     func testStartUnfinishedDownloadsLimitsConcurrentTasksToFive() {
         let cacheStore = ImageCacheStore(directoryURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory))
@@ -464,23 +566,29 @@ final class GalleryDownloadManagerTests: XCTestCase {
 /// Provides deterministic HTML and image responses for gallery download tests.
 private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
     private let htmlResponses: [URL: String]
+    private let htmlErrors: [URL: Error]
     private var dataResponses: [URL: [Result<Data, Error>]]
     private var dataRequestCounts: [URL: Int] = [:]
 
     /// Creates a mock client with fixed page and image responses.
-    init(htmlResponses: [URL: String], dataResponses: [URL: Result<Data, Error>]) {
+    init(htmlResponses: [URL: String], dataResponses: [URL: Result<Data, Error>], htmlErrors: [URL: Error] = [:]) {
         self.htmlResponses = htmlResponses
+        self.htmlErrors = htmlErrors
         self.dataResponses = dataResponses.mapValues { [$0] }
     }
 
     /// Creates a mock client with per-request image response sequences.
-    init(htmlResponses: [URL: String], dataResponseSequences: [URL: [Result<Data, Error>]]) {
+    init(htmlResponses: [URL: String], dataResponseSequences: [URL: [Result<Data, Error>]], htmlErrors: [URL: Error] = [:]) {
         self.htmlResponses = htmlResponses
+        self.htmlErrors = htmlErrors
         self.dataResponses = dataResponseSequences
     }
 
     /// Returns configured reader page HTML.
     func get(_ url: URL) async throws -> EHHTTPResponse {
+        if let error = htmlErrors[url] {
+            throw error
+        }
         guard let body = htmlResponses[url] else {
             throw EHParseError.missingImageURL
         }
