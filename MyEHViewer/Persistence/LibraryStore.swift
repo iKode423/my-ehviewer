@@ -18,6 +18,16 @@ final class LibraryStore: ObservableObject {
         sortedRecords
     }
 
+    /// Returns local favorites for one content site.
+    func favorites(for site: ContentSite) -> [LibraryGalleryRecord] {
+        favorites.filter { $0.identifier.site == site }
+    }
+
+    /// Returns reading history for one content site.
+    func history(for site: ContentSite) -> [LibraryGalleryRecord] {
+        history.filter { $0.identifier.site == site }
+    }
+
     private var sortedRecords: [LibraryGalleryRecord] {
         records.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
     }
@@ -73,6 +83,14 @@ final class LibraryStore: ObservableObject {
     func removeAll() {
         records = []
         favoriteIDs = []
+        save()
+    }
+
+    /// Removes local library state for one content site.
+    func removeAll(for site: ContentSite) {
+        let removedIDs = Set(records.filter { $0.identifier.site == site }.map(\.id))
+        records.removeAll { $0.identifier.site == site }
+        favoriteIDs.subtract(removedIDs)
         save()
     }
 

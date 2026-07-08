@@ -119,13 +119,13 @@ struct GalleryDetailView: View {
 
     /// Refreshes online favorite state only when the user has configured site cookies.
     private func refreshSiteFavoriteStatusIfNeeded() async {
-        guard siteCookieStore.hasCookieHeader else { return }
+        guard siteCookieStore.hasCookieHeader, viewModel.detail?.identifier.site.supportsOnlineFavorites == true else { return }
         await viewModel.refreshSiteFavoriteStatus()
     }
 
     /// Shows a stable cover image frame.
     private func coverImage(url: URL?) -> some View {
-        CachedRemoteImageView(url: url, contentMode: .fill, animationMode: .staticPreview) {
+        CachedRemoteImageView(url: url, contentMode: .fill, animationMode: .staticPreview, decodeMaxPixelSize: 560) {
             ProgressView()
         } failure: {
             Image(systemName: "photo")
@@ -314,6 +314,11 @@ struct GalleryDetailView: View {
     /// Returns cached pages for this gallery when the cache index has local records.
     private var cachedSummary: CachedGallerySummary? {
         imageCacheStore.gallerySummaries.first { $0.galleryIdentifier == result.identifier }
+            ?? imageCacheStore.gallerySummaries.first { summary in
+                summary.galleryIdentifier.site == result.identifier.site
+                    && summary.galleryIdentifier.gid == result.identifier.gid
+                    && summary.galleryIdentifier.token == result.identifier.token
+            }
     }
 
     /// Converts cached page records into reader page links.
@@ -382,8 +387,9 @@ struct GalleryDetailView: View {
 
     /// Shows a stable thumbnail frame for one reader page.
     private func pageThumbnail(url: URL?, crop: EHImageCrop?) -> some View {
-        CachedRemoteImageView(url: url, crop: crop, contentMode: .fill, animationMode: .staticPreview) {
-            ProgressView()
+        CachedRemoteImageView(url: url, crop: crop, contentMode: .fill, animationMode: .staticPreview, decodeMaxPixelSize: 420) {
+            Image(systemName: "photo")
+                .foregroundStyle(.secondary.opacity(0.55))
         } failure: {
             Image(systemName: "photo")
                 .foregroundStyle(.secondary)
@@ -409,26 +415,28 @@ struct GalleryDetailView: View {
                     )
                 }
 
-                Button {
-                    Task { await viewModel.addSiteFavorite() }
-                } label: {
-                    if viewModel.isUpdatingSiteFavorite {
-                        Label(AppCopy.gallerySiteFavoriteSaving, systemImage: "hourglass")
-                    } else {
-                        Label(AppCopy.gallerySiteFavorite, systemImage: "icloud.and.arrow.up")
+                if detail.identifier.site.supportsOnlineFavorites {
+                    Button {
+                        Task { await viewModel.addSiteFavorite() }
+                    } label: {
+                        if viewModel.isUpdatingSiteFavorite {
+                            Label(AppCopy.gallerySiteFavoriteSaving, systemImage: "hourglass")
+                        } else {
+                            Label(AppCopy.gallerySiteFavorite, systemImage: "icloud.and.arrow.up")
+                        }
                     }
-                }
-                .disabled(!siteCookieStore.hasCookieHeader || viewModel.isUpdatingSiteFavorite)
+                    .disabled(!siteCookieStore.hasCookieHeader || viewModel.isUpdatingSiteFavorite)
 
-                Button(role: .destructive) {
-                    Task { await viewModel.removeSiteFavorite() }
-                } label: {
-                    Label(AppCopy.gallerySiteUnfavorite, systemImage: "icloud.slash")
-                }
-                .disabled(!siteCookieStore.hasCookieHeader || viewModel.isUpdatingSiteFavorite)
+                    Button(role: .destructive) {
+                        Task { await viewModel.removeSiteFavorite() }
+                    } label: {
+                        Label(AppCopy.gallerySiteUnfavorite, systemImage: "icloud.slash")
+                    }
+                    .disabled(!siteCookieStore.hasCookieHeader || viewModel.isUpdatingSiteFavorite)
 
-                if !siteCookieStore.hasCookieHeader {
-                    Label(AppCopy.gallerySiteFavoriteRequiresCookie, systemImage: "key")
+                    if !siteCookieStore.hasCookieHeader {
+                        Label(AppCopy.gallerySiteFavoriteRequiresCookie, systemImage: "key")
+                    }
                 }
             } label: {
                 Label(AppCopy.galleryFavoriteMenu, systemImage: libraryStore.isFavorite(detail.identifier) ? "star.fill" : "star")

@@ -1,3 +1,4 @@
+import CryptoKit
 import ImageIO
 import SwiftUI
 import XCTest
@@ -33,7 +34,89 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.cacheManagementPauseAllDownloads, "暂停所有下载")
         XCTAssertEqual(AppCopy.cacheManagementProgressTitle, "下载进度")
         XCTAssertEqual(AppCopy.searchJumpPage, "跳页")
+        XCTAssertEqual(AppCopy.settingsContentSiteTitle, "图库来源")
+        XCTAssertEqual(ContentSite.hitomi.title, "Hitomi")
     }
+
+    /// Confirms Hitomi gallery URLs produce site-scoped identifiers.
+    func testHitomiGalleryIdentifierParsing() {
+        let canonicalURL = URL(string: "https://hitomi.la/galleries/4037854.html")!
+        let publicURL = URL(string: "https://hitomi.la/doujinshi/sample-title-4037854.html")!
+
+        XCTAssertEqual(EHGalleryIdentifier(galleryURL: canonicalURL)?.site, .hitomi)
+        XCTAssertEqual(EHGalleryIdentifier(galleryURL: canonicalURL)?.id, "hitomi-4037854")
+        XCTAssertEqual(EHGalleryIdentifier(galleryURL: publicURL)?.site, .hitomi)
+        XCTAssertFalse(ContentSite.hitomi.supportsOnlineFavorites)
+        XCTAssertEqual(ContentSite.hitomi.supportedSearchSources, [.frontPage])
+    }
+
+    /// Confirms Hitomi front page search reads one full nozomi page by byte range.
+    @MainActor
+    func testHitomiFrontPageSearchReadsNozomiPage() async throws {
+        let galleryIDs = Array(4_037_800..<4_037_825)
+        let rangeData = HitomiSearchMockData(query: "miku", galleryIDs: [], frontPageIDs: galleryIDs)
+        let client = HitomiMockHTTPClient(
+            indexVersion: "1783485646",
+            galleryInfos: Dictionary(uniqueKeysWithValues: galleryIDs.map { galleryID in
+                (galleryID, Self.hitomiGalleryInfoJSON(id: galleryID, title: "Gallery \(galleryID)"))
+            })
+        )
+        let dataSource = HitomiDataSource(client: client) { url, range in
+            try rangeData.data(for: url, range: range)
+        }
+
+        let page = try await dataSource.searchPage(keyword: "", pageNumber: 1)
+
+        XCTAssertEqual(page.results.map(\.identifier.gid), galleryIDs)
+        XCTAssertEqual(client.requestedGalleryInfoIDs, galleryIDs)
+    }
+
+    /// Confirms Hitomi keyword search reads the galleries index instead of filtering only one browse page.
+    @MainActor
+    func testHitomiKeywordSearchUsesGalleryIndex() async throws {
+        let indexVersion = "1783485646"
+        let query = "miku"
+        let galleryIDs = [4_037_854, 4_037_855]
+        let rangeData = HitomiSearchMockData(query: query, galleryIDs: galleryIDs)
+        let client = HitomiMockHTTPClient(
+            indexVersion: indexVersion,
+            galleryInfos: [
+                4_037_854: Self.hitomiGalleryInfoJSON(id: 4_037_854, title: "Miku First"),
+                4_037_855: Self.hitomiGalleryInfoJSON(id: 4_037_855, title: "Miku Second")
+            ]
+        )
+        let dataSource = HitomiDataSource(client: client) { url, range in
+            try rangeData.data(for: url, range: range)
+        }
+
+        let page = try await dataSource.searchPage(keyword: query, pageNumber: 1)
+
+        XCTAssertEqual(page.results.map(\.identifier.gid), galleryIDs)
+        XCTAssertEqual(page.results.map(\.identifier.site), [.hitomi, .hitomi])
+        XCTAssertEqual(client.requestedGalleryInfoIDs, galleryIDs)
+    }
+
+
+    /// Confirms Hitomi image pages prefer current AVIF hosts when gallery metadata supports AVIF.
+    @MainActor
+    func testHitomiImagePageUsesCurrentAVIFURL() async throws {
+        let galleryID = 4_037_854
+        let hash = "0123456789abcdef"
+        let hashCode = Int("fde", radix: 16)!
+        let client = HitomiMockHTTPClient(
+            indexVersion: "1783485646",
+            galleryInfos: [
+                galleryID: Self.hitomiGalleryInfoJSON(id: galleryID, title: "AVIF Gallery", hash: hash, hasAVIF: true)
+            ],
+            imageContextScript: Self.hitomiImageContextScript(pathPrefix: "1783501202/", suffixValue: 0, codes: [hashCode + 1])
+        )
+        let dataSource = HitomiDataSource(client: client) { _, _ in Data() }
+
+        let page = try await dataSource.imagePage(from: URL(string: "https://hitomi.la/hitomi/s/\(galleryID)-1")!)
+
+        XCTAssertEqual(page.imageURL.absoluteString, "https://a1.gold-usergeneratedcontent.net/1783501202/\(hashCode)/\(hash).avif")
+    }
+
 
     /// Confirms reader preference labels stay localized for settings and toolbar menus.
     func testReaderPreferenceCopy() {
@@ -202,6 +285,18 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertNil(staticImage?.images)
     }
 
+
+    /// Confirms AVIF bytes are decoded through ImageIO for Hitomi image URLs.
+    func testImageDataRendererCanRenderAVIF() throws {
+        let data = try makeAVIFData()
+
+        let image = ImageDataRenderer.uiImage(from: data, allowsAnimation: true)
+        let preview = ImageDataRenderer.uiImage(from: data, allowsAnimation: false, maxPixelSize: 16)
+
+        XCTAssertNotNil(image)
+        XCTAssertNotNil(preview)
+    }
+
     /// Confirms opening a reader route keeps the current tab and presents a route.
     @MainActor
     func testAppNavigationStoreOpensReaderRouteWithoutChangingTab() {
@@ -235,7 +330,28 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(EHTag(namespace: "", name: "sample tag").searchQuery, "\"sample tag\"")
     }
 
-    /// Builds a tiny two-frame GIF fixture for renderer tests.
+    /// Builds a tiny AVIF image for decoder tests.
+    private func makeAVIFData() throws -> Data {
+        let data = NSMutableData()
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = try XCTUnwrap(CGContext(
+            data: nil,
+            width: 2,
+            height: 2,
+            bitsPerComponent: 8,
+            bytesPerRow: 8,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.setFillColor(UIColor.systemPurple.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        let image = try XCTUnwrap(context.makeImage())
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, "public.avif" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
     private func makeAnimatedGIFData() throws -> Data {
         let data = NSMutableData()
         let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, UTType.gif.identifier as CFString, 2, nil))
@@ -264,7 +380,180 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertTrue(CGImageDestinationFinalize(destination))
         return data as Data
     }
+
+    /// Builds minimal Hitomi galleryinfo JSON for search tests.
+    private static func hitomiGalleryInfoJSON(
+        id: Int,
+        title: String,
+        hash: String = "abcdef1234567890",
+        hasAVIF: Bool = false
+    ) -> String {
+        """
+        {"id":"\(id)","title":"\(title)","type":"doujinshi","language":"english","files":[{"name":"1.jpg","hash":"\(hash)","haswebp":1,"hasavif":\(hasAVIF ? 1 : 0)}]}
+        """
+    }
+
+
+    /// Builds a minimal gg.js image context for Hitomi URL tests.
+    fileprivate static func hitomiImageContextScript(pathPrefix: String, suffixValue: Int, codes: [Int]) -> String {
+        let cases = codes.map { "case \($0):" }.joined(separator: "\n")
+        return """
+        'use strict';
+        gg = { b: 'stale-prefix/', m: function(g) {
+        var o = \(suffixValue);
+        switch (g) {
+        \(cases)
+        o = 0; break;
+        }
+        return o;
+        },
+        s: function(h) { return h; },
+        b: '\(pathPrefix)'
+        };
+        """
+    }
 }
+
+private struct HitomiSearchMockData {
+    let query: String
+    let galleryIDs: [Int]
+    var frontPageIDs: [Int] = []
+    private let dataOffset: UInt64 = 512
+
+    /// Returns fixture bytes for Hitomi range requests.
+    func data(for url: URL, range: ClosedRange<UInt64>) throws -> Data {
+        if url.path == "/n/index-all.nozomi" {
+            return rangedData(nozomiData(for: frontPageIDs), range: range)
+        }
+        if url.path.hasSuffix(".index") {
+            return paddedIndexNode()
+        }
+        if url.path.hasSuffix(".data") {
+            return rangedData(galleryDataFile(), range: range)
+        }
+        throw EHNetworkError.invalidResponse
+    }
+
+    /// Builds a single root node containing the query hash and one data range.
+    private func paddedIndexNode() -> Data {
+        var data = Data()
+        appendInt32(1, to: &data)
+        appendInt32(4, to: &data)
+        data.append(Data(SHA256.hash(data: Data(query.utf8)).prefix(4)))
+        appendInt32(1, to: &data)
+        appendUInt64(dataOffset, to: &data)
+        appendInt32(Int32(galleryData().count), to: &data)
+        for _ in 0..<17 {
+            appendUInt64(0, to: &data)
+        }
+        if data.count < 464 {
+            data.append(contentsOf: repeatElement(0, count: 464 - data.count))
+        }
+        return data
+    }
+
+    /// Builds the full galleries data file with padding before the searched range.
+    private func galleryDataFile() -> Data {
+        var data = Data(repeating: 0, count: Int(dataOffset))
+        data.append(galleryData())
+        return data
+    }
+
+    /// Builds the gallery id data payload referenced by the B-tree node.
+    private func galleryData() -> Data {
+        var data = Data()
+        appendInt32(Int32(galleryIDs.count), to: &data)
+        data.append(nozomiData(for: galleryIDs))
+        return data
+    }
+
+    /// Builds a big-endian nozomi payload for gallery ids.
+    private func nozomiData(for galleryIDs: [Int]) -> Data {
+        var data = Data()
+        for galleryID in galleryIDs {
+            appendInt32(Int32(galleryID), to: &data)
+        }
+        return data
+    }
+
+    /// Returns an inclusive byte range from fixture data.
+    private func rangedData(_ data: Data, range: ClosedRange<UInt64>) -> Data {
+        let startIndex = min(Int(range.lowerBound), data.count)
+        let endIndex = min(Int(range.upperBound) + 1, data.count)
+        guard startIndex < endIndex else { return Data() }
+        return data[startIndex..<endIndex]
+    }
+
+    /// Appends one big-endian 32-bit integer.
+    private func appendInt32(_ value: Int32, to data: inout Data) {
+        let unsigned = UInt32(bitPattern: value)
+        data.append(UInt8((unsigned >> 24) & 0xff))
+        data.append(UInt8((unsigned >> 16) & 0xff))
+        data.append(UInt8((unsigned >> 8) & 0xff))
+        data.append(UInt8(unsigned & 0xff))
+    }
+
+    /// Appends one big-endian 64-bit integer.
+    private func appendUInt64(_ value: UInt64, to data: inout Data) {
+        for shift in stride(from: 56, through: 0, by: -8) {
+            data.append(UInt8((value >> UInt64(shift)) & 0xff))
+        }
+    }
+}
+
+@MainActor
+private final class HitomiMockHTTPClient: EHDataHTTPClient {
+    private let indexVersion: String
+    private let galleryInfos: [Int: String]
+    private let imageContextScript: String
+    private(set) var requestedGalleryInfoIDs: [Int] = []
+
+    /// Creates a mock Hitomi client for version, image context, and gallery info requests.
+    init(
+        indexVersion: String,
+        galleryInfos: [Int: String],
+        imageContextScript: String = MyEHViewerTests.hitomiImageContextScript(pathPrefix: "galleries/", suffixValue: 1, codes: [])
+    ) {
+        self.indexVersion = indexVersion
+        self.galleryInfos = galleryInfos
+        self.imageContextScript = imageContextScript
+    }
+
+    /// Returns the search index version, image context, or one gallery info script.
+    func get(_ url: URL) async throws -> EHHTTPResponse {
+        if url.path == "/galleriesindex/version" {
+            return EHHTTPResponse(url: url, statusCode: 200, body: indexVersion)
+        }
+        if url.path == "/gg.js" {
+            return EHHTTPResponse(url: url, statusCode: 200, body: imageContextScript)
+        }
+        if let galleryID = galleryID(from: url), let body = galleryInfos[galleryID] {
+            requestedGalleryInfoIDs.append(galleryID)
+            return EHHTTPResponse(url: url, statusCode: 200, body: "var galleryinfo = \(body);")
+        }
+        throw EHNetworkError.unacceptableStatusCode(404)
+    }
+
+    /// Returns empty data for unused data requests.
+    func data(_ url: URL) async throws -> EHDataResponse {
+        EHDataResponse(url: url, statusCode: 200, data: Data())
+    }
+
+    /// Returns empty data for unused referer-aware data requests.
+    func data(_ url: URL, referer: URL?) async throws -> EHDataResponse {
+        try await data(url)
+    }
+
+    /// Extracts a gallery id from `/galleries/<id>.js`.
+    private func galleryID(from url: URL) -> Int? {
+        guard let match = EHHTMLParsing.firstMatch(in: url.path, pattern: #"^/galleries/([0-9]+)\.js$"#), match.count >= 2 else {
+            return nil
+        }
+        return Int(match[1])
+    }
+}
+
+
 
 /// Verifies gallery background download progress and failure handling.
 @MainActor
@@ -332,6 +621,65 @@ final class GalleryDownloadManagerTests: XCTestCase {
         XCTAssertEqual(clearedProgress.totalPageCount, 3)
     }
 
+    /// Confirms completed page tasks enqueue later pages while an earlier page is still slow.
+    func testDownloadStartsNextMissingPageWhenAnyPageFinishes() async throws {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let identifier = EHGalleryIdentifier(gid: 109, token: "abcdef1234")
+        let firstPageURL = URL(string: "https://e-hentai.org/s/slowfirst/109-1")!
+        let secondPageURL = URL(string: "https://e-hentai.org/s/fastsecond/109-2")!
+        let thirdPageURL = URL(string: "https://e-hentai.org/s/queuedthird/109-3")!
+        let firstImageURL = URL(string: "https://example.test/109-1.webp")!
+        let secondImageURL = URL(string: "https://example.test/109-2.webp")!
+        let thirdImageURL = URL(string: "https://example.test/109-3.webp")!
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: [
+                firstPageURL: Self.imagePageHTML(pageNumber: 1, imageURL: firstImageURL),
+                secondPageURL: Self.imagePageHTML(pageNumber: 2, imageURL: secondImageURL),
+                thirdPageURL: Self.imagePageHTML(pageNumber: 3, imageURL: thirdImageURL)
+            ],
+            dataResponses: [
+                firstImageURL: .success(Data([0x01])),
+                secondImageURL: .success(Data([0x02])),
+                thirdImageURL: .success(Data([0x03]))
+            ],
+            dataDelays: [firstImageURL: 250_000_000]
+        )
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            maxConcurrentPagesPerGallery: 2,
+            retryDelayRange: 0...0
+        )
+        let detail = EHGalleryDetail(
+            identifier: identifier,
+            title: "Slow First Page Gallery",
+            japaneseTitle: nil,
+            category: "Manga",
+            coverURL: nil,
+            uploader: nil,
+            metadata: [],
+            ratingLabel: nil,
+            ratingCount: nil,
+            tags: [],
+            pageLinks: [
+                EHGalleryPageLink(pageNumber: 1, pageURL: firstPageURL),
+                EHGalleryPageLink(pageNumber: 2, pageURL: secondPageURL),
+                EHGalleryPageLink(pageNumber: 3, pageURL: thirdPageURL)
+            ],
+            thumbnailPageURLs: [],
+            pageCount: 3
+        )
+
+        manager.startDownload(detail: detail)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(client.dataRequestCount(for: thirdImageURL), 1)
+
+        await waitForFinishedDownload(manager: manager, identifier: identifier)
+        XCTAssertEqual(cacheStore.gallerySummaries.first?.cachedPageCount, 3)
+    }
+
     /// Confirms a transient image failure is retried before the page is skipped.
     func testDownloadRetriesFailedImageBeforeSkipping() async throws {
         let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
@@ -378,6 +726,47 @@ final class GalleryDownloadManagerTests: XCTestCase {
         XCTAssertNil(progress.errorMessage)
         XCTAssertEqual(cacheStore.data(for: firstImageURL), Data([0x0A, 0x0B]))
         XCTAssertEqual(client.dataRequestCount(for: firstImageURL), 2)
+    }
+
+    /// Confirms image downloads use the reader page as their referer.
+    func testDownloadUsesReaderPageRefererForImages() async throws {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let identifier = EHGalleryIdentifier(gid: 104, token: "abcdef1234")
+        let pageURL = URL(string: "https://e-hentai.org/s/refererpage/104-1")!
+        let imageURL = URL(string: "https://example.test/referer.webp")!
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: [
+                pageURL: Self.imagePageHTML(pageNumber: 1, imageURL: imageURL, galleryID: 104)
+            ],
+            dataResponses: [
+                imageURL: .success(Data([0x04]))
+            ]
+        )
+        let manager = GalleryDownloadManager(client: client, cacheStore: cacheStore, retryDelayRange: 0...0)
+        let detail = EHGalleryDetail(
+            identifier: identifier,
+            title: "Referer Gallery",
+            japaneseTitle: nil,
+            category: "Manga",
+            coverURL: nil,
+            uploader: nil,
+            metadata: [],
+            ratingLabel: nil,
+            ratingCount: nil,
+            tags: [],
+            pageLinks: [
+                EHGalleryPageLink(pageNumber: 1, pageURL: pageURL)
+            ],
+            thumbnailPageURLs: [],
+            pageCount: 1
+        )
+
+        manager.startDownload(detail: detail)
+        await waitForFinishedDownload(manager: manager, identifier: identifier)
+
+        XCTAssertEqual(client.imageReferer(for: imageURL), pageURL)
+        XCTAssertEqual(cacheStore.data(for: imageURL), Data([0x04]))
     }
 
     /// Confirms a 404 page marks the gallery so later bulk resumes skip it.
@@ -553,12 +942,12 @@ final class GalleryDownloadManagerTests: XCTestCase {
     }
 
     /// Builds minimal reader HTML that the image page parser accepts.
-    private static func imagePageHTML(pageNumber: Int, imageURL: URL) -> String {
+    private static func imagePageHTML(pageNumber: Int, imageURL: URL, galleryID: Int = 100) -> String {
         """
         <div id="i1"><h1>Sample Gallery - \(pageNumber)</h1></div>
-        <div id="i2"><a id="prev" href="https://e-hentai.org/s/aaaabbbbcc/100-1">Prev</a><a id="next" href="https://e-hentai.org/s/eeeeffffgg/100-3">Next</a></div>
+        <div id="i2"><a id="prev" href="https://e-hentai.org/s/aaaabbbbcc/\(galleryID)-1">Prev</a><a id="next" href="https://e-hentai.org/s/eeeeffffgg/\(galleryID)-3">Next</a></div>
         <div id="i3"><img id="img" src="\(imageURL.absoluteString)" /></div>
-        <div id="i5"><a href="https://e-hentai.org/g/100/abcdef1234/">Back</a></div>
+        <div id="i5"><a href="https://e-hentai.org/g/\(galleryID)/abcdef1234/">Back</a></div>
         """
     }
 }
@@ -567,20 +956,34 @@ final class GalleryDownloadManagerTests: XCTestCase {
 private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
     private let htmlResponses: [URL: String]
     private let htmlErrors: [URL: Error]
+    private let dataDelays: [URL: UInt64]
     private var dataResponses: [URL: [Result<Data, Error>]]
     private var dataRequestCounts: [URL: Int] = [:]
+    private var imageReferers: [URL: URL?] = [:]
 
     /// Creates a mock client with fixed page and image responses.
-    init(htmlResponses: [URL: String], dataResponses: [URL: Result<Data, Error>], htmlErrors: [URL: Error] = [:]) {
+    init(
+        htmlResponses: [URL: String],
+        dataResponses: [URL: Result<Data, Error>],
+        htmlErrors: [URL: Error] = [:],
+        dataDelays: [URL: UInt64] = [:]
+    ) {
         self.htmlResponses = htmlResponses
         self.htmlErrors = htmlErrors
+        self.dataDelays = dataDelays
         self.dataResponses = dataResponses.mapValues { [$0] }
     }
 
     /// Creates a mock client with per-request image response sequences.
-    init(htmlResponses: [URL: String], dataResponseSequences: [URL: [Result<Data, Error>]], htmlErrors: [URL: Error] = [:]) {
+    init(
+        htmlResponses: [URL: String],
+        dataResponseSequences: [URL: [Result<Data, Error>]],
+        htmlErrors: [URL: Error] = [:],
+        dataDelays: [URL: UInt64] = [:]
+    ) {
         self.htmlResponses = htmlResponses
         self.htmlErrors = htmlErrors
+        self.dataDelays = dataDelays
         self.dataResponses = dataResponseSequences
     }
 
@@ -597,7 +1000,16 @@ private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
 
     /// Returns configured image data or throws the configured failure.
     func data(_ url: URL) async throws -> EHDataResponse {
+        try await data(url, referer: nil)
+    }
+
+    /// Returns configured image data while recording the supplied referer.
+    func data(_ url: URL, referer: URL?) async throws -> EHDataResponse {
+        imageReferers[url] = referer
         dataRequestCounts[url, default: 0] += 1
+        if let delay = dataDelays[url], delay > 0 {
+            try await Task.sleep(nanoseconds: delay)
+        }
         guard let response = nextDataResponse(for: url) else {
             throw EHNetworkError.unacceptableStatusCode(404)
         }
@@ -613,6 +1025,11 @@ private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
     /// Returns how many times image data was requested for a URL.
     func dataRequestCount(for url: URL) -> Int {
         dataRequestCounts[url] ?? 0
+    }
+
+    /// Returns the last referer used for an image request.
+    func imageReferer(for url: URL) -> URL? {
+        imageReferers[url] ?? nil
     }
 
     /// Pops the next configured response, repeating the final value if needed.

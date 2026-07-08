@@ -5,6 +5,7 @@ struct LibraryView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @StateObject private var siteCookieStore = SiteCookieStore.shared
     @StateObject private var siteFavoritesViewModel: SearchViewModel
+    @AppStorage(ContentSite.storageKey) private var contentSiteRaw = ContentSite.eHentai.rawValue
     @State private var selection = LibrarySelection.localFavorites
 
     /// Creates a library view with a dedicated online favorites search model.
@@ -16,19 +17,25 @@ struct LibraryView: View {
         content
             .navigationTitle(AppCopy.libraryTitle)
             .navigationBarTitleDisplayMode(.large)
+            .onAppear {
+                syncSiteSelection()
+            }
+            .onChange(of: contentSiteRaw) { _, _ in
+                syncSiteSelection()
+            }
     }
 
     /// Shows library section and online favorite search controls at the top of the scroll content.
     private var libraryControls: some View {
         VStack(spacing: 10) {
             Picker(AppCopy.libraryTitle, selection: $selection) {
-                ForEach(LibrarySelection.allCases) { item in
+                ForEach(availableSelections) { item in
                     Text(item.title).tag(item)
                 }
             }
             .pickerStyle(.segmented)
 
-            if selection == .siteFavorites, siteCookieStore.hasCookieHeader {
+            if selection == .siteFavorites, currentSite.supportsOnlineFavorites, siteCookieStore.hasCookieHeader {
                 siteFavoritesSearchBar
             }
         }
@@ -51,7 +58,7 @@ struct LibraryView: View {
     /// Displays local collection records.
     @ViewBuilder
     private var localRecordsContent: some View {
-        let records = selection.records(from: libraryStore)
+        let records = selection.records(from: libraryStore, site: currentSite)
         libraryScrollContent {
             if records.isEmpty {
                 ContentUnavailableView(
@@ -77,7 +84,16 @@ struct LibraryView: View {
     /// Displays the logged-in site's favorites endpoint.
     @ViewBuilder
     private var siteFavoritesContent: some View {
-        if siteCookieStore.hasCookieHeader {
+        if !currentSite.supportsOnlineFavorites {
+            libraryScrollContent {
+                ContentUnavailableView(
+                    AppCopy.librarySiteFavoritesCookieTitle,
+                    systemImage: "icloud.slash",
+                    description: Text(AppCopy.librarySiteFavoritesCookieMessage)
+                )
+                .frame(maxWidth: .infinity, minHeight: 320)
+            }
+        } else if siteCookieStore.hasCookieHeader {
             siteFavoritesResultList
         } else {
             libraryScrollContent {
@@ -152,6 +168,7 @@ struct LibraryView: View {
             await siteFavoritesViewModel.refresh()
         }
         .task {
+            siteFavoritesViewModel.setSite(currentSite)
             await siteFavoritesViewModel.searchIfNeeded()
         }
     }
@@ -224,6 +241,22 @@ struct LibraryView: View {
             siteFavoritesPaginationControls
         }
     }
+
+    private var currentSite: ContentSite {
+        ContentSite.resolved(rawValue: contentSiteRaw)
+    }
+
+    private var availableSelections: [LibrarySelection] {
+        currentSite.supportsOnlineFavorites ? LibrarySelection.allCases : [.localFavorites, .history]
+    }
+
+    /// Keeps online favorite controls hidden for sites that do not support them.
+    private func syncSiteSelection() {
+        siteFavoritesViewModel.setSite(currentSite)
+        if !availableSelections.contains(selection) {
+            selection = .localFavorites
+        }
+    }
 }
 
 /// Selects the active local library section.
@@ -268,11 +301,11 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
 
     /// Returns records for the selected section.
     @MainActor
-    func records(from store: LibraryStore) -> [LibraryGalleryRecord] {
+    func records(from store: LibraryStore, site: ContentSite) -> [LibraryGalleryRecord] {
         switch self {
-        case .localFavorites: store.favorites
+        case .localFavorites: store.favorites(for: site)
         case .siteFavorites: []
-        case .history: store.history
+        case .history: store.history(for: site)
         }
     }
 }

@@ -21,6 +21,7 @@ final class GalleryDetailViewModel: ObservableObject {
     private let formClient: EHFormHTTPClient
     private let parser: EHGalleryPageParser
     private let favoriteParser: EHFavoritePopupParser
+    private let hitomiDataSource: HitomiDataSource
     private var loadedThumbnailPageURLStrings: Set<String> = []
 
     var canLoadMorePageLinks: Bool {
@@ -33,13 +34,15 @@ final class GalleryDetailViewModel: ObservableObject {
         client: EHHTTPClient = URLSessionEHHTTPClient(),
         formClient: EHFormHTTPClient = URLSessionEHHTTPClient(),
         parser: EHGalleryPageParser = EHGalleryPageParser(),
-        favoriteParser: EHFavoritePopupParser = EHFavoritePopupParser()
+        favoriteParser: EHFavoritePopupParser = EHFavoritePopupParser(),
+        hitomiDataSource: HitomiDataSource = HitomiDataSource()
     ) {
         self.pageURL = pageURL
         self.client = client
         self.formClient = formClient
         self.parser = parser
         self.favoriteParser = favoriteParser
+        self.hitomiDataSource = hitomiDataSource
     }
 
     /// Loads the detail page only when no detail has been loaded yet.
@@ -56,9 +59,14 @@ final class GalleryDetailViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let response = try await client.get(pageURL)
-            detail = try parser.parse(response.body, sourceURL: response.url)
-            loadedThumbnailPageURLStrings = [response.url.absoluteString]
+            if EHGalleryIdentifier(galleryURL: pageURL)?.site == .hitomi || pageURL.host?.contains("hitomi.la") == true {
+                detail = try await hitomiDataSource.galleryDetail(from: pageURL)
+                loadedThumbnailPageURLStrings = [pageURL.absoluteString]
+            } else {
+                let response = try await client.get(pageURL)
+                detail = try parser.parse(response.body, sourceURL: response.url)
+                loadedThumbnailPageURLStrings = [response.url.absoluteString]
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -117,7 +125,7 @@ final class GalleryDetailViewModel: ObservableObject {
 
     /// Refreshes the current online favorite state from the site's popup form.
     func refreshSiteFavoriteStatus() async {
-        guard !isLoadingSiteFavoriteStatus, let detail else { return }
+        guard !isLoadingSiteFavoriteStatus, let detail, detail.identifier.site.supportsOnlineFavorites else { return }
         isLoadingSiteFavoriteStatus = true
         defer { isLoadingSiteFavoriteStatus = false }
 
@@ -132,7 +140,7 @@ final class GalleryDetailViewModel: ObservableObject {
 
     /// Submits the site favorite popup form with a requested category value.
     private func submitSiteFavorite(categoryValue: String?, successMessage: String) async {
-        guard !isUpdatingSiteFavorite, let detail else { return }
+        guard !isUpdatingSiteFavorite, let detail, detail.identifier.site.supportsOnlineFavorites else { return }
         isUpdatingSiteFavorite = true
         siteFavoriteMessage = nil
         siteFavoriteSucceeded = false

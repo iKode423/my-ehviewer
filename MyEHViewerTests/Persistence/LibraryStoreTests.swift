@@ -92,6 +92,30 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertTrue(restored.favorites.isEmpty)
     }
 
+    /// Confirms local records and cleanup are scoped by content site.
+    func testRecordsAndRemovalAreScopedBySite() {
+        let userDefaults = makeUserDefaults()
+        let store = LibraryStore(userDefaults: userDefaults, storageKey: "library-site-test")
+        let ehDetail = makeDetail()
+        let hitomiDetail = makeDetail(
+            identifier: EHGalleryIdentifier(gid: 4037854, token: "hitomi", site: .hitomi),
+            title: "Hitomi Gallery"
+        )
+
+        store.toggleFavorite(detail: ehDetail, fallback: makeSearchResult())
+        store.toggleFavorite(detail: hitomiDetail, fallback: makeSearchResult(identifier: hitomiDetail.identifier, pageURL: hitomiDetail.identifier.url()))
+
+        XCTAssertEqual(store.favorites(for: .eHentai).map(\.identifier), [ehDetail.identifier])
+        XCTAssertEqual(store.favorites(for: .hitomi).map(\.identifier), [hitomiDetail.identifier])
+
+        store.removeAll(for: .hitomi)
+
+        XCTAssertEqual(store.history(for: .eHentai).map(\.identifier), [ehDetail.identifier])
+        XCTAssertTrue(store.history(for: .hitomi).isEmpty)
+        XCTAssertTrue(store.isFavorite(ehDetail.identifier))
+        XCTAssertFalse(store.isFavorite(hitomiDetail.identifier))
+    }
+
     /// Creates isolated defaults for each test run.
     private func makeUserDefaults() -> UserDefaults {
         let suiteName = "MyEHViewerTests.\(UUID().uuidString)"
@@ -101,10 +125,13 @@ final class LibraryStoreTests: XCTestCase {
     }
 
     /// Creates a neutral gallery detail fixture.
-    private func makeDetail() -> EHGalleryDetail {
+    private func makeDetail(
+        identifier: EHGalleryIdentifier = EHGalleryIdentifier(gid: 100, token: "abcdef1234"),
+        title: String = "Sample Gallery"
+    ) -> EHGalleryDetail {
         EHGalleryDetail(
-            identifier: EHGalleryIdentifier(gid: 100, token: "abcdef1234"),
-            title: "Sample Gallery",
+            identifier: identifier,
+            title: title,
             japaneseTitle: nil,
             category: "Manga",
             coverURL: URL(string: "https://example.test/cover.jpg"),
@@ -121,11 +148,19 @@ final class LibraryStoreTests: XCTestCase {
 
     /// Creates a neutral search result fixture.
     private func makeSearchResult() -> EHSearchResult {
-        EHSearchResult(
+        makeSearchResult(
             identifier: EHGalleryIdentifier(gid: 100, token: "abcdef1234"),
+            pageURL: URL(string: "https://e-hentai.org/g/100/abcdef1234/")!
+        )
+    }
+
+    /// Creates a neutral search result fixture for one site.
+    private func makeSearchResult(identifier: EHGalleryIdentifier, pageURL: URL) -> EHSearchResult {
+        EHSearchResult(
+            identifier: identifier,
             title: "Fallback Gallery",
             category: "Manga",
-            pageURL: URL(string: "https://e-hentai.org/g/100/abcdef1234/")!,
+            pageURL: pageURL,
             thumbnailURL: nil,
             uploader: "demo",
             postedText: nil,

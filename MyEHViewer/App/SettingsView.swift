@@ -5,6 +5,7 @@ struct SettingsView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @StateObject private var siteCookieStore = SiteCookieStore.shared
     @StateObject private var imageCacheStore = ImageCacheStore.shared
+    @AppStorage(ContentSite.storageKey) private var contentSiteRaw = ContentSite.eHentai.rawValue
     @AppStorage(AppThemeMode.storageKey) private var themeModeRaw = AppThemeMode.system.rawValue
     @AppStorage(AppAccentColor.storageKey) private var accentColorHex = AppAccentColor.defaultHex
     @AppStorage(ReaderFitMode.storageKey) private var fitModeRaw = ReaderFitMode.fitPage.rawValue
@@ -20,6 +21,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                contentSiteSection
                 appearanceSection
                 readerPreferencesSection
                 cachePolicySection
@@ -38,6 +40,20 @@ struct SettingsView: View {
             .onChange(of: accentColorHex) { _, _ in
                 accentRefreshID = UUID()
             }
+        }
+    }
+
+    /// Shows app-wide appearance controls.
+    private var contentSiteSection: some View {
+        Section(AppCopy.settingsContentSiteTitle) {
+            Picker(AppCopy.settingsContentSitePicker, selection: $contentSiteRaw) {
+                ForEach(ContentSite.allCases) { site in
+                    Text(site.title).tag(site.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accentColor(settingsAccentColor)
+            .tint(settingsAccentColor)
         }
     }
 
@@ -148,22 +164,22 @@ struct SettingsView: View {
     /// Shows local library counters and destructive cleanup controls.
     private var localDataSection: some View {
         Section(AppCopy.settingsLocalDataTitle) {
-            Label(String(format: AppCopy.settingsHistoryCount, String(libraryStore.history.count)), systemImage: "clock")
-            Label(String(format: AppCopy.settingsFavoritesCount, String(libraryStore.favorites.count)), systemImage: "star")
+            Label(String(format: AppCopy.settingsHistoryCount, String(libraryStore.history(for: currentSite).count)), systemImage: "clock")
+            Label(String(format: AppCopy.settingsFavoritesCount, String(libraryStore.favorites(for: currentSite).count)), systemImage: "star")
 
             Button(role: .destructive) {
                 showsClearConfirmation = true
             } label: {
                 Label(AppCopy.settingsClearLocalData, systemImage: "trash")
             }
-            .disabled(libraryStore.history.isEmpty && libraryStore.favorites.isEmpty)
+            .disabled(libraryStore.history(for: currentSite).isEmpty && libraryStore.favorites(for: currentSite).isEmpty)
             .confirmationDialog(
                 AppCopy.settingsClearConfirmationTitle,
                 isPresented: $showsClearConfirmation,
                 titleVisibility: .visible
             ) {
                 Button(AppCopy.settingsClearConfirm, role: .destructive) {
-                    libraryStore.removeAll()
+                    libraryStore.removeAll(for: currentSite)
                 }
             } message: {
                 Text(AppCopy.settingsClearConfirmationMessage)
@@ -182,21 +198,23 @@ struct SettingsView: View {
             } label: {
                 Label(AppCopy.settingsImageCacheManage, systemImage: "externaldrive")
             }
-            .disabled(imageCacheStore.gallerySummaries.isEmpty)
+            .disabled(currentSiteGallerySummaries.isEmpty)
 
             Button(role: .destructive) {
                 showsImageCacheClearConfirmation = true
             } label: {
                 Label(AppCopy.settingsClearImageCache, systemImage: "trash")
             }
-            .disabled(imageCacheStore.snapshot.isEmpty)
+            .disabled(currentSiteGallerySummaries.isEmpty)
             .confirmationDialog(
                 AppCopy.settingsImageCacheClearTitle,
                 isPresented: $showsImageCacheClearConfirmation,
                 titleVisibility: .visible
             ) {
                 Button(AppCopy.settingsImageCacheClearConfirm, role: .destructive) {
-                    imageCacheStore.clear()
+                    for summary in currentSiteGallerySummaries {
+                        imageCacheStore.clearGallery(summary.galleryIdentifier)
+                    }
                 }
             } message: {
                 Text(AppCopy.settingsImageCacheClearMessage)
@@ -223,21 +241,24 @@ struct SettingsView: View {
     }
 
     private var imageCacheUsageText: String {
-        if imageCacheStore.snapshot.isEmpty {
+        let summaries = currentSiteGallerySummaries
+        if summaries.isEmpty {
             return AppCopy.settingsImageCacheEmpty
         }
-        if imageCacheStore.snapshot.galleryCount > 0 {
-            return String(
-                format: AppCopy.settingsImageCacheGalleryUsageFormat,
-                String(imageCacheStore.snapshot.galleryCount),
-                imageCacheStore.snapshot.localizedByteCount
-            )
-        }
+        let byteCount = summaries.reduce(Int64(0)) { $0 + $1.byteCount }
         return String(
-            format: AppCopy.settingsImageCacheUsageFormat,
-            String(imageCacheStore.snapshot.fileCount),
-            imageCacheStore.snapshot.localizedByteCount
+            format: AppCopy.settingsImageCacheGalleryUsageFormat,
+            String(summaries.count),
+            ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)
         )
+    }
+
+    private var currentSite: ContentSite {
+        ContentSite.resolved(rawValue: contentSiteRaw)
+    }
+
+    private var currentSiteGallerySummaries: [CachedGallerySummary] {
+        imageCacheStore.gallerySummaries.filter { $0.galleryIdentifier.site == currentSite }
     }
 
     /// Explains the current remote-content cache policy.
@@ -251,12 +272,14 @@ struct SettingsView: View {
 
 /// Lists cached galleries and opens their detail pages.
 private struct ImageCacheManagementView: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
     @StateObject private var imageCacheStore = ImageCacheStore.shared
     @StateObject private var downloadManager = GalleryDownloadManager.shared
+    @AppStorage(ContentSite.storageKey) private var contentSiteRaw = ContentSite.eHentai.rawValue
 
     var body: some View {
         Group {
-            if imageCacheStore.gallerySummaries.isEmpty {
+            if currentSiteGallerySummaries.isEmpty {
                 ContentUnavailableView(
                     AppCopy.cacheManagementEmptyTitle,
                     systemImage: "externaldrive",
@@ -266,9 +289,10 @@ private struct ImageCacheManagementView: View {
                 List {
                     cacheDownloadControls
 
-                    ForEach(imageCacheStore.gallerySummaries) { summary in
+                    ForEach(currentSiteGallerySummaries) { summary in
                         NavigationLink {
-                            GalleryDetailView(result: summary.searchResult)
+                            CachedGalleryEntryView(summary: summary)
+                                .environmentObject(libraryStore)
                         } label: {
                             cachedGalleryRow(summary)
                         }
@@ -296,7 +320,7 @@ private struct ImageCacheManagementView: View {
         Section {
             Button {
                 if downloadManager.aggregateProgress == nil {
-                    downloadManager.startUnfinishedDownloads(from: imageCacheStore.gallerySummaries)
+                    downloadManager.startUnfinishedDownloads(from: currentSiteGallerySummaries)
                 } else {
                     downloadManager.pauseAllDownloads()
                 }
@@ -372,7 +396,7 @@ private struct ImageCacheManagementView: View {
 
     /// Removes cached data for galleries selected from the management list.
     private func deleteCachedGalleries(at offsets: IndexSet) {
-        let summaries = imageCacheStore.gallerySummaries
+        let summaries = currentSiteGallerySummaries
         for offset in offsets where summaries.indices.contains(offset) {
             imageCacheStore.clearGallery(summaries[offset].galleryIdentifier)
         }
@@ -380,10 +404,82 @@ private struct ImageCacheManagementView: View {
 
     /// Returns cached galleries that still have pages missing from the local cache.
     private var unfinishedSummaries: [CachedGallerySummary] {
-        imageCacheStore.gallerySummaries.filter { summary in
+        currentSiteGallerySummaries.filter { summary in
             guard let totalPageCount = summary.totalPageCount else { return false }
             return !summary.isDownloadUnavailable && summary.cachedPageCount < totalPageCount
         }
+    }
+
+    private var currentSite: ContentSite {
+        ContentSite.resolved(rawValue: contentSiteRaw)
+    }
+
+    private var currentSiteGallerySummaries: [CachedGallerySummary] {
+        imageCacheStore.gallerySummaries.filter { $0.galleryIdentifier.site == currentSite }
+    }
+}
+
+/// Opens cached galleries without requiring the remote detail page to load first.
+private struct CachedGalleryEntryView: View {
+    let summary: CachedGallerySummary
+    @EnvironmentObject private var libraryStore: LibraryStore
+    @EnvironmentObject private var appNavigationStore: AppNavigationStore
+
+    var body: some View {
+        List {
+            Section {
+                Button {
+                    openCachedReader()
+                } label: {
+                    Label(cachedReaderButtonTitle, systemImage: "book")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(cachedPageLinks.isEmpty)
+
+                NavigationLink {
+                    GalleryDetailView(result: summary.searchResult)
+                } label: {
+                    Label(AppCopy.galleryTitle, systemImage: "info.circle")
+                }
+            } footer: {
+                Text(summary.progressText)
+            }
+        }
+        .navigationTitle(summary.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
+    }
+
+    /// Chooses whether the cached reader starts from history or the first cached page.
+    private var cachedReaderButtonTitle: String {
+        cachedResumeURL == nil ? AppCopy.galleryReadFromStart : AppCopy.galleryContinueReading
+    }
+
+    /// Returns the cached page links sorted by page number.
+    private var cachedPageLinks: [EHGalleryPageLink] {
+        summary.pageRecords.map { record in
+            EHGalleryPageLink(
+                pageNumber: record.pageNumber,
+                pageURL: record.pageURL,
+                thumbnailURL: record.thumbnailURL
+            )
+        }
+    }
+
+    /// Returns the last read page URL only when it is still cached.
+    private var cachedResumeURL: URL? {
+        let cachedPageURLs = Set(cachedPageLinks.map(\.pageURL))
+        return libraryStore.record(for: summary.galleryIdentifier)?.lastReadPageURL.flatMap { cachedPageURLs.contains($0) ? $0 : nil }
+    }
+
+    /// Opens the reader with only locally cached page links.
+    private func openCachedReader() {
+        guard let startURL = cachedResumeURL ?? cachedPageLinks.first?.pageURL else { return }
+        appNavigationStore.openReader(
+            initialPageURL: startURL,
+            pageLinks: cachedPageLinks,
+            totalPageCount: summary.totalPageCount
+        )
     }
 }
 

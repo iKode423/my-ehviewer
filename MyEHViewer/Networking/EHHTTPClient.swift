@@ -57,6 +57,16 @@ protocol EHHTTPClient {
 protocol EHDataHTTPClient: EHHTTPClient {
     /// Sends a GET request and returns the raw binary response data.
     func data(_ url: URL) async throws -> EHDataResponse
+
+    /// Sends a GET request for binary data with the page that referenced it.
+    func data(_ url: URL, referer: URL?) async throws -> EHDataResponse
+}
+
+extension EHDataHTTPClient {
+    /// Falls back to the plain binary request when a client does not support referers.
+    func data(_ url: URL, referer: URL?) async throws -> EHDataResponse {
+        try await data(url)
+    }
 }
 
 /// Submits URL-encoded site forms while preserving cookies.
@@ -69,12 +79,20 @@ protocol EHFormHTTPClient {
 /// Default URLSession-backed HTTP client used by the app.
 @MainActor
 final class URLSessionEHHTTPClient: EHDataHTTPClient, EHFormHTTPClient {
+    /// Provides a shared browser-like session tuned for gallery image downloads.
+    private static let defaultSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.httpMaximumConnectionsPerHost = 12
+        configuration.waitsForConnectivity = true
+        return URLSession(configuration: configuration)
+    }()
+
     private let session: URLSession
     private let cookieHeaderProvider: @MainActor () -> String?
 
     /// Creates a client with browser-like headers that the public site accepts.
     init(
-        session: URLSession = .shared,
+        session: URLSession = URLSessionEHHTTPClient.defaultSession,
         cookieHeaderProvider: @escaping @MainActor () -> String? = { SiteCookieStore.shared.cookieHeaderForRequest }
     ) {
         self.session = session
@@ -94,10 +112,15 @@ final class URLSessionEHHTTPClient: EHDataHTTPClient, EHFormHTTPClient {
 
     /// Sends a GET request and returns the raw binary response data.
     func data(_ url: URL) async throws -> EHDataResponse {
+        try await data(url, referer: EHConstants.baseURL)
+    }
+
+    /// Downloads binary data with a browser-like referer for image hosts.
+    func data(_ url: URL, referer: URL?) async throws -> EHDataResponse {
         let (data, httpResponse) = try await responseData(for: makeRequest(
             url,
             accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-            referer: EHConstants.baseURL
+            referer: referer ?? EHConstants.baseURL
         ))
         return EHDataResponse(url: httpResponse.url ?? url, statusCode: httpResponse.statusCode, data: data)
     }
@@ -129,10 +152,16 @@ final class URLSessionEHHTTPClient: EHDataHTTPClient, EHFormHTTPClient {
         if let referer {
             request.setValue(referer.absoluteString, forHTTPHeaderField: "Referer")
         }
-        if let cookieHeader = cookieHeaderProvider(), !cookieHeader.isEmpty {
+        if shouldAttachSiteCookie(to: url), let cookieHeader = cookieHeaderProvider(), !cookieHeader.isEmpty {
             request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
         }
         return request
+    }
+
+    /// Returns true only for hosts that own the configured site cookie.
+    private func shouldAttachSiteCookie(to url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "e-hentai.org" || host.hasSuffix(".e-hentai.org") || host == "exhentai.org" || host.hasSuffix(".exhentai.org")
     }
 
     /// Validates the URLSession response and returns the response data.
@@ -279,6 +308,7 @@ final class ImageCacheStore: ObservableObject {
     private var index = ImageCacheIndex()
     private var contentDigestByCacheKey: [String: String] = [:]
     private var cacheKeyByContentDigest: [String: String] = [:]
+    private var cacheFileSizeByKey: [String: Int64] = [:]
 
     /// Creates a cache store rooted in the app caches directory by default.
     init(directoryURL: URL? = nil, fileManager: FileManager = .default) {
@@ -396,14 +426,44 @@ final class ImageCacheStore: ObservableObject {
             if !fileManager.fileExists(atPath: destinationURL.path) {
                 try data.write(to: destinationURL, options: [.atomic])
             }
+            let storedByteCount = fileSize(forKey: cacheKey) ?? Int64(data.count)
 
             contentDigestByCacheKey[cacheKey] = dataDigest
             cacheKeyByContentDigest[dataDigest] = cacheKey
             index.aliases[requestedURL.absoluteString] = cacheKey
             index.aliases[responseURL.absoluteString] = cacheKey
-            upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: Int64(data.count))
+            upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: storedByteCount)
             saveIndex()
-            refresh(compactsDuplicates: false)
+            refreshAfterSaving(cacheKey: cacheKey, byteCount: storedByteCount, context: context)
+        } catch {
+            assertionFailure("Failed to save image cache: \(error.localizedDescription)")
+        }
+    }
+
+    /// Saves image data while moving disk writes off the main actor for async callers.
+    func saveAsync(_ data: Data, for requestedURL: URL, responseURL: URL, context: ImageCacheContext?) async {
+        do {
+            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            let dataDigest = await Self.contentDigestAsync(for: data)
+            var cacheKey = cacheKeyForSave(requestedURL: requestedURL, responseURL: responseURL)
+            var destinationURL = fileURL(forKey: cacheKey)
+            if !fileManager.fileExists(atPath: destinationURL.path),
+               let existingCacheKey = cacheKeyForExistingContent(matchingDigest: dataDigest) {
+                cacheKey = existingCacheKey
+                destinationURL = fileURL(forKey: existingCacheKey)
+            }
+            if !fileManager.fileExists(atPath: destinationURL.path) {
+                try await Self.writeData(data, to: destinationURL)
+            }
+            let storedByteCount = fileSize(forKey: cacheKey) ?? Int64(data.count)
+
+            contentDigestByCacheKey[cacheKey] = dataDigest
+            cacheKeyByContentDigest[dataDigest] = cacheKey
+            index.aliases[requestedURL.absoluteString] = cacheKey
+            index.aliases[responseURL.absoluteString] = cacheKey
+            upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: storedByteCount)
+            saveIndex()
+            refreshAfterSaving(cacheKey: cacheKey, byteCount: storedByteCount, context: context)
         } catch {
             assertionFailure("Failed to save image cache: \(error.localizedDescription)")
         }
@@ -422,7 +482,7 @@ final class ImageCacheStore: ObservableObject {
         index.aliases[responseURL.absoluteString] = cacheKey
         upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: byteCount)
         saveIndex()
-        refresh(compactsDuplicates: false)
+        refreshAfterSaving(cacheKey: cacheKey, byteCount: byteCount, context: context)
     }
 
     /// Removes all cached image files from disk.
@@ -434,6 +494,7 @@ final class ImageCacheStore: ObservableObject {
             index = ImageCacheIndex()
             contentDigestByCacheKey = [:]
             cacheKeyByContentDigest = [:]
+            cacheFileSizeByKey = [:]
             snapshot = .empty
             gallerySummaries = []
         } catch {
@@ -458,6 +519,7 @@ final class ImageCacheStore: ObservableObject {
             if let digest = contentDigestByCacheKey.removeValue(forKey: cacheKey) {
                 cacheKeyByContentDigest[digest] = nil
             }
+            cacheFileSizeByKey[cacheKey] = nil
         }
 
         saveIndex()
@@ -480,6 +542,7 @@ final class ImageCacheStore: ObservableObject {
             if let digest = contentDigestByCacheKey.removeValue(forKey: cacheKey) {
                 cacheKeyByContentDigest[digest] = nil
             }
+            cacheFileSizeByKey[cacheKey] = nil
         }
 
         saveIndex()
@@ -495,6 +558,7 @@ final class ImageCacheStore: ObservableObject {
         ) else {
             contentDigestByCacheKey = [:]
             cacheKeyByContentDigest = [:]
+            cacheFileSizeByKey = [:]
             snapshot = .empty
             gallerySummaries = []
             return
@@ -505,6 +569,7 @@ final class ImageCacheStore: ObservableObject {
         var duplicateKeyMap: [String: String] = [:]
         var uniqueFileCount = 0
         var uniqueByteCount: Int64 = 0
+        var refreshedFileSizes: [String: Int64] = [:]
         for fileURL in fileURLs {
             let cacheKey = fileURL.lastPathComponent
             if compactsDuplicates {
@@ -520,12 +585,15 @@ final class ImageCacheStore: ObservableObject {
             }
             uniqueFileCount += 1
             let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey])
-            uniqueByteCount += Int64(values?.fileSize ?? 0)
+            let fileSize = Int64(values?.fileSize ?? 0)
+            refreshedFileSizes[cacheKey] = fileSize
+            uniqueByteCount += fileSize
         }
         if !duplicateKeyMap.isEmpty {
             remapIndexCacheKeys(duplicateKeyMap)
         }
         let validCacheKeys = compactsDuplicates ? Set(canonicalKeysByDigest.values) : Set(fileURLs.map(\.lastPathComponent))
+        cacheFileSizeByKey = refreshedFileSizes.filter { validCacheKeys.contains($0.key) }
         contentDigestByCacheKey = contentDigestByCacheKey.filter { validCacheKeys.contains($0.key) }
         rebuildContentDigestLookup()
         let removedMissingEntries = removeMissingIndexEntries(validCacheKeys: validCacheKeys)
@@ -583,8 +651,7 @@ final class ImageCacheStore: ObservableObject {
                 let sortedRecords = records.sorted { $0.pageNumber < $1.pageNumber }
                 let uniqueCacheKeys = Set(records.map(\.cacheKey))
                 let byteCount = uniqueCacheKeys.reduce(Int64(0)) { total, cacheKey in
-                    let values = try? fileURL(forKey: cacheKey).resourceValues(forKeys: [.fileSizeKey])
-                    return total + Int64(values?.fileSize ?? 0)
+                    total + (cacheFileSizeByKey[cacheKey] ?? 0)
                 }
                 return CachedGallerySummary(
                     galleryIdentifier: identifier,
@@ -602,6 +669,24 @@ final class ImageCacheStore: ObservableObject {
     }
 
     /// Loads the JSON index used for aliases and gallery summaries.
+
+    /// Updates visible cache stats after saving one image without scanning every file.
+    private func refreshAfterSaving(cacheKey: String, byteCount: Int64, context: ImageCacheContext?) {
+        let previousByteCount = cacheFileSizeByKey[cacheKey]
+        cacheFileSizeByKey[cacheKey] = byteCount
+        let fileDelta = previousByteCount == nil ? 1 : 0
+        let byteDelta = byteCount - (previousByteCount ?? 0)
+
+        if context?.galleryIdentifier != nil {
+            gallerySummaries = makeGallerySummaries()
+        }
+        snapshot = ImageCacheSnapshot(
+            fileCount: max(0, snapshot.fileCount + fileDelta),
+            byteCount: max(0, snapshot.byteCount + byteDelta),
+            galleryCount: gallerySummaries.count
+        )
+    }
+
     private func loadIndex() {
         guard
             let data = try? Data(contentsOf: indexURL),
@@ -698,6 +783,21 @@ final class ImageCacheStore: ObservableObject {
     }
 
     /// Builds a stable cache file URL for a cache key.
+
+    /// Returns the byte size for one cached image file.
+
+    /// Writes image bytes off the main actor to keep scrolling responsive.
+    nonisolated private static func writeData(_ data: Data, to destinationURL: URL) async throws {
+        try await Task.detached(priority: .utility) {
+            try data.write(to: destinationURL, options: [.atomic])
+        }.value
+    }
+
+    private func fileSize(forKey key: String) -> Int64? {
+        let values = try? fileURL(forKey: key).resourceValues(forKeys: [.fileSizeKey])
+        return values?.fileSize.map(Int64.init)
+    }
+
     private func fileURL(forKey key: String) -> URL {
         directoryURL.appending(path: key, directoryHint: .notDirectory)
     }
@@ -723,6 +823,15 @@ final class ImageCacheStore: ObservableObject {
     }
 
     /// Hashes file content so duplicate cache files count once in storage stats.
+
+    /// Calculates a content digest away from the main actor for async save paths.
+    nonisolated private static func contentDigestAsync(for data: Data) async -> String {
+        await Task.detached(priority: .utility) {
+            let digest = SHA256.hash(data: data)
+            return digest.map { String(format: "%02x", $0) }.joined()
+        }.value
+    }
+
     private func contentDigest(for fileURL: URL) -> String? {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
         return contentDigest(for: data)
@@ -796,7 +905,9 @@ final class GalleryDownloadManager: ObservableObject {
     private let galleryParser: EHGalleryPageParser
     private let parser: EHImagePageParser
     private let cacheStore: ImageCacheStore
+    private let hitomiDataSource: HitomiDataSource
     private let maxConcurrentDownloads: Int
+    private let maxConcurrentPagesPerGallery: Int
     private let maxPageDownloadRetryCount: Int
     private let retryDelayRange: ClosedRange<Double>
     private var runningTasks: [String: Task<Void, Never>] = [:]
@@ -811,7 +922,9 @@ final class GalleryDownloadManager: ObservableObject {
         galleryParser: EHGalleryPageParser = EHGalleryPageParser(),
         parser: EHImagePageParser = EHImagePageParser(),
         cacheStore: ImageCacheStore = .shared,
+        hitomiDataSource: HitomiDataSource = HitomiDataSource(),
         maxConcurrentDownloads: Int = 5,
+        maxConcurrentPagesPerGallery: Int = 3,
         maxPageDownloadRetryCount: Int = 2,
         retryDelayRange: ClosedRange<Double> = 0.35...1.25
     ) {
@@ -819,7 +932,9 @@ final class GalleryDownloadManager: ObservableObject {
         self.galleryParser = galleryParser
         self.parser = parser
         self.cacheStore = cacheStore
+        self.hitomiDataSource = hitomiDataSource
         self.maxConcurrentDownloads = max(1, maxConcurrentDownloads)
+        self.maxConcurrentPagesPerGallery = max(1, maxConcurrentPagesPerGallery)
         self.maxPageDownloadRetryCount = max(0, maxPageDownloadRetryCount)
         self.retryDelayRange = retryDelayRange
     }
@@ -930,40 +1045,47 @@ final class GalleryDownloadManager: ObservableObject {
         var lastErrorMessage: String?
         updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
 
-        for pageLink in detail.pageLinks.sorted(by: { $0.pageNumber < $1.pageNumber }) {
-            if Task.isCancelled {
-                updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
-                return
-            }
-
-            if let record = cacheStore.pageRecord(for: detail.identifier, pageNumber: pageLink.pageNumber),
-               cacheStore.containsData(for: record.imageURL) {
-                downloadedPageCount = max(downloadedPageCount, cachedPageCount(for: detail.identifier))
-                updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
-                continue
-            }
-
-            do {
-                let byteCount = try await downloadPage(pageLink, detail: detail, fallback: fallback, totalPageCount: totalPageCount)
-                recordDownloadedBytes(byteCount)
-                downloadedPageCount = cachedPageCount(for: detail.identifier)
-                updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
-            } catch is CancellationError {
-                updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
-                return
-            } catch {
-                if error.isHTTPNotFound {
-                    cacheStore.markGalleryDownloadUnavailable(
-                        detail.identifier,
-                        title: detail.title,
-                        thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL,
-                        totalPageCount: totalPageCount
-                    )
+        let missingPageLinks = detail.pageLinks
+            .sorted { $0.pageNumber < $1.pageNumber }
+            .filter { pageLink in
+                guard let record = cacheStore.pageRecord(for: detail.identifier, pageNumber: pageLink.pageNumber) else {
+                    return true
                 }
-                lastErrorMessage = String(format: AppCopy.galleryDownloadPageFailedFormat, String(pageLink.pageNumber), error.localizedDescription)
-                updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: lastErrorMessage)
-                continue
+                return !cacheStore.containsData(for: record.imageURL)
             }
+
+        if missingPageLinks.isEmpty {
+            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: nil)
+            return
+        }
+
+        do {
+            try await downloadMissingPages(missingPageLinks, detail: detail, fallback: fallback, totalPageCount: totalPageCount) { result in
+                switch result.outcome {
+                case .success(let byteCount):
+                    recordDownloadedBytes(byteCount)
+                    downloadedPageCount = cachedPageCount(for: detail.identifier)
+                    updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
+                case .failure(let error):
+                    if error.isHTTPNotFound {
+                        cacheStore.markGalleryDownloadUnavailable(
+                            detail.identifier,
+                            title: detail.title,
+                            thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL,
+                            totalPageCount: totalPageCount
+                        )
+                    }
+                    lastErrorMessage = String(format: AppCopy.galleryDownloadPageFailedFormat, String(result.pageNumber), error.localizedDescription)
+                    updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: lastErrorMessage)
+                }
+            }
+        } catch is CancellationError {
+            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
+            return
+        } catch {
+            lastErrorMessage = error.localizedDescription
+            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
+            return
         }
 
         updateProgress(detail: detail, downloadedPageCount: cachedPageCount(for: detail.identifier), totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
@@ -1082,6 +1204,10 @@ final class GalleryDownloadManager: ObservableObject {
 
     /// Loads the gallery detail page and every known thumbnail page for a cached summary.
     private func loadCompleteDetail(for summary: CachedGallerySummary) async throws -> EHGalleryDetail {
+        if summary.galleryIdentifier.site == .hitomi {
+            return try await hitomiDataSource.galleryDetail(from: summary.galleryIdentifier.url())
+        }
+
         let response = try await client.get(summary.galleryIdentifier.url())
         var detail = try galleryParser.parse(response.body, sourceURL: response.url)
         var loadedThumbnailPageURLStrings: Set<String> = [response.url.absoluteString]
@@ -1121,7 +1247,59 @@ final class GalleryDownloadManager: ObservableObject {
         )
     }
 
-    /// Downloads one reader page and its image, retrying transient failures with a short delay.
+    /// Downloads missing pages with a small per-gallery concurrency window.
+    private func downloadMissingPages(
+        _ pageLinks: [EHGalleryPageLink],
+        detail: EHGalleryDetail,
+        fallback: EHSearchResult?,
+        totalPageCount: Int,
+        onResult: @MainActor (GalleryPageDownloadResult) -> Void
+    ) async throws {
+        var nextPageIndex = 0
+
+        try await withThrowingTaskGroup(of: GalleryPageDownloadResult.self) { group in
+            /// Starts one page task when there is capacity and pending work.
+            func enqueueNextPageIfNeeded() {
+                guard nextPageIndex < pageLinks.count else { return }
+                let pageLink = pageLinks[nextPageIndex]
+                nextPageIndex += 1
+                group.addTask {
+                    await self.downloadPageResult(
+                        pageLink,
+                        detail: detail,
+                        fallback: fallback,
+                        totalPageCount: totalPageCount
+                    )
+                }
+            }
+
+            for _ in 0..<min(maxConcurrentPagesPerGallery, pageLinks.count) {
+                enqueueNextPageIfNeeded()
+            }
+
+            while let result = try await group.next() {
+                try Task.checkCancellation()
+                onResult(result)
+                enqueueNextPageIfNeeded()
+            }
+        }
+    }
+
+    /// Converts one page download attempt into a non-cancelling result.
+    private func downloadPageResult(
+        _ pageLink: EHGalleryPageLink,
+        detail: EHGalleryDetail,
+        fallback: EHSearchResult?,
+        totalPageCount: Int
+    ) async -> GalleryPageDownloadResult {
+        do {
+            let byteCount = try await downloadPage(pageLink, detail: detail, fallback: fallback, totalPageCount: totalPageCount)
+            return GalleryPageDownloadResult(pageNumber: pageLink.pageNumber, outcome: .success(byteCount))
+        } catch {
+            return GalleryPageDownloadResult(pageNumber: pageLink.pageNumber, outcome: .failure(error))
+        }
+    }
+
     private func downloadPage(
         _ pageLink: EHGalleryPageLink,
         detail: EHGalleryDetail,
@@ -1155,10 +1333,16 @@ final class GalleryDownloadManager: ObservableObject {
         totalPageCount: Int
     ) async throws -> Int64 {
         try Task.checkCancellation()
-        let pageResponse = try await client.get(pageLink.pageURL)
-        try Task.checkCancellation()
-        let imagePage = try parser.parse(pageResponse.body, sourceURL: pageResponse.url)
-        let dataResponse = try await client.data(imagePage.imageURL)
+        let imagePage: EHImagePage
+        if detail.identifier.site == .hitomi {
+            imagePage = try await hitomiDataSource.imagePage(from: pageLink.pageURL)
+        } else {
+            let pageResponse = try await client.get(pageLink.pageURL)
+            try Task.checkCancellation()
+            imagePage = try parser.parse(pageResponse.body, sourceURL: pageResponse.url)
+        }
+        let imageReferer = detail.identifier.site == .hitomi ? (imagePage.galleryURL ?? imagePage.pageURL) : imagePage.pageURL
+        let dataResponse = try await client.data(imagePage.imageURL, referer: imageReferer)
         try Task.checkCancellation()
         let context = ImageCacheContext(
             galleryIdentifier: detail.identifier,
@@ -1168,7 +1352,7 @@ final class GalleryDownloadManager: ObservableObject {
             totalPageCount: totalPageCount,
             thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL
         )
-        cacheStore.save(dataResponse.data, for: imagePage.imageURL, responseURL: dataResponse.url, context: context)
+        await cacheStore.saveAsync(dataResponse.data, for: imagePage.imageURL, responseURL: dataResponse.url, context: context)
         return Int64(dataResponse.data.count)
     }
 
@@ -1221,6 +1405,13 @@ final class GalleryDownloadManager: ObservableObject {
 }
 
 /// Stores a queued gallery download request.
+
+/// Stores the result for one downloaded gallery page.
+private struct GalleryPageDownloadResult {
+    let pageNumber: Int
+    let outcome: Result<Int64, Error>
+}
+
 private struct GalleryDownloadJob {
     let identifier: EHGalleryIdentifier
     let title: String

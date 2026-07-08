@@ -18,6 +18,7 @@ final class ReaderViewModel: ObservableObject {
     private let parser: EHImagePageParser
     private let galleryParser: EHGalleryPageParser
     private let cacheStore: ImageCacheStore
+    private let hitomiDataSource: HitomiDataSource
     private var currentPageURL: URL?
     private var loadedGalleryPageURLStrings: Set<String> = []
 
@@ -57,7 +58,8 @@ final class ReaderViewModel: ObservableObject {
         client: EHHTTPClient = URLSessionEHHTTPClient(),
         parser: EHImagePageParser = EHImagePageParser(),
         galleryParser: EHGalleryPageParser = EHGalleryPageParser(),
-        cacheStore: ImageCacheStore = .shared
+        cacheStore: ImageCacheStore = .shared,
+        hitomiDataSource: HitomiDataSource = HitomiDataSource()
     ) {
         self.initialPageURL = initialPageURL
         self.pageLinks = pageLinks
@@ -67,6 +69,7 @@ final class ReaderViewModel: ObservableObject {
         self.parser = parser
         self.galleryParser = galleryParser
         self.cacheStore = cacheStore
+        self.hitomiDataSource = hitomiDataSource
     }
 
     /// Loads the initial page if the reader has not loaded it yet.
@@ -123,6 +126,13 @@ final class ReaderViewModel: ObservableObject {
         defer { isLoadingPageLinks = false }
 
         do {
+            if EHGalleryIdentifier(galleryURL: galleryURL)?.site == .hitomi || galleryURL.host?.contains("hitomi.la") == true {
+                let detail = try await hitomiDataSource.galleryDetail(from: galleryURL)
+                totalPageCount = detail.pageCount ?? totalPageCount
+                mergePageLinks(detail.pageLinks)
+                return
+            }
+
             let response = try await client.get(galleryURL)
             let rootDetail = try galleryParser.parse(response.body, sourceURL: response.url)
             totalPageCount = rootDetail.pageCount ?? totalPageCount
@@ -220,10 +230,17 @@ final class ReaderViewModel: ObservableObject {
         }
 
         do {
-            let response = try await client.get(url)
-            imagePage = try parser.parse(response.body, sourceURL: response.url)
-            imageReloadToken += 1
-            currentPageURL = response.url
+            if EHGalleryIdentifier(galleryURL: url)?.site == .hitomi || url.host?.contains("hitomi.la") == true {
+                imagePage = try await hitomiDataSource.imagePage(from: url)
+                totalPageCount = max(totalPageCount ?? 0, imagePage?.pageNumber ?? 0)
+                imageReloadToken += 1
+                currentPageURL = imagePage?.pageURL ?? url
+            } else {
+                let response = try await client.get(url)
+                imagePage = try parser.parse(response.body, sourceURL: response.url)
+                imageReloadToken += 1
+                currentPageURL = response.url
+            }
         } catch {
             if let cachedPage = cachedImagePage(for: url) {
                 applyCachedPage(cachedPage)

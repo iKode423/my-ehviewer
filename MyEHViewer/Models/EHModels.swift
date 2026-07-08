@@ -5,6 +5,48 @@ enum EHConstants {
     static let baseURL = URL(string: "https://e-hentai.org/")!
 }
 
+enum ContentSite: String, CaseIterable, Identifiable, Codable {
+    case eHentai
+    case hitomi
+
+    static let storageKey = "ContentSite.current"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .eHentai: AppCopy.siteEHentai
+        case .hitomi: AppCopy.siteHitomi
+        }
+    }
+
+    var baseURL: URL {
+        switch self {
+        case .eHentai: EHConstants.baseURL
+        case .hitomi: URL(string: "https://hitomi.la/")!
+        }
+    }
+
+    var supportsOnlineFavorites: Bool {
+        switch self {
+        case .eHentai: true
+        case .hitomi: false
+        }
+    }
+
+    var supportedSearchSources: [EHSearchSource] {
+        switch self {
+        case .eHentai: EHSearchSource.allCases
+        case .hitomi: [.frontPage]
+        }
+    }
+
+    /// Resolves a persisted raw value while keeping e-hentai as the stable default.
+    static func resolved(rawValue: String) -> ContentSite {
+        ContentSite(rawValue: rawValue) ?? .eHentai
+    }
+}
+
 /// Describes the app-wide appearance preference saved on this device.
 enum AppThemeMode: String, CaseIterable, Identifiable, Codable {
     case system
@@ -77,18 +119,30 @@ enum EHGalleryCategory: Int, CaseIterable, Identifiable, Codable {
 struct EHGalleryIdentifier: Hashable, Codable, Identifiable {
     let gid: Int
     let token: String
+    var site: ContentSite
 
-    var id: String { "\(gid)-\(token)" }
+    var id: String {
+        switch site {
+        case .eHentai: "\(gid)-\(token)"
+        case .hitomi: "hitomi-\(gid)"
+        }
+    }
 
-    /// Creates an identifier from the numeric gallery id and token.
-    init(gid: Int, token: String) {
+    /// Creates an identifier from the numeric gallery id, token, and owning site.
+    init(gid: Int, token: String, site: ContentSite = .eHentai) {
         self.gid = gid
         self.token = token
+        self.site = site
     }
 
     /// Builds the canonical gallery URL for this identifier.
-    func url(baseURL: URL = EHConstants.baseURL) -> URL {
-        baseURL.appending(path: "g/\(gid)/\(token)/")
+    func url(baseURL: URL? = nil) -> URL {
+        switch site {
+        case .eHentai:
+            return (baseURL ?? EHConstants.baseURL).appending(path: "g/\(gid)/\(token)/")
+        case .hitomi:
+            return (baseURL ?? site.baseURL).appending(path: "galleries/\(gid).html")
+        }
     }
 
     /// Builds the site popup URL used to add or update online favorites.
@@ -104,15 +158,57 @@ struct EHGalleryIdentifier: Hashable, Codable, Identifiable {
 
     /// Extracts a gallery identifier from a canonical gallery URL.
     init?(galleryURL: URL) {
-        guard
-            let match = EHHTMLParsing.firstMatch(in: galleryURL.path, pattern: #"^/g/([0-9]+)/([a-z0-9]+)/?$"#),
-            match.count >= 3,
-            let gid = Int(match[1])
-        else {
-            return nil
+        if let match = EHHTMLParsing.firstMatch(in: galleryURL.path, pattern: #"^/g/([0-9]+)/([a-z0-9]+)/?$"#),
+           match.count >= 3,
+           let gid = Int(match[1]) {
+            self.gid = gid
+            self.token = match[2]
+            self.site = .eHentai
+            return
         }
-        self.gid = gid
-        self.token = match[2]
+
+        if let match = EHHTMLParsing.firstMatch(in: galleryURL.path, pattern: #"^/galleries/([0-9]+)\.html$"#),
+           match.count >= 2,
+           let gid = Int(match[1]) {
+            self.gid = gid
+            self.token = "hitomi"
+            self.site = .hitomi
+            return
+        }
+
+        if galleryURL.host?.contains("hitomi.la") == true,
+           let match = EHHTMLParsing.firstMatch(in: galleryURL.path, pattern: #"-([0-9]+)\.html$"#),
+           match.count >= 2,
+           let gid = Int(match[1]) {
+            self.gid = gid
+            self.token = "hitomi"
+            self.site = .hitomi
+            return
+        }
+
+        return nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case gid
+        case token
+        case site
+    }
+
+    /// Decodes old e-hentai identifiers that predate the site field.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        gid = try container.decode(Int.self, forKey: .gid)
+        token = try container.decode(String.self, forKey: .token)
+        site = try container.decodeIfPresent(ContentSite.self, forKey: .site) ?? .eHentai
+    }
+
+    /// Encodes the site field so non-e-hentai galleries remain separated.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(gid, forKey: .gid)
+        try container.encode(token, forKey: .token)
+        try container.encode(site, forKey: .site)
     }
 }
 

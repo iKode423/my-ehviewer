@@ -3,6 +3,7 @@ import SwiftUI
 /// Displays the live search entry point and result list.
 struct SearchView: View {
     @StateObject private var viewModel: SearchViewModel
+    @AppStorage(ContentSite.storageKey) private var contentSiteRaw = ContentSite.eHentai.rawValue
     private let embedsInNavigationStack: Bool
     private let searchesOnAppear: Bool
     private let chromeMode: SearchChromeMode
@@ -58,9 +59,18 @@ struct SearchView: View {
             await viewModel.refresh()
         }
         .task {
+            viewModel.setSite(currentSite)
             if searchesOnAppear {
                 await viewModel.searchIfNeeded()
+                syncPageJumpText()
             }
+        }
+        .onChange(of: contentSiteRaw) { _, _ in
+            viewModel.setSite(currentSite)
+            syncPageJumpText()
+        }
+        .onChange(of: viewModel.currentPageNumber) { _, _ in
+            syncPageJumpText()
         }
     }
 
@@ -79,9 +89,11 @@ struct SearchView: View {
                     .padding(.horizontal)
                     .padding(.top, 8)
 
-                filterPanel
-                    .padding(.horizontal)
-                    .padding(.top, 12)
+                if viewModel.site == .eHentai {
+                    filterPanel
+                        .padding(.horizontal)
+                        .padding(.top, 12)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -96,11 +108,11 @@ struct SearchView: View {
                 .textFieldStyle(.roundedBorder)
                 .submitLabel(.search)
                 .onSubmit {
-                    Task { await viewModel.search() }
+                    Task { await performSearch() }
                 }
 
             Button {
-                Task { await viewModel.search() }
+                Task { await performSearch() }
             } label: {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 16, weight: .semibold))
@@ -119,7 +131,7 @@ struct SearchView: View {
     /// Lets the user browse the front page or the popular endpoint.
     private var sourcePicker: some View {
         Picker(AppCopy.searchSourceTitle, selection: $viewModel.source) {
-            ForEach(EHSearchSource.allCases) { source in
+            ForEach(viewModel.availableSources) { source in
                 Text(source.title).tag(source)
             }
         }
@@ -150,7 +162,10 @@ struct SearchView: View {
                     HStack(spacing: 8) {
                         ForEach(viewModel.recentQueries, id: \.self) { recentQuery in
                             Button {
-                                Task { await viewModel.useRecentQuery(recentQuery) }
+                                Task {
+                                    await viewModel.useRecentQuery(recentQuery)
+                                    syncPageJumpText()
+                                }
                             } label: {
                                 HStack(spacing: 4) {
                                     Image(systemName: "clock.arrow.circlepath")
@@ -390,7 +405,10 @@ struct SearchView: View {
     private var paginationControls: some View {
         HStack(spacing: 12) {
             Button {
-                Task { await viewModel.loadPreviousPage() }
+                Task {
+                    await viewModel.loadPreviousPage()
+                    syncPageJumpText()
+                }
             } label: {
                 Label(AppCopy.searchPreviousPage, systemImage: "chevron.left")
                     .labelStyle(.iconOnly)
@@ -412,7 +430,10 @@ struct SearchView: View {
             Spacer()
 
             Button {
-                Task { await viewModel.loadNextPage() }
+                Task {
+                    await viewModel.loadNextPage()
+                    syncPageJumpText()
+                }
             } label: {
                 Label(AppCopy.searchNextPage, systemImage: "chevron.right")
                     .labelStyle(.iconOnly)
@@ -454,6 +475,18 @@ struct SearchView: View {
     private func loadJumpPage() async {
         guard let pageNumber = jumpPageNumber else { return }
         await viewModel.loadPage(number: pageNumber)
+        syncPageJumpText()
+    }
+
+    /// Runs a new search and updates the visible page number field.
+    private func performSearch() async {
+        await viewModel.search()
+        syncPageJumpText()
+    }
+
+    /// Keeps the jump field aligned with the last successfully loaded page.
+    private func syncPageJumpText() {
+        pageJumpText = String(viewModel.currentPageNumber)
     }
 
     /// Returns the positive page number entered by the user.
@@ -461,6 +494,11 @@ struct SearchView: View {
         let trimmedText = pageJumpText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let pageNumber = Int(trimmedText), pageNumber > 0 else { return nil }
         return pageNumber
+    }
+
+    /// Resolves the app-wide content site selected in settings.
+    private var currentSite: ContentSite {
+        ContentSite.resolved(rawValue: contentSiteRaw)
     }
 
     /// Creates a binding for one category in the hidden category set.

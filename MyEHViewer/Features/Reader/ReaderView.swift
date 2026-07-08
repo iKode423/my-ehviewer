@@ -231,6 +231,7 @@ struct ReaderView: View {
 
                 CachedRemoteImageView(
                     url: imagePage.imageURL,
+                    referer: imagePage.pageURL,
                     cacheContext: imageCacheContext(for: imagePage),
                     contentMode: .fit,
                     reloadToken: viewModel.imageReloadToken
@@ -328,7 +329,7 @@ struct ReaderView: View {
 
     /// Shows a stable thumbnail frame for a known reader page.
     private func pageThumbnail(url: URL?, crop: EHImageCrop? = nil) -> some View {
-        CachedRemoteImageView(url: url, crop: crop, contentMode: .fill, animationMode: .staticPreview) {
+        CachedRemoteImageView(url: url, crop: crop, contentMode: .fill, animationMode: .staticPreview, decodeMaxPixelSize: 420) {
             ProgressView()
         } failure: {
             Image(systemName: "photo")
@@ -457,8 +458,8 @@ struct ReaderView: View {
             return cachedData
         }
 
-        let response = try await URLSessionEHHTTPClient().data(imagePage.imageURL)
-        ImageCacheStore.shared.save(response.data, for: imagePage.imageURL, responseURL: response.url, context: imageCacheContext(for: imagePage))
+        let response = try await URLSessionEHHTTPClient().data(imagePage.imageURL, referer: imagePage.pageURL)
+        await ImageCacheStore.shared.saveAsync(response.data, for: imagePage.imageURL, responseURL: response.url, context: imageCacheContext(for: imagePage))
         return response.data
     }
 
@@ -757,11 +758,13 @@ enum CachedRemoteImageContentMode {
 /// Shows a remote image from disk cache or network while preserving GIF animation.
 struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
     let url: URL?
+    let referer: URL?
     let crop: EHImageCrop?
     let cacheContext: ImageCacheContext?
     let contentMode: CachedRemoteImageContentMode
     let animationMode: CachedRemoteImageAnimationMode
     let reloadToken: Int
+    let decodeMaxPixelSize: Int?
     let placeholder: () -> Placeholder
     let failure: () -> Failure
 
@@ -770,20 +773,24 @@ struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
     /// Creates a cached remote image view with custom loading and failure states.
     init(
         url: URL?,
+        referer: URL? = nil,
         crop: EHImageCrop? = nil,
         cacheContext: ImageCacheContext? = nil,
         contentMode: CachedRemoteImageContentMode = .fit,
         animationMode: CachedRemoteImageAnimationMode = .animated,
         reloadToken: Int = 0,
+        decodeMaxPixelSize: Int? = nil,
         @ViewBuilder placeholder: @escaping () -> Placeholder,
         @ViewBuilder failure: @escaping () -> Failure
     ) {
         self.url = url
+        self.referer = referer
         self.crop = crop
         self.cacheContext = cacheContext
         self.contentMode = contentMode
         self.animationMode = animationMode
         self.reloadToken = reloadToken
+        self.decodeMaxPixelSize = decodeMaxPixelSize
         self.placeholder = placeholder
         self.failure = failure
     }
@@ -793,19 +800,26 @@ struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
             switch loader.state {
             case .idle, .loading:
                 placeholder()
-            case .success(let data):
-                AnimatedImageDataView(data: data, crop: crop, contentMode: contentMode.uiViewContentMode, animationMode: animationMode)
+            case .success(let image):
+                AnimatedImageDataView(image: image, contentMode: contentMode.uiViewContentMode)
             case .failure:
                 failure()
             }
         }
         .task(id: loadKey) {
-            await loader.load(url: url, context: cacheContext)
+            await loader.load(
+                url: url,
+                referer: referer,
+                crop: crop,
+                animationMode: animationMode,
+                decodeMaxPixelSize: decodeMaxPixelSize,
+                context: cacheContext
+            )
         }
     }
 
     private var loadKey: String {
-        "\(url?.absoluteString ?? "nil")-\(crop?.hashValue ?? 0)-\(reloadToken)"
+        "\(url?.absoluteString ?? "nil")-\(crop?.hashValue ?? 0)-\(decodeMaxPixelSize ?? 0)-\(reloadToken)"
     }
 }
 
@@ -833,8 +847,15 @@ final class CachedRemoteImageLoader: ObservableObject {
         self.client = client
     }
 
-    /// Loads image data from cache first, then stores a network response on success.
-    func load(url: URL?, context: ImageCacheContext? = nil) async {
+    /// Loads image data from cache first, then decodes it away from the main actor.
+    func load(
+        url: URL?,
+        referer: URL? = nil,
+        crop: EHImageCrop? = nil,
+        animationMode: CachedRemoteImageAnimationMode = .animated,
+        decodeMaxPixelSize: Int? = nil,
+        context: ImageCacheContext? = nil
+    ) async {
         guard let url else {
             state = .failure
             lastLoadedKey = nil
@@ -842,55 +863,75 @@ final class CachedRemoteImageLoader: ObservableObject {
         }
 
         if let cachedFileURL = cacheStore.cachedDataFileURL(for: url),
-           let cachedData = await Self.readData(at: cachedFileURL) {
-            if context != nil {
-                cacheStore.recordExistingData(for: url, responseURL: url, byteCount: Int64(cachedData.count), context: context)
+           let cachedImage = await Self.image(at: cachedFileURL, crop: crop, animationMode: animationMode, maxPixelSize: decodeMaxPixelSize) {
+            if context != nil,
+               let byteCount = Self.fileSize(at: cachedFileURL) {
+                cacheStore.recordExistingData(for: url, responseURL: url, byteCount: byteCount, context: context)
             }
-            state = .success(cachedData)
+            state = .success(cachedImage)
             lastLoadedKey = url.absoluteString
             return
         }
 
-        guard lastLoadedKey != url.absoluteString || state != .loading else { return }
+        guard lastLoadedKey != url.absoluteString || !state.isLoading else { return }
         lastLoadedKey = url.absoluteString
         state = .loading
 
         do {
-            let response = try await client.data(url)
-            cacheStore.save(response.data, for: url, responseURL: response.url, context: context)
-            state = .success(response.data)
+            let response = try await client.data(url, referer: referer)
+            await cacheStore.saveAsync(response.data, for: url, responseURL: response.url, context: context)
+            guard let image = await Self.image(from: response.data, crop: crop, animationMode: animationMode, maxPixelSize: decodeMaxPixelSize) else {
+                state = .failure
+                return
+            }
+            state = .success(image)
         } catch {
             state = .failure
         }
     }
 
-    /// Reads cached bytes off the main actor to keep scrolling and paging responsive.
-    nonisolated private static func readData(at fileURL: URL) async -> Data? {
+    /// Decodes a cached image file off the main actor.
+    nonisolated private static func image(at fileURL: URL, crop: EHImageCrop?, animationMode: CachedRemoteImageAnimationMode, maxPixelSize: Int?) async -> UIImage? {
         await Task.detached(priority: .utility) {
-            try? Data(contentsOf: fileURL)
+            guard let data = try? Data(contentsOf: fileURL) else { return nil }
+            return ImageDataRenderer.uiImage(from: data, allowsAnimation: animationMode == .animated, crop: crop, maxPixelSize: maxPixelSize)
         }.value
+    }
+
+    /// Decodes network image bytes off the main actor.
+    nonisolated private static func image(from data: Data, crop: EHImageCrop?, animationMode: CachedRemoteImageAnimationMode, maxPixelSize: Int?) async -> UIImage? {
+        await Task.detached(priority: .utility) {
+            ImageDataRenderer.uiImage(from: data, allowsAnimation: animationMode == .animated, crop: crop, maxPixelSize: maxPixelSize)
+        }.value
+    }
+
+    /// Reads the cached file size without loading image bytes into memory again.
+    nonisolated private static func fileSize(at fileURL: URL) -> Int64? {
+        guard let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey]) else { return nil }
+        return Int64(values.fileSize ?? 0)
     }
 }
 
 /// Describes the loading state for cached remote image data.
-enum CachedRemoteImageState: Equatable {
+enum CachedRemoteImageState {
     case idle
     case loading
-    case success(Data)
+    case success(UIImage)
     case failure
+
+    /// Returns true while the loader is waiting for cache or network work.
+    var isLoading: Bool {
+        if case .loading = self {
+            return true
+        }
+        return false
+    }
 }
 
 /// Bridges image data into UIImageView so animated GIF frames can play.
 struct AnimatedImageDataView: UIViewRepresentable {
-    let data: Data
-    let crop: EHImageCrop?
+    let image: UIImage
     let contentMode: UIView.ContentMode
-    let animationMode: CachedRemoteImageAnimationMode
-
-    /// Creates a coordinator that avoids reparsing unchanged image data.
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
 
     /// Creates the underlying UIKit image view.
     func makeUIView(context: Context) -> UIImageView {
@@ -904,24 +945,17 @@ struct AnimatedImageDataView: UIViewRepresentable {
     /// Updates the image view and starts GIF animation when multiple frames exist.
     func updateUIView(_ imageView: UIImageView, context: Context) {
         imageView.contentMode = contentMode
-        if context.coordinator.data != data || context.coordinator.crop != crop {
-            context.coordinator.data = data
-            context.coordinator.crop = crop
-            context.coordinator.image = ImageDataRenderer.uiImage(
-                from: data,
-                allowsAnimation: animationMode == .animated,
-                crop: crop
-            )
+        if imageView.image !== image {
+            imageView.image = image
         }
-        imageView.image = context.coordinator.image
-        if context.coordinator.image?.images?.isEmpty == false {
+        if image.images?.isEmpty == false {
             imageView.startAnimating()
         }
     }
 
     /// Calculates a SwiftUI size that preserves image aspect ratio when width is known.
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIImageView, context: Context) -> CGSize? {
-        guard let image = context.coordinator.image, image.size.width > 0 else { return nil }
+        guard image.size.width > 0 else { return nil }
 
         if let width = proposal.width, let height = proposal.height {
             return CGSize(width: width, height: height)
@@ -933,36 +967,34 @@ struct AnimatedImageDataView: UIViewRepresentable {
 
         return image.size
     }
-
-    /// Stores parsed image data between SwiftUI updates.
-    final class Coordinator {
-        var data: Data?
-        var crop: EHImageCrop?
-        var image: UIImage?
-    }
 }
 
 /// Converts static and animated image data into UIImage values.
 enum ImageDataRenderer {
-    /// Parses GIF frames with ImageIO and falls back to UIImage for static data.
-    static func uiImage(from data: Data, allowsAnimation: Bool = true, crop: EHImageCrop? = nil) -> UIImage? {
+    /// Builds a display image, downsampling static previews when a target size is supplied.
+    static func uiImage(from data: Data, allowsAnimation: Bool = true, crop: EHImageCrop? = nil, maxPixelSize: Int? = nil) -> UIImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             return UIImage(data: data)
         }
 
         let frameCount = CGImageSourceGetCount(source)
-        guard allowsAnimation, crop == nil else {
-            if let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
-                if let croppedImage = cropped(cgImage, to: crop) {
-                    return UIImage(cgImage: croppedImage)
-                }
+        if let maxPixelSize, maxPixelSize > 0, !allowsAnimation, crop == nil {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+            ]
+            if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
                 return UIImage(cgImage: cgImage)
             }
-            return UIImage(data: data)
+        }
+
+        guard allowsAnimation, crop == nil else {
+            return staticImage(from: source, fallbackData: data, crop: crop)
         }
 
         guard frameCount > 1 else {
-            return UIImage(data: data)
+            return staticImage(from: source, fallbackData: data, crop: nil)
         }
 
         var frames: [UIImage] = []
@@ -980,6 +1012,18 @@ enum ImageDataRenderer {
 
         let resolvedDuration = duration > 0 ? duration : Double(frames.count) * 0.1
         return UIImage.animatedImage(with: frames, duration: resolvedDuration) ?? UIImage(data: data)
+    }
+
+
+    /// Decodes one still frame through ImageIO before falling back to UIKit decoding.
+    private static func staticImage(from source: CGImageSource, fallbackData data: Data, crop: EHImageCrop?) -> UIImage? {
+        if let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+            if let croppedImage = cropped(cgImage, to: crop) {
+                return UIImage(cgImage: croppedImage)
+            }
+            return UIImage(cgImage: cgImage)
+        }
+        return UIImage(data: data)
     }
 
     /// Reads one GIF frame delay and clamps unreadably fast frames.

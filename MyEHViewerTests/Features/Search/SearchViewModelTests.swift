@@ -100,6 +100,25 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(recorder.requestedURLs.first?.absoluteString, "https://e-hentai.org/favorites.php?favcat=all")
     }
 
+    /// Confirms switching to Hitomi removes e-hentai-only sources and stale result state.
+    func testSetSiteRestrictsSourcesAndClearsState() async {
+        let viewModel = SearchViewModel(
+            initialSource: .favorites,
+            client: MockHTTPClient(body: Self.searchHTML),
+            userDefaults: makeUserDefaults()
+        )
+
+        await viewModel.search()
+        viewModel.setSite(.hitomi)
+
+        XCTAssertEqual(viewModel.site, .hitomi)
+        XCTAssertEqual(viewModel.source, .frontPage)
+        XCTAssertEqual(viewModel.availableSources, [.frontPage])
+        XCTAssertTrue(viewModel.results.isEmpty)
+        XCTAssertFalse(viewModel.hasSearched)
+        XCTAssertEqual(viewModel.currentPageNumber, 1)
+    }
+
     /// Confirms jump-to-page requests keep the active query and use the site's zero-based jump parameter.
     func testLoadPageNumberUsesCurrentSearchParameters() async {
         let recorder = SearchRequestRecorder()
@@ -112,12 +131,34 @@ final class SearchViewModelTests: XCTestCase {
 
         await viewModel.loadPage(number: 3)
 
+        XCTAssertEqual(viewModel.currentPageNumber, 3)
         XCTAssertEqual(recorder.requestedURLs.count, 1)
         let queryItems = URLComponents(url: recorder.requestedURLs[0], resolvingAgainstBaseURL: false)?.queryItems ?? []
         let queryByName = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
         XCTAssertEqual(queryByName["favcat"], "all")
         XCTAssertEqual(queryByName["f_search"], "sample")
         XCTAssertEqual(queryByName["jump"], "2")
+    }
+
+    /// Confirms cursor pagination keeps the visible page number in sync.
+    func testCursorPaginationUpdatesCurrentPageNumber() async {
+        let recorder = SearchRequestRecorder()
+        let client = QueueHTTPClient(
+            responses: [Self.searchHTML, Self.previousAndNextHTML, Self.previousAndNextHTML],
+            recorder: recorder
+        )
+        let viewModel = SearchViewModel(client: client, userDefaults: makeUserDefaults())
+
+        await viewModel.search()
+        await viewModel.loadNextPage()
+        await viewModel.loadPreviousPage()
+
+        XCTAssertEqual(viewModel.currentPageNumber, 1)
+        XCTAssertEqual(recorder.requestedURLs.map(\.absoluteString), [
+            "https://e-hentai.org/",
+            "https://e-hentai.org/?next=100",
+            "https://e-hentai.org/?prev=50"
+        ])
     }
 
     /// Confirms filter reset keeps the query and browse source unchanged.
@@ -189,6 +230,37 @@ final class SearchViewModelTests: XCTestCase {
     </table>
     <a id="unext" href="https://e-hentai.org/?next=100">Next</a>
     """
+
+    private static let previousAndNextHTML = """
+    <table class="itg gltc">
+      <tr>
+        <td class="gl1c glcat"><div class="cn ct2">Manga</div></td>
+        <td class="gl2c"><div class="glthumb"><img data-src="https://example.test/thumb.webp" /></div></td>
+        <td class="gl3c glname"><a href="https://e-hentai.org/g/101/bbcdef1234/"><div class="glink">Second Gallery</div></a></td>
+        <td class="gl4c glhide"><div><a href="https://e-hentai.org/uploader/demo">demo</a></div><div>10 pages</div></td>
+      </tr>
+    </table>
+    <a id="uprev" href="https://e-hentai.org/?prev=50">Previous</a>
+    <a id="unext" href="https://e-hentai.org/?next=150">Next</a>
+    """
+}
+
+private final class QueueHTTPClient: EHHTTPClient {
+    private var responses: [String]
+    private let recorder: SearchRequestRecorder?
+
+    /// Creates a queue-backed client for testing multi-request search flows.
+    init(responses: [String], recorder: SearchRequestRecorder? = nil) {
+        self.responses = responses
+        self.recorder = recorder
+    }
+
+    /// Returns one queued HTML response for each request.
+    func get(_ url: URL) async throws -> EHHTTPResponse {
+        recorder?.append(url)
+        let body = responses.isEmpty ? "" : responses.removeFirst()
+        return EHHTTPResponse(url: url, statusCode: 200, body: body)
+    }
 }
 
 /// Provides deterministic HTML or error responses for view-model tests.

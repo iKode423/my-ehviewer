@@ -37,6 +37,7 @@
 		0A1400010000000000000003 /* LibraryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1400020000000000000003 /* LibraryStoreTests.swift */; };
 		0A1500010000000000000001 /* SiteCookieStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1500020000000000000001 /* SiteCookieStore.swift */; };
 		0A1500010000000000000002 /* SiteCookieStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1500020000000000000002 /* SiteCookieStoreTests.swift */; };
+		0A1700010000000000000001 /* HitomiDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1700020000000000000001 /* HitomiDataSource.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -85,6 +86,7 @@
 		0A1400020000000000000003 /* LibraryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStoreTests.swift; sourceTree = "<group>"; };
 		0A1500020000000000000001 /* SiteCookieStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteCookieStore.swift; sourceTree = "<group>"; };
 		0A1500020000000000000002 /* SiteCookieStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteCookieStoreTests.swift; sourceTree = "<group>"; };
+		0A1700020000000000000001 /* HitomiDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HitomiDataSource.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -220,6 +222,7 @@
 			isa = PBXGroup;
 			children = (
 				0A1000020000000000000002 /* EHHTTPClient.swift */,
+				0A1700020000000000000001 /* HitomiDataSource.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -426,6 +429,7 @@
 				0A1200010000000000000003 /* FlowLayout.swift in Sources */,
 				0A1200010000000000000001 /* GalleryDetailView.swift in Sources */,
 				0A1200010000000000000002 /* GalleryDetailViewModel.swift in Sources */,
+				0A1700010000000000000001 /* HitomiDataSource.swift in Sources */,
 				0A1400010000000000000002 /* LibraryStore.swift in Sources */,
 				0A1400010000000000000001 /* LibraryView.swift in Sources */,
 				0A0000010000000000000001 /* MyEHViewerApp.swift in Sources */,
