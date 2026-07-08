@@ -35,6 +35,7 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(AppCopy.cacheManagementProgressTitle, "下载进度")
         XCTAssertEqual(AppCopy.searchJumpPage, "跳页")
         XCTAssertEqual(AppCopy.settingsContentSiteTitle, "图库来源")
+        XCTAssertEqual(AppCopy.galleryRelatedTitle, "关联图库")
         XCTAssertEqual(ContentSite.hitomi.title, "Hitomi")
     }
 
@@ -96,6 +97,27 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(client.requestedGalleryInfoIDs, galleryIDs)
     }
 
+    /// Confirms quoted Hitomi namespace terms keep spaces inside one search term.
+    @MainActor
+    func testHitomiQuotedGroupSearchUsesNozomiTerm() async throws {
+        let galleryID = 4_037_854
+        let client = HitomiMockHTTPClient(
+            indexVersion: "1783485646",
+            galleryInfos: [
+                galleryID: Self.hitomiGalleryInfoJSON(id: galleryID, title: "Grouped Gallery")
+            ],
+            nozomiGalleryIDsByPath: [
+                "/n/group/baby lop-all.nozomi": [galleryID]
+            ]
+        )
+        let dataSource = HitomiDataSource(client: client) { _, _ in Data() }
+
+        let page = try await dataSource.searchPage(keyword: #"group:"Baby Lop""#, pageNumber: 1)
+
+        XCTAssertEqual(page.results.map(\.identifier.gid), [galleryID])
+        XCTAssertEqual(client.requestedDataPaths, ["/n/group/baby lop-all.nozomi"])
+    }
+
 
     /// Confirms Hitomi search, cover, and preview thumbnails use AVIF when available.
     @MainActor
@@ -120,6 +142,42 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(searchPage.results.first?.thumbnailURL?.absoluteString, expectedThumbnailURL)
         XCTAssertEqual(detail.coverURL?.absoluteString, expectedThumbnailURL)
         XCTAssertEqual(detail.pageLinks.first?.thumbnailURL?.absoluteString, expectedThumbnailURL)
+    }
+
+    /// Confirms Hitomi details expose group, related galleries, and bounded preview batches.
+    @MainActor
+    func testHitomiDetailLimitsPreviewAddsGroupAndRelatedGalleries() async throws {
+        let galleryID = 4_037_854
+        let relatedID = 4_037_855
+        let client = HitomiMockHTTPClient(
+            indexVersion: "1783485646",
+            galleryInfos: [
+                galleryID: Self.hitomiGalleryInfoJSON(
+                    id: galleryID,
+                    title: "Main Gallery",
+                    fileCount: 45,
+                    groups: ["Baby Lop"],
+                    relatedIDs: [relatedID]
+                ),
+                relatedID: Self.hitomiGalleryInfoJSON(id: relatedID, title: "Related Gallery")
+            ]
+        )
+        let dataSource = HitomiDataSource(client: client) { _, _ in Data() }
+
+        let detail = try await dataSource.galleryDetail(from: URL(string: "https://hitomi.la/galleries/\(galleryID).html")!)
+        let groupMetadata = try XCTUnwrap(detail.metadata.first { $0.key == "Group" })
+        let nextBatch = try await dataSource.galleryPageLinks(
+            from: URL(string: "https://hitomi.la/galleries/\(galleryID).html")!,
+            startPage: 41
+        )
+
+        XCTAssertEqual(detail.pageLinks.count, 40)
+        XCTAssertEqual(detail.pageCount, 45)
+        XCTAssertEqual(groupMetadata.value, "Baby Lop")
+        XCTAssertEqual(groupMetadata.searchTags.first?.searchQuery, "group:\"Baby Lop\"")
+        XCTAssertEqual(detail.relatedGalleries.map(\.identifier.gid), [relatedID])
+        XCTAssertEqual(detail.relatedGalleries.first?.title, "Related Gallery")
+        XCTAssertEqual(nextBatch.map(\.pageNumber), Array(41...45))
     }
 
 
@@ -413,10 +471,19 @@ final class MyEHViewerTests: XCTestCase {
         id: Int,
         title: String,
         hash: String = "abcdef1234567890",
-        hasAVIF: Bool = false
+        hasAVIF: Bool = false,
+        fileCount: Int = 1,
+        groups: [String] = [],
+        relatedIDs: [Int] = []
     ) -> String {
-        """
-        {"id":"\(id)","title":"\(title)","type":"doujinshi","language":"english","files":[{"name":"1.jpg","hash":"\(hash)","haswebp":1,"hasavif":\(hasAVIF ? 1 : 0)}]}
+        let files = (0..<fileCount).map { index in
+            let fileHash = index == 0 ? hash : String(format: "%016x", id * 1_000 + index)
+            return #"{"name":"\#(index + 1).jpg","hash":"\#(fileHash)","haswebp":1,"hasavif":\#(hasAVIF ? 1 : 0)}"#
+        }
+        let groupsJSON = groups.isEmpty ? "" : #","groups":[\#(groups.map { #"{"group":"\#($0)"}"# }.joined(separator: ","))]"#
+        let relatedJSON = relatedIDs.isEmpty ? "" : #","related":[\#(relatedIDs.map(String.init).joined(separator: ","))]"#
+        return """
+        {"id":"\(id)","title":"\(title)","type":"doujinshi","language":"english","files":[\(files.joined(separator: ","))]\(groupsJSON)\(relatedJSON)}
         """
     }
 
@@ -533,17 +600,21 @@ private final class HitomiMockHTTPClient: EHDataHTTPClient {
     private let indexVersion: String
     private let galleryInfos: [Int: String]
     private let imageContextScript: String
+    private let nozomiGalleryIDsByPath: [String: [Int]]
     private(set) var requestedGalleryInfoIDs: [Int] = []
+    private(set) var requestedDataPaths: [String] = []
 
     /// Creates a mock Hitomi client for version, image context, and gallery info requests.
     init(
         indexVersion: String,
         galleryInfos: [Int: String],
-        imageContextScript: String = MyEHViewerTests.hitomiImageContextScript(pathPrefix: "galleries/", suffixValue: 1, codes: [])
+        imageContextScript: String = MyEHViewerTests.hitomiImageContextScript(pathPrefix: "galleries/", suffixValue: 1, codes: []),
+        nozomiGalleryIDsByPath: [String: [Int]] = [:]
     ) {
         self.indexVersion = indexVersion
         self.galleryInfos = galleryInfos
         self.imageContextScript = imageContextScript
+        self.nozomiGalleryIDsByPath = nozomiGalleryIDsByPath
     }
 
     /// Returns the search index version, image context, or one gallery info script.
@@ -563,7 +634,12 @@ private final class HitomiMockHTTPClient: EHDataHTTPClient {
 
     /// Returns empty data for unused data requests.
     func data(_ url: URL) async throws -> EHDataResponse {
-        EHDataResponse(url: url, statusCode: 200, data: Data())
+        let path = url.path.removingPercentEncoding ?? url.path
+        requestedDataPaths.append(path)
+        if let galleryIDs = nozomiGalleryIDsByPath[path] {
+            return EHDataResponse(url: url, statusCode: 200, data: Self.nozomiData(for: galleryIDs))
+        }
+        return EHDataResponse(url: url, statusCode: 200, data: Data())
     }
 
     /// Returns empty data for unused referer-aware data requests.
@@ -577,6 +653,24 @@ private final class HitomiMockHTTPClient: EHDataHTTPClient {
             return nil
         }
         return Int(match[1])
+    }
+
+    /// Builds a big-endian nozomi payload for mocked namespace searches.
+    private static func nozomiData(for galleryIDs: [Int]) -> Data {
+        var data = Data()
+        for galleryID in galleryIDs {
+            appendInt32(Int32(galleryID), to: &data)
+        }
+        return data
+    }
+
+    /// Appends one big-endian 32-bit integer.
+    private static func appendInt32(_ value: Int32, to data: inout Data) {
+        let unsigned = UInt32(bitPattern: value)
+        data.append(UInt8((unsigned >> 24) & 0xff))
+        data.append(UInt8((unsigned >> 16) & 0xff))
+        data.append(UInt8((unsigned >> 8) & 0xff))
+        data.append(UInt8(unsigned & 0xff))
     }
 }
 

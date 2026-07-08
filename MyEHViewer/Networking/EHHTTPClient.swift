@@ -1205,7 +1205,16 @@ final class GalleryDownloadManager: ObservableObject {
     /// Loads the gallery detail page and every known thumbnail page for a cached summary.
     private func loadCompleteDetail(for summary: CachedGallerySummary) async throws -> EHGalleryDetail {
         if summary.galleryIdentifier.site == .hitomi {
-            return try await hitomiDataSource.galleryDetail(from: summary.galleryIdentifier.url())
+            var detail = try await hitomiDataSource.galleryDetail(from: summary.galleryIdentifier.url())
+            while detail.pageLinks.count < (detail.pageCount ?? detail.pageLinks.count) {
+                let incomingPageLinks = try await hitomiDataSource.galleryPageLinks(
+                    from: summary.galleryIdentifier.url(),
+                    startPage: detail.pageLinks.count + 1
+                )
+                guard !incomingPageLinks.isEmpty else { break }
+                detail = mergedDetail(detail, appending: incomingPageLinks)
+            }
+            return detail
         }
 
         let response = try await client.get(summary.galleryIdentifier.url())
@@ -1220,6 +1229,30 @@ final class GalleryDownloadManager: ObservableObject {
         }
 
         return detail
+    }
+
+    /// Combines Hitomi page links while keeping gallery-level metadata.
+    private func mergedDetail(_ current: EHGalleryDetail, appending incomingPageLinks: [EHGalleryPageLink]) -> EHGalleryDetail {
+        let pageLinks = Dictionary(grouping: current.pageLinks + incomingPageLinks, by: \.pageNumber)
+            .compactMap { $0.value.first }
+            .sorted { $0.pageNumber < $1.pageNumber }
+
+        return EHGalleryDetail(
+            identifier: current.identifier,
+            title: current.title,
+            japaneseTitle: current.japaneseTitle,
+            category: current.category,
+            coverURL: current.coverURL,
+            uploader: current.uploader,
+            metadata: current.metadata,
+            ratingLabel: current.ratingLabel,
+            ratingCount: current.ratingCount,
+            tags: current.tags,
+            pageLinks: pageLinks,
+            thumbnailPageURLs: current.thumbnailPageURLs,
+            pageCount: current.pageCount,
+            relatedGalleries: current.relatedGalleries
+        )
     }
 
     /// Combines thumbnail page links while keeping the first page's gallery metadata.
@@ -1243,7 +1276,8 @@ final class GalleryDownloadManager: ObservableObject {
             tags: current.tags,
             pageLinks: pageLinks,
             thumbnailPageURLs: thumbnailPageURLs,
-            pageCount: current.pageCount ?? incoming.pageCount
+            pageCount: current.pageCount ?? incoming.pageCount,
+            relatedGalleries: current.relatedGalleries.isEmpty ? incoming.relatedGalleries : current.relatedGalleries
         )
     }
 

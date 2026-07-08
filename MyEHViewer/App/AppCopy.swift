@@ -90,6 +90,7 @@ enum AppCopy {
     static let galleryLoadingMorePages = "正在加载更多页面"
     static let galleryLoadAllPages = "加载全部页面"
     static let galleryLoadingAllPages = "正在加载全部页面"
+    static let galleryRelatedTitle = "关联图库"
     static let galleryOpenInBrowser = "网页"
     static let readerLoadingTitle = "正在加载图片"
     static let readerBack = "返回"

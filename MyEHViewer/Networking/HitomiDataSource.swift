@@ -10,6 +10,7 @@ private struct HitomiGalleryInfo: Decodable {
     let languageLocalName: String?
     let date: String?
     let galleryURL: String?
+    let related: [Int]?
     let files: [HitomiFile]
     let artists: [HitomiNamedItem]?
     let groups: [HitomiNamedItem]?
@@ -26,6 +27,7 @@ private struct HitomiGalleryInfo: Decodable {
         case languageLocalName = "language_localname"
         case date
         case galleryURL = "galleryurl"
+        case related
         case files
         case artists
         case groups
@@ -81,6 +83,7 @@ final class HitomiDataSource {
     private let imageContextURL = URL(string: "https://ltn.gold-usergeneratedcontent.net/gg.js")!
     private let maxSearchNodeSize = 464
     private let resultsPerPage = 25
+    private let previewPageBatchSize = 40
     private var galleriesIndexVersion: String?
     private var imageContext: HitomiImageContext?
 
@@ -119,6 +122,12 @@ final class HitomiDataSource {
     func galleryDetail(from pageURL: URL) async throws -> EHGalleryDetail {
         let info = try await galleryInfo(from: pageURL)
         return try await detail(from: info)
+    }
+
+    /// Loads one batch of Hitomi preview page links from gallery metadata.
+    func galleryPageLinks(from pageURL: URL, startPage: Int, limit: Int = 40) async throws -> [EHGalleryPageLink] {
+        let info = try await galleryInfo(from: pageURL)
+        return try await pageLinks(from: info, startIndex: max(0, startPage - 1), limit: limit)
     }
 
     /// Builds a reader page directly from Hitomi gallery metadata.
@@ -384,15 +393,7 @@ final class HitomiDataSource {
     private func detail(from info: HitomiGalleryInfo) async throws -> EHGalleryDetail {
         let galleryID = Int(info.id) ?? 0
         let identifier = EHGalleryIdentifier(gid: galleryID, token: "hitomi", site: .hitomi)
-        var pageLinks: [EHGalleryPageLink] = []
-        for (index, file) in info.files.enumerated() {
-            pageLinks.append(EHGalleryPageLink(
-                pageNumber: index + 1,
-                pageURL: hitomiReaderURL(galleryID: galleryID, pageNumber: index + 1),
-                thumbnailURL: try await thumbnailURL(for: file),
-                thumbnailCrop: nil
-            ))
-        }
+        let pageLinks = try await pageLinks(from: info, startIndex: 0, limit: previewPageBatchSize)
 
         return EHGalleryDetail(
             identifier: identifier,
@@ -407,8 +408,38 @@ final class HitomiDataSource {
             tags: tags(from: info),
             pageLinks: pageLinks,
             thumbnailPageURLs: [],
-            pageCount: info.files.count
+            pageCount: info.files.count,
+            relatedGalleries: try await relatedSearchResults(from: info)
         )
+    }
+
+    /// Builds a bounded batch of reader preview links for one Hitomi gallery.
+    private func pageLinks(from info: HitomiGalleryInfo, startIndex: Int, limit: Int) async throws -> [EHGalleryPageLink] {
+        let galleryID = Int(info.id) ?? 0
+        let endIndex = min(info.files.count, startIndex + max(0, limit))
+        guard startIndex < endIndex else { return [] }
+        var links: [EHGalleryPageLink] = []
+        for index in startIndex..<endIndex {
+            let file = info.files[index]
+            links.append(EHGalleryPageLink(
+                pageNumber: index + 1,
+                pageURL: hitomiReaderURL(galleryID: galleryID, pageNumber: index + 1),
+                thumbnailURL: try await thumbnailURL(for: file),
+                thumbnailCrop: nil
+            ))
+        }
+        return links
+    }
+
+    /// Converts Hitomi's related gallery ids into regular search result rows.
+    private func relatedSearchResults(from info: HitomiGalleryInfo) async throws -> [EHSearchResult] {
+        guard let relatedIDs = info.related, !relatedIDs.isEmpty else { return [] }
+        let relatedInfos = try await loadGalleryInfos(for: relatedIDs)
+        var results: [EHSearchResult] = []
+        for relatedInfo in relatedInfos {
+            results.append(try await searchResult(from: relatedInfo))
+        }
+        return results
     }
 
     /// Converts one Hitomi gallery into a shared search row model.
@@ -431,6 +462,17 @@ final class HitomiDataSource {
     /// Builds metadata rows shown on the gallery page.
     private func metadata(from info: HitomiGalleryInfo) -> [EHMetadataItem] {
         var items: [EHMetadataItem] = []
+        let groupTags = info.groups?.compactMap { item -> EHTag? in
+            guard let group = item.group, !group.isEmpty else { return nil }
+            return EHTag(namespace: "group", name: group)
+        } ?? []
+        if !groupTags.isEmpty {
+            items.append(EHMetadataItem(
+                key: "Group",
+                value: groupTags.map(\.name).joined(separator: ", "),
+                searchTags: groupTags
+            ))
+        }
         if let type = info.type {
             items.append(EHMetadataItem(key: "类型", value: type))
         }
@@ -687,11 +729,7 @@ private struct HitomiSearchPlan {
 
     /// Parses the same search operators that Hitomi's result page recognizes.
     init(query: String) {
-        let terms = query
-            .lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(whereSeparator: \.isWhitespace)
-            .map { $0.replacingOccurrences(of: "_", with: " ") }
+        let terms = Self.tokenizedTerms(from: query)
 
         var groupedOrTerms: [[String]] = [[]]
         for (index, rawTerm) in terms.enumerated() {
@@ -729,6 +767,38 @@ private struct HitomiSearchPlan {
         if state.orderKey == nil {
             state.orderKey = state.orderBy == .popular ? .year : .added
         }
+    }
+
+    /// Splits a query while preserving whitespace inside quoted tag values.
+    private static func tokenizedTerms(from query: String) -> [String] {
+        var terms: [String] = []
+        var current = ""
+        var isInsideQuotes = false
+
+        for character in query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+            if character == "\"" {
+                isInsideQuotes.toggle()
+                continue
+            }
+
+            if character.isWhitespace && !isInsideQuotes {
+                appendTerm(current, to: &terms)
+                current = ""
+            } else {
+                current.append(character)
+            }
+        }
+        appendTerm(current, to: &terms)
+        return terms
+    }
+
+    /// Normalizes and appends one parsed query term when it is not empty.
+    private static func appendTerm(_ rawTerm: String, to terms: inout [String]) {
+        let term = rawTerm
+            .replacingOccurrences(of: "_", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return }
+        terms.append(term)
     }
 
     /// Applies one Hitomi sort operator when the token is a recognized operator.

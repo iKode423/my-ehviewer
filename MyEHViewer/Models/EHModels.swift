@@ -243,8 +243,16 @@ struct EHTag: Hashable, Codable, Identifiable {
 struct EHMetadataItem: Hashable, Codable, Identifiable {
     let key: String
     let value: String
+    let searchTags: [EHTag]
 
     var id: String { "\(key)=\(value)" }
+
+    /// Creates a metadata row with optional search links for structured values.
+    init(key: String, value: String, searchTags: [EHTag] = []) {
+        self.key = key
+        self.value = value
+        self.searchTags = searchTags
+    }
 }
 
 /// Represents one gallery result on the search page.
@@ -302,8 +310,42 @@ struct EHGalleryDetail: Hashable, Codable, Identifiable {
     let pageLinks: [EHGalleryPageLink]
     let thumbnailPageURLs: [URL]
     let pageCount: Int?
+    let relatedGalleries: [EHSearchResult]
 
     var id: String { identifier.id }
+
+    /// Creates a gallery detail with optional related gallery results.
+    init(
+        identifier: EHGalleryIdentifier,
+        title: String,
+        japaneseTitle: String?,
+        category: String,
+        coverURL: URL?,
+        uploader: String?,
+        metadata: [EHMetadataItem],
+        ratingLabel: String?,
+        ratingCount: String?,
+        tags: [EHTag],
+        pageLinks: [EHGalleryPageLink],
+        thumbnailPageURLs: [URL],
+        pageCount: Int?,
+        relatedGalleries: [EHSearchResult] = []
+    ) {
+        self.identifier = identifier
+        self.title = title
+        self.japaneseTitle = japaneseTitle
+        self.category = category
+        self.coverURL = coverURL
+        self.uploader = uploader
+        self.metadata = metadata
+        self.ratingLabel = ratingLabel
+        self.ratingCount = ratingCount
+        self.tags = tags
+        self.pageLinks = pageLinks
+        self.thumbnailPageURLs = thumbnailPageURLs
+        self.pageCount = pageCount
+        self.relatedGalleries = relatedGalleries
+    }
 }
 
 /// Represents one online favorite category parsed from the site popup.

@@ -51,6 +51,7 @@ struct GalleryDetailView: View {
                     metadataSection(for: detail)
                     tagsSection(for: detail)
                     pageLinksSection(for: detail)
+                    relatedGalleriesSection(for: detail)
                 }
             }
             .padding()
@@ -160,8 +161,7 @@ struct GalleryDetailView: View {
                         Text(item.key)
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 16)
-                        Text(item.value)
-                            .multilineTextAlignment(.trailing)
+                        metadataValue(for: item, site: detail.identifier.site)
                     }
                     .font(.subheadline)
                 }
@@ -171,18 +171,37 @@ struct GalleryDetailView: View {
         .font(.headline)
     }
 
+    /// Shows metadata text or direct search links for structured values.
+    @ViewBuilder
+    private func metadataValue(for item: EHMetadataItem, site: ContentSite) -> some View {
+        if item.searchTags.isEmpty {
+            Text(item.value)
+                .multilineTextAlignment(.trailing)
+        } else {
+            VStack(alignment: .trailing, spacing: 6) {
+                ForEach(item.searchTags) { tag in
+                    NavigationLink {
+                        searchView(for: tag, site: site)
+                    } label: {
+                        Label(tag.name, systemImage: "magnifyingglass")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                }
+            }
+            .frame(maxWidth: 220, alignment: .trailing)
+        }
+    }
+
     /// Shows a wrapping list of parsed gallery tags.
     private func tagsSection(for detail: EHGalleryDetail) -> some View {
         DisclosureGroup(AppCopy.galleryTagsTitle, isExpanded: $showsTags) {
             FlowLayout(spacing: 8) {
                 ForEach(detail.tags) { tag in
                     NavigationLink {
-                        SearchView(
-                            viewModel: SearchViewModel(initialQuery: tag.searchQuery),
-                            embedsInNavigationStack: false,
-                            searchesOnAppear: true
-                        )
-                        .toolbar(.hidden, for: .tabBar)
+                        searchView(for: tag, site: detail.identifier.site)
                     } label: {
                         Label {
                             Text(tag.displayName)
@@ -204,6 +223,17 @@ struct GalleryDetailView: View {
             .padding(.top, 8)
         }
         .font(.headline)
+    }
+
+    /// Builds a search screen pinned to the gallery's source site.
+    private func searchView(for tag: EHTag, site: ContentSite) -> some View {
+        SearchView(
+            viewModel: SearchViewModel(initialQuery: tag.searchQuery, initialSite: site),
+            embedsInNavigationStack: false,
+            searchesOnAppear: true,
+            followsAppContentSite: false
+        )
+        .toolbar(.hidden, for: .tabBar)
     }
 
     /// Shows reader page links parsed from the thumbnail grid.
@@ -273,6 +303,35 @@ struct GalleryDetailView: View {
                     .buttonStyle(.bordered)
                 }
             }
+        }
+    }
+
+    /// Shows Hitomi-related galleries under the preview grid.
+    @ViewBuilder
+    private func relatedGalleriesSection(for detail: EHGalleryDetail) -> some View {
+        if !detail.relatedGalleries.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(AppCopy.galleryRelatedTitle)
+                    .font(.headline)
+                    .padding(.bottom, 4)
+
+                ForEach(detail.relatedGalleries) { result in
+                    NavigationLink {
+                        GalleryDetailView(result: result)
+                    } label: {
+                        SearchResultRow(result: result)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+
+                    if result.id != detail.relatedGalleries.last?.id {
+                        Divider()
+                            .padding(.leading, 84)
+                    }
+                }
+            }
+            .padding(.top, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

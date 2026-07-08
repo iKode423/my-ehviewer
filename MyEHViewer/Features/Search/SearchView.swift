@@ -8,6 +8,7 @@ struct SearchView: View {
     private let searchesOnAppear: Bool
     private let chromeMode: SearchChromeMode
     private let navigationTitle: String?
+    private let followsAppContentSite: Bool
     @State private var pageJumpText = ""
 
     /// Creates a search view with an injectable view model for previews and tests.
@@ -16,13 +17,15 @@ struct SearchView: View {
         embedsInNavigationStack: Bool = true,
         searchesOnAppear: Bool = false,
         chromeMode: SearchChromeMode = .full,
-        navigationTitle: String? = AppCopy.searchTitle
+        navigationTitle: String? = AppCopy.searchTitle,
+        followsAppContentSite: Bool = true
     ) {
         _viewModel = StateObject(wrappedValue: viewModel)
         self.embedsInNavigationStack = embedsInNavigationStack
         self.searchesOnAppear = searchesOnAppear
         self.chromeMode = chromeMode
         self.navigationTitle = navigationTitle
+        self.followsAppContentSite = followsAppContentSite
     }
 
     var body: some View {
@@ -58,15 +61,20 @@ struct SearchView: View {
         .refreshable {
             await viewModel.refresh()
         }
+        .overlay {
+            if viewModel.isLoading {
+                SearchLoadingOverlay()
+            }
+        }
         .task {
-            viewModel.setSite(currentSite)
+            syncContentSiteIfNeeded()
             if searchesOnAppear {
                 await viewModel.searchIfNeeded()
                 syncPageJumpText()
             }
         }
         .onChange(of: contentSiteRaw) { _, _ in
-            viewModel.setSite(currentSite)
+            syncContentSiteIfNeeded()
             syncPageJumpText()
         }
         .onChange(of: viewModel.currentPageNumber) { _, _ in
@@ -495,6 +503,12 @@ struct SearchView: View {
         pageJumpText = String(viewModel.currentPageNumber)
     }
 
+    /// Applies the global site selection when this screen follows app settings.
+    private func syncContentSiteIfNeeded() {
+        guard followsAppContentSite else { return }
+        viewModel.setSite(currentSite)
+    }
+
     /// Returns the positive page number entered by the user.
     private var jumpPageNumber: Int? {
         let trimmedText = pageJumpText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -525,6 +539,26 @@ struct SearchView: View {
 enum SearchChromeMode {
     case full
     case keywordOnly
+}
+
+/// Presents a modal loading hint over the search screen.
+private struct SearchLoadingOverlay: View {
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.16)
+                .ignoresSafeArea()
+
+            ProgressView(AppCopy.searchLoadingTitle)
+                .font(.headline)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 18)
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .shadow(radius: 12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+    }
 }
 
 #Preview {

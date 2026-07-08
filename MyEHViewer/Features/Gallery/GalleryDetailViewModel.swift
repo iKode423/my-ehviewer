@@ -25,7 +25,10 @@ final class GalleryDetailViewModel: ObservableObject {
     private var loadedThumbnailPageURLStrings: Set<String> = []
 
     var canLoadMorePageLinks: Bool {
-        !remainingThumbnailPageURLs.isEmpty
+        if let detail, detail.identifier.site == .hitomi {
+            return detail.pageLinks.count < (detail.pageCount ?? detail.pageLinks.count)
+        }
+        return !remainingThumbnailPageURLs.isEmpty
     }
 
     /// Creates a view model for one gallery URL.
@@ -77,8 +80,7 @@ final class GalleryDetailViewModel: ObservableObject {
         guard
             !isLoadingMorePageLinks,
             !isLoadingAllPageLinks,
-            let nextURL = remainingThumbnailPageURLs.first,
-            detail != nil
+            canLoadMorePageLinks
         else {
             return
         }
@@ -88,7 +90,11 @@ final class GalleryDetailViewModel: ObservableObject {
         defer { isLoadingMorePageLinks = false }
 
         do {
-            try await loadThumbnailPage(nextURL)
+            if detail?.identifier.site == .hitomi {
+                _ = try await loadNextHitomiPageBatch()
+            } else if let nextURL = remainingThumbnailPageURLs.first {
+                try await loadThumbnailPage(nextURL)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -105,8 +111,15 @@ final class GalleryDetailViewModel: ObservableObject {
         defer { isLoadingAllPageLinks = false }
 
         do {
-            while let nextURL = remainingThumbnailPageURLs.first {
-                try await loadThumbnailPage(nextURL)
+            while canLoadMorePageLinks {
+                if detail?.identifier.site == .hitomi {
+                    let didAppendLinks = try await loadNextHitomiPageBatch()
+                    guard didAppendLinks else { break }
+                } else if let nextURL = remainingThumbnailPageURLs.first {
+                    try await loadThumbnailPage(nextURL)
+                } else {
+                    break
+                }
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -200,6 +213,41 @@ final class GalleryDetailViewModel: ObservableObject {
         detail = mergedDetail(currentDetail, with: incomingDetail)
     }
 
+    /// Loads the next Hitomi preview batch directly from gallery metadata.
+    @discardableResult
+    private func loadNextHitomiPageBatch() async throws -> Bool {
+        guard let currentDetail = detail else { return false }
+        let nextPageNumber = currentDetail.pageLinks.count + 1
+        let incomingPageLinks = try await hitomiDataSource.galleryPageLinks(from: pageURL, startPage: nextPageNumber)
+        guard !incomingPageLinks.isEmpty else { return false }
+        detail = mergedDetail(currentDetail, appending: incomingPageLinks)
+        return true
+    }
+
+    /// Combines reader links while preserving the existing Hitomi gallery metadata.
+    private func mergedDetail(_ current: EHGalleryDetail, appending incomingPageLinks: [EHGalleryPageLink]) -> EHGalleryDetail {
+        let pageLinks = Dictionary(grouping: current.pageLinks + incomingPageLinks, by: \.pageNumber)
+            .compactMap { $0.value.first }
+            .sorted { $0.pageNumber < $1.pageNumber }
+
+        return EHGalleryDetail(
+            identifier: current.identifier,
+            title: current.title,
+            japaneseTitle: current.japaneseTitle,
+            category: current.category,
+            coverURL: current.coverURL,
+            uploader: current.uploader,
+            metadata: current.metadata,
+            ratingLabel: current.ratingLabel,
+            ratingCount: current.ratingCount,
+            tags: current.tags,
+            pageLinks: pageLinks,
+            thumbnailPageURLs: current.thumbnailPageURLs,
+            pageCount: current.pageCount,
+            relatedGalleries: current.relatedGalleries
+        )
+    }
+
     /// Combines reader links and pagination URLs while preserving primary metadata.
     private func mergedDetail(_ current: EHGalleryDetail, with incoming: EHGalleryDetail) -> EHGalleryDetail {
         let pageLinks = Dictionary(grouping: current.pageLinks + incoming.pageLinks, by: \.pageNumber)
@@ -221,7 +269,8 @@ final class GalleryDetailViewModel: ObservableObject {
             tags: current.tags,
             pageLinks: pageLinks,
             thumbnailPageURLs: thumbnailPageURLs,
-            pageCount: current.pageCount ?? incoming.pageCount
+            pageCount: current.pageCount ?? incoming.pageCount,
+            relatedGalleries: current.relatedGalleries.isEmpty ? incoming.relatedGalleries : current.relatedGalleries
         )
     }
 }
