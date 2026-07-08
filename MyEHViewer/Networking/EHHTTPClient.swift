@@ -76,6 +76,40 @@ protocol EHFormHTTPClient {
     func postForm(_ url: URL, fields: [String: String]) async throws -> EHHTTPResponse
 }
 
+/// Maps legacy Hitomi image URLs to the current CDN hosts used by the web app.
+enum HitomiImageURLMigration {
+    /// Returns the current CDN URL for legacy Hitomi thumbnail hosts.
+    static func currentURL(for url: URL) -> URL {
+        guard isLegacyThumbnailURL(url),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else {
+            return url
+        }
+
+        components.scheme = "https"
+        components.host = "tn.gold-usergeneratedcontent.net"
+        return components.url ?? url
+    }
+
+    /// Returns URLs that should share one cached image file.
+    static func equivalentURLs(for url: URL) -> [URL] {
+        let currentURL = currentURL(for: url)
+        return currentURL == url ? [url] : [url, currentURL]
+    }
+
+    /// Detects old thumbnail hosts that can fail TLS through some proxy routes.
+    private static func isLegacyThumbnailURL(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased(),
+              host == "hitomi.la" || host.hasSuffix(".hitomi.la")
+        else {
+            return false
+        }
+
+        let pathPrefix = url.path.split(separator: "/", omittingEmptySubsequences: true).first
+        return pathPrefix == "webpsmalltn" || pathPrefix == "avifsmalltn"
+    }
+}
+
 /// Default URLSession-backed HTTP client used by the app.
 @MainActor
 final class URLSessionEHHTTPClient: EHDataHTTPClient, EHFormHTTPClient {
@@ -117,12 +151,13 @@ final class URLSessionEHHTTPClient: EHDataHTTPClient, EHFormHTTPClient {
 
     /// Downloads binary data with a browser-like referer for image hosts.
     func data(_ url: URL, referer: URL?) async throws -> EHDataResponse {
+        let requestURL = HitomiImageURLMigration.currentURL(for: url)
         let (data, httpResponse) = try await responseData(for: makeRequest(
-            url,
+            requestURL,
             accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
             referer: referer ?? EHConstants.baseURL
         ))
-        return EHDataResponse(url: httpResponse.url ?? url, statusCode: httpResponse.statusCode, data: data)
+        return EHDataResponse(url: httpResponse.url ?? requestURL, statusCode: httpResponse.statusCode, data: data)
     }
 
     /// Sends a URL-encoded POST request using the same browser-like headers.
@@ -336,16 +371,18 @@ final class ImageCacheStore: ObservableObject {
 
     /// Returns the local cache file URL for a remote image URL when bytes exist.
     func cachedDataFileURL(for url: URL) -> URL? {
-        if let cacheKey = index.aliases[url.absoluteString] {
-            let fileURL = fileURL(forKey: cacheKey)
-            if fileManager.fileExists(atPath: fileURL.path) {
-                return fileURL
+        for candidateURL in HitomiImageURLMigration.equivalentURLs(for: url) {
+            if let cacheKey = index.aliases[candidateURL.absoluteString] {
+                let fileURL = fileURL(forKey: cacheKey)
+                if fileManager.fileExists(atPath: fileURL.path) {
+                    return fileURL
+                }
             }
-        }
 
-        let legacyURL = legacyFileURL(for: url)
-        if fileManager.fileExists(atPath: legacyURL.path) {
-            return legacyURL
+            let legacyURL = legacyFileURL(for: candidateURL)
+            if fileManager.fileExists(atPath: legacyURL.path) {
+                return legacyURL
+            }
         }
 
         return nil
@@ -430,8 +467,7 @@ final class ImageCacheStore: ObservableObject {
 
             contentDigestByCacheKey[cacheKey] = dataDigest
             cacheKeyByContentDigest[dataDigest] = cacheKey
-            index.aliases[requestedURL.absoluteString] = cacheKey
-            index.aliases[responseURL.absoluteString] = cacheKey
+            storeAliases(for: cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL), cacheKey: cacheKey)
             upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: storedByteCount)
             saveIndex()
             refreshAfterSaving(cacheKey: cacheKey, byteCount: storedByteCount, context: context)
@@ -459,8 +495,7 @@ final class ImageCacheStore: ObservableObject {
 
             contentDigestByCacheKey[cacheKey] = dataDigest
             cacheKeyByContentDigest[dataDigest] = cacheKey
-            index.aliases[requestedURL.absoluteString] = cacheKey
-            index.aliases[responseURL.absoluteString] = cacheKey
+            storeAliases(for: cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL), cacheKey: cacheKey)
             upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: storedByteCount)
             saveIndex()
             refreshAfterSaving(cacheKey: cacheKey, byteCount: storedByteCount, context: context)
@@ -478,8 +513,7 @@ final class ImageCacheStore: ObservableObject {
         }
 
         let cacheKey = fileURL.lastPathComponent
-        index.aliases[requestedURL.absoluteString] = cacheKey
-        index.aliases[responseURL.absoluteString] = cacheKey
+        storeAliases(for: cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL), cacheKey: cacheKey)
         upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: byteCount)
         saveIndex()
         refreshAfterSaving(cacheKey: cacheKey, byteCount: byteCount, context: context)
@@ -639,8 +673,7 @@ final class ImageCacheStore: ObservableObject {
             updatedAt: Date(),
             isDownloadUnavailable: metadata?.isDownloadUnavailable ?? false
         )
-        index.aliases[requestedURL.absoluteString] = cacheKey
-        index.aliases[responseURL.absoluteString] = cacheKey
+        storeAliases(for: cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL), cacheKey: cacheKey)
     }
 
     /// Builds gallery summaries from indexed cached page records.
@@ -711,16 +744,36 @@ final class ImageCacheStore: ObservableObject {
 
     /// Picks a storage key while reusing legacy files and existing aliases.
     private func cacheKeyForSave(requestedURL: URL, responseURL: URL) -> String {
-        if let key = index.aliases[responseURL.absoluteString] ?? index.aliases[requestedURL.absoluteString] {
-            return key
+        let aliasURLs = cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL)
+        for aliasURL in aliasURLs {
+            if let key = index.aliases[aliasURL.absoluteString] {
+                return key
+            }
         }
-        if fileManager.fileExists(atPath: legacyFileURL(for: responseURL).path) {
-            return cacheKey(for: responseURL)
+        for aliasURL in aliasURLs {
+            if fileManager.fileExists(atPath: legacyFileURL(for: aliasURL).path) {
+                return cacheKey(for: aliasURL)
+            }
         }
-        if fileManager.fileExists(atPath: legacyFileURL(for: requestedURL).path) {
-            return cacheKey(for: requestedURL)
+        return cacheKey(for: HitomiImageURLMigration.currentURL(for: responseURL))
+    }
+
+    /// Builds cache aliases for requested, redirected, and migrated image URLs.
+    private func cacheAliasURLs(requestedURL: URL, responseURL: URL) -> [URL] {
+        var urls: [URL] = []
+        for url in [requestedURL, responseURL] {
+            for equivalentURL in HitomiImageURLMigration.equivalentURLs(for: url) where !urls.contains(equivalentURL) {
+                urls.append(equivalentURL)
+            }
         }
-        return cacheKey(for: responseURL)
+        return urls
+    }
+
+    /// Stores multiple remote URL aliases for one cache file key.
+    private func storeAliases(for urls: [URL], cacheKey: String) {
+        for url in urls {
+            index.aliases[url.absoluteString] = cacheKey
+        }
     }
 
     /// Reuses an existing cache file when another URL has already stored identical bytes.

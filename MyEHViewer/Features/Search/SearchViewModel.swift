@@ -165,42 +165,53 @@ final class SearchViewModel: ObservableObject {
     }
 
     /// Loads the next cursor page when the site exposes one.
-    func loadNextPage() async {
+    @discardableResult
+    func loadNextPage() async -> Bool {
         if site == .hitomi {
             let pageNumber = currentPageNumber + 1
             if await loadHitomiPage(number: pageNumber) {
                 currentPageNumber = pageNumber
+                return true
             }
-            return
+            return false
         }
-        guard let nextPageURL else { return }
+        guard let nextPageURL else { return false }
         if await load(nextPageURL) {
             currentPageNumber += 1
+            return true
         }
+        return false
     }
 
     /// Loads the previous cursor page when the site exposes one.
-    func loadPreviousPage() async {
+    @discardableResult
+    func loadPreviousPage() async -> Bool {
         if site == .hitomi {
             let pageNumber = max(1, currentPageNumber - 1)
-            guard pageNumber != currentPageNumber else { return }
+            guard pageNumber != currentPageNumber else { return false }
             if await loadHitomiPage(number: pageNumber) {
                 currentPageNumber = pageNumber
+                return true
             }
-            return
+            return false
         }
-        guard let previousPageURL else { return }
+        guard let previousPageURL else { return false }
         if await load(previousPageURL) {
             currentPageNumber = max(1, currentPageNumber - 1)
+            return true
         }
+        return false
     }
 
     /// Loads a numbered result page using the current search controls.
-    func loadPage(number: Int) async {
-        guard number > 0 else { return }
+    @discardableResult
+    func loadPage(number: Int) async -> Bool {
+        guard number > 0 else { return false }
         if await loadSearchPage(number: number) {
             currentPageNumber = number
+            return true
         }
+        return false
     }
 
     /// Routes the current search to the active site's page loader.

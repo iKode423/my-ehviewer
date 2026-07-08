@@ -1,3 +1,4 @@
+import Foundation
 import ImageIO
 import Photos
 import SwiftUI
@@ -837,6 +838,7 @@ final class CachedRemoteImageLoader: ObservableObject {
     private let cacheStore: ImageCacheStore
     private let client: URLSessionEHHTTPClient
     private var lastLoadedKey: String?
+    private let retryDelaysNanoseconds: [UInt64] = [350_000_000, 900_000_000]
 
     /// Creates an image loader with injectable cache and network dependencies.
     init(
@@ -862,15 +864,18 @@ final class CachedRemoteImageLoader: ObservableObject {
             return
         }
 
-        if let cachedFileURL = cacheStore.cachedDataFileURL(for: url),
-           let cachedImage = await Self.image(at: cachedFileURL, crop: crop, animationMode: animationMode, maxPixelSize: decodeMaxPixelSize) {
-            if context != nil,
-               let byteCount = Self.fileSize(at: cachedFileURL) {
-                cacheStore.recordExistingData(for: url, responseURL: url, byteCount: byteCount, context: context)
+        for cacheURL in HitomiImageURLMigration.equivalentURLs(for: url) {
+            if let cachedFileURL = cacheStore.cachedDataFileURL(for: cacheURL),
+               let cachedImage = await Self.image(at: cachedFileURL, crop: crop, animationMode: animationMode, maxPixelSize: decodeMaxPixelSize) {
+                if context != nil,
+                   let byteCount = Self.fileSize(at: cachedFileURL) {
+                    let responseURL = HitomiImageURLMigration.currentURL(for: cacheURL)
+                    cacheStore.recordExistingData(for: url, responseURL: responseURL, byteCount: byteCount, context: context)
+                }
+                state = .success(cachedImage)
+                lastLoadedKey = url.absoluteString
+                return
             }
-            state = .success(cachedImage)
-            lastLoadedKey = url.absoluteString
-            return
         }
 
         guard lastLoadedKey != url.absoluteString || !state.isLoading else { return }
@@ -878,7 +883,7 @@ final class CachedRemoteImageLoader: ObservableObject {
         state = .loading
 
         do {
-            let response = try await client.data(url, referer: referer)
+            let response = try await loadRemoteData(from: url, referer: referer)
             await cacheStore.saveAsync(response.data, for: url, responseURL: response.url, context: context)
             guard let image = await Self.image(from: response.data, crop: crop, animationMode: animationMode, maxPixelSize: decodeMaxPixelSize) else {
                 state = .failure
@@ -887,6 +892,46 @@ final class CachedRemoteImageLoader: ObservableObject {
             state = .success(image)
         } catch {
             state = .failure
+        }
+    }
+
+    /// Downloads image bytes with short retries for transient URLSession failures.
+    private func loadRemoteData(from url: URL, referer: URL?) async throws -> EHDataResponse {
+        var lastError: Error?
+        for attempt in 0...retryDelaysNanoseconds.count {
+            do {
+                try Task.checkCancellation()
+                return try await client.data(url, referer: referer)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+                guard Self.canRetryImageLoad(after: error), attempt < retryDelaysNanoseconds.count else { break }
+                try await Task.sleep(nanoseconds: retryDelaysNanoseconds[attempt])
+            }
+        }
+        throw lastError ?? EHNetworkError.invalidResponse
+    }
+
+    /// Returns true for network errors that often recover after a short delay.
+    nonisolated private static func canRetryImageLoad(after error: Error) -> Bool {
+        guard let urlError = error as? URLError else {
+            let nsError = error as NSError
+            return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorSecureConnectionFailed
+        }
+
+        switch urlError.code {
+        case .timedOut,
+             .cannotFindHost,
+             .cannotConnectToHost,
+             .networkConnectionLost,
+             .dnsLookupFailed,
+             .secureConnectionFailed,
+             .notConnectedToInternet,
+             .cannotLoadFromNetwork:
+            return true
+        default:
+            return false
         }
     }
 

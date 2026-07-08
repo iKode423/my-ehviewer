@@ -416,6 +416,29 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertNotNil(preview)
     }
 
+    /// Confirms legacy Hitomi thumbnail URLs move to the current CDN host.
+    func testHitomiLegacyThumbnailURLMigratesToCurrentHost() {
+        let legacyURL = URL(string: "https://bb.hitomi.la/webpsmalltn/8/9a/326d9.webp")!
+        let currentURL = HitomiImageURLMigration.currentURL(for: legacyURL)
+
+        XCTAssertEqual(currentURL.absoluteString, "https://tn.gold-usergeneratedcontent.net/webpsmalltn/8/9a/326d9.webp")
+    }
+
+    /// Confirms old and current Hitomi thumbnail URLs share one image cache entry.
+    @MainActor
+    func testImageCacheStoreSharesHitomiMigratedThumbnailAliases() {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let store = ImageCacheStore(directoryURL: directoryURL)
+        let legacyURL = URL(string: "https://bb.hitomi.la/webpsmalltn/8/9a/326d9.webp")!
+        let currentURL = URL(string: "https://tn.gold-usergeneratedcontent.net/webpsmalltn/8/9a/326d9.webp")!
+        let imageData = Data([0x01, 0x02, 0x03])
+
+        store.save(imageData, for: currentURL)
+
+        XCTAssertEqual(store.data(for: legacyURL), imageData)
+        XCTAssertTrue(store.containsData(for: legacyURL))
+    }
+
     /// Confirms opening a reader route keeps the current tab and presents a route.
     @MainActor
     func testAppNavigationStoreOpensReaderRouteWithoutChangingTab() {

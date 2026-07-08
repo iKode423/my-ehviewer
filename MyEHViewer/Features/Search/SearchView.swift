@@ -10,6 +10,7 @@ struct SearchView: View {
     private let navigationTitle: String?
     private let followsAppContentSite: Bool
     @State private var pageJumpText = ""
+    @State private var scrollToTopRequest = 0
 
     /// Creates a search view with an injectable view model for previews and tests.
     init(
@@ -50,35 +51,46 @@ struct SearchView: View {
 
     /// Composes the reusable search screen content.
     private var searchContent: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                searchControls
-                content
-                    .padding(.top, viewModel.results.isEmpty ? 16 : 8)
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    Color.clear
+                        .frame(height: 0)
+                        .id(SearchScrollTarget.top)
+
+                    searchControls
+                    content
+                        .padding(.top, viewModel.results.isEmpty ? 16 : 8)
+                }
+                .padding(.bottom, 16)
             }
-            .padding(.bottom, 16)
-        }
-        .refreshable {
-            await viewModel.refresh()
-        }
-        .overlay {
-            if viewModel.isLoading {
-                SearchLoadingOverlay()
+            .refreshable {
+                await viewModel.refresh()
             }
-        }
-        .task {
-            syncContentSiteIfNeeded()
-            if searchesOnAppear {
-                await viewModel.searchIfNeeded()
+            .overlay {
+                if viewModel.isLoading {
+                    SearchLoadingOverlay()
+                }
+            }
+            .task {
+                syncContentSiteIfNeeded()
+                if searchesOnAppear {
+                    await viewModel.searchIfNeeded()
+                    syncPageJumpText()
+                }
+            }
+            .onChange(of: contentSiteRaw) { _, _ in
+                syncContentSiteIfNeeded()
                 syncPageJumpText()
             }
-        }
-        .onChange(of: contentSiteRaw) { _, _ in
-            syncContentSiteIfNeeded()
-            syncPageJumpText()
-        }
-        .onChange(of: viewModel.currentPageNumber) { _, _ in
-            syncPageJumpText()
+            .onChange(of: viewModel.currentPageNumber) { _, _ in
+                syncPageJumpText()
+            }
+            .onChange(of: scrollToTopRequest) { _, _ in
+                withAnimation(.easeOut(duration: 0.18)) {
+                    scrollProxy.scrollTo(SearchScrollTarget.top, anchor: .top)
+                }
+            }
         }
     }
 
@@ -428,8 +440,10 @@ struct SearchView: View {
                     isDisabled: viewModel.previousPageURL == nil || viewModel.isLoading
                 ) {
                     Task {
-                        await viewModel.loadPreviousPage()
-                        syncPageJumpText()
+                        if await viewModel.loadPreviousPage() {
+                            syncPageJumpText()
+                            requestScrollToTop()
+                        }
                     }
                 }
 
@@ -445,8 +459,10 @@ struct SearchView: View {
                     isDisabled: viewModel.nextPageURL == nil || viewModel.isLoading
                 ) {
                     Task {
-                        await viewModel.loadNextPage()
-                        syncPageJumpText()
+                        if await viewModel.loadNextPage() {
+                            syncPageJumpText()
+                            requestScrollToTop()
+                        }
                     }
                 }
             }
@@ -542,8 +558,10 @@ struct SearchView: View {
     /// Parses and loads the page number entered in the pagination controls.
     private func loadJumpPage() async {
         guard let pageNumber = jumpPageNumber else { return }
-        await viewModel.loadPage(number: pageNumber)
-        syncPageJumpText()
+        if await viewModel.loadPage(number: pageNumber) {
+            syncPageJumpText()
+            requestScrollToTop()
+        }
     }
 
     /// Runs a new search and updates the visible page number field.
@@ -555,6 +573,11 @@ struct SearchView: View {
     /// Keeps the jump field aligned with the last successfully loaded page.
     private func syncPageJumpText() {
         pageJumpText = String(viewModel.currentPageNumber)
+    }
+
+    /// Requests the surrounding scroll view to reveal the first search control.
+    private func requestScrollToTop() {
+        scrollToTopRequest += 1
     }
 
     /// Applies the global site selection when this screen follows app settings.
@@ -593,6 +616,11 @@ struct SearchView: View {
 enum SearchChromeMode {
     case full
     case keywordOnly
+}
+
+/// Identifies stable scroll destinations inside the search screen.
+private enum SearchScrollTarget: Hashable {
+    case top
 }
 
 /// Presents a modal loading hint over the search screen.
