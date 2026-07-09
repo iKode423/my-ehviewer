@@ -127,6 +127,19 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Moves an image favorite to the first position in the custom order.
+    func moveImageFavoriteToFront(_ favorite: FavoriteImageRecord) {
+        guard
+            let index = imageFavorites.firstIndex(where: { $0.id == favorite.id }),
+            index > 0
+        else {
+            return
+        }
+        let movedFavorite = imageFavorites.remove(at: index)
+        imageFavorites.insert(movedFavorite, at: 0)
+        save()
+    }
+
     /// Removes all local library state.
     func removeAll() {
         records = []

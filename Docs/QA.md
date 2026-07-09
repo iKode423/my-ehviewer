@@ -355,3 +355,13 @@ xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'p
 ```
 
 结果：通过。E-Hentai 跳页改为沿当前搜索结果的上一页/下一页链接逐页定位，避免把页码误写入 `jump`；Hitomi 的 character 信息统一进入 `character` 标签并参与统计分析，搜索首页在只有 Hitomi 单一来源时隐藏“首页”按钮；缓存管理图库增加可直接编辑的备注，备注会在列表、详情和缓存子页中优先显示并保留原标题；阅读页增加当前图片收藏按钮，书架页新增收藏图片分区并支持排序管理。
+
+### 缓存备注编辑与图片收藏菜单回归
+
+```sh
+git diff --check
+xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:MyEHViewerTests/LibraryStoreTests -derivedDataPath /tmp/MyEHViewerNoteMenuDerived
+xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath /tmp/MyEHViewerNoteMenuDerived
+```
+
+结果：通过。缓存管理图库备注默认折叠显示，需要编辑时再展开输入框，并改为提交或失焦时保存，避免逐字刷新缓存索引造成卡顿；图片收藏分区文案调整为“图片收藏”；图片收藏卡片的排序操作收进菜单，并新增“移动到最前”；图片收藏排序持久化测试覆盖普通移动和移动到最前，完整回归测试通过。

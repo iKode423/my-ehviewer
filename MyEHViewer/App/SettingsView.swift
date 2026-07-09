@@ -441,6 +441,8 @@ private struct CachedGalleryNoteField: View {
     let summary: CachedGallerySummary
     @StateObject private var imageCacheStore = ImageCacheStore.shared
     @State private var noteText: String
+    @State private var isEditing = false
+    @FocusState private var noteFieldIsFocused: Bool
 
     /// Creates an inline editor for one cached gallery note.
     init(summary: CachedGallerySummary) {
@@ -449,6 +451,52 @@ private struct CachedGalleryNoteField: View {
     }
 
     var body: some View {
+        Group {
+            if isEditing {
+                editor
+            } else {
+                collapsedNote
+            }
+        }
+        .accessibilityLabel(AppCopy.cacheManagementNoteField)
+        .onChange(of: summary.note) { _, note in
+            guard !isEditing else { return }
+            noteText = note ?? ""
+        }
+    }
+
+    private var collapsedNote: some View {
+        Button {
+            noteText = imageCacheStore.note(for: summary.galleryIdentifier) ?? summary.note ?? ""
+            isEditing = true
+            DispatchQueue.main.async {
+                noteFieldIsFocused = true
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "note.text")
+                    .foregroundStyle(.secondary)
+
+                Text(displayedNoteText)
+                    .font(.subheadline)
+                    .foregroundStyle(noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary : Color.accentColor)
+                    .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "pencil")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var editor: some View {
         HStack(spacing: 8) {
             Image(systemName: "note.text")
                 .foregroundStyle(.secondary)
@@ -458,28 +506,54 @@ private struct CachedGalleryNoteField: View {
                 .disableAutocorrection(true)
                 .font(.subheadline)
                 .submitLabel(.done)
+                .focused($noteFieldIsFocused)
                 .onSubmit {
-                    saveNote()
+                    saveNoteAndCollapse()
                 }
+
+            if !noteText.isEmpty {
+                Button {
+                    noteText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button {
+                saveNoteAndCollapse()
+            } label: {
+                Image(systemName: "checkmark.circle.fill")
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(Color.secondary.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .accessibilityLabel(AppCopy.cacheManagementNoteField)
-        .onChange(of: noteText) { _, _ in
-            saveNote()
-        }
-        .onChange(of: summary.note) { _, note in
-            if noteText != (note ?? "") {
-                noteText = note ?? ""
+        .onChange(of: noteFieldIsFocused) { oldValue, newValue in
+            if oldValue && !newValue {
+                saveNoteAndCollapse()
             }
         }
     }
 
-    /// Persists the latest note text to the shared image cache store.
-    private func saveNote() {
-        imageCacheStore.setGalleryNote(noteText, for: summary.galleryIdentifier)
+    private var displayedNoteText: String {
+        let trimmedNote = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedNote.isEmpty ? AppCopy.cacheManagementNotePlaceholder : trimmedNote
+    }
+
+    /// Saves the note once editing finishes to avoid refreshing the cache index on each keystroke.
+    private func saveNoteAndCollapse() {
+        let trimmedNote = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let storedNote = imageCacheStore.note(for: summary.galleryIdentifier) ?? ""
+        if trimmedNote != storedNote {
+            imageCacheStore.setGalleryNote(trimmedNote, for: summary.galleryIdentifier)
+        }
+        noteText = trimmedNote
+        isEditing = false
+        noteFieldIsFocused = false
     }
 }
 

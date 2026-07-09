@@ -82,16 +82,27 @@ final class LibraryStoreTests: XCTestCase {
         let store = LibraryStore(userDefaults: userDefaults, storageKey: "library-image-favorite-test")
         let firstPage = makeImagePage(pageNumber: 1)
         let secondPage = makeImagePage(pageNumber: 2)
+        let thirdPage = makeImagePage(pageNumber: 3)
 
         store.toggleImageFavorite(imagePage: firstPage)
         store.toggleImageFavorite(imagePage: secondPage)
-        store.moveImageFavorite(firstPageFavorite(in: store), direction: -1)
+        store.toggleImageFavorite(imagePage: thirdPage)
+        guard
+            let secondFavorite = store.imageFavorites.first(where: { $0.pageNumber == 2 }),
+            let thirdFavorite = store.imageFavorites.first(where: { $0.pageNumber == 3 })
+        else {
+            XCTFail("Expected image favorites to be stored")
+            return
+        }
+        store.moveImageFavorite(secondFavorite, direction: -1)
+        store.moveImageFavoriteToFront(thirdFavorite)
 
         let restored = LibraryStore(userDefaults: userDefaults, storageKey: "library-image-favorite-test")
 
-        XCTAssertEqual(restored.imageFavorites.map(\.pageNumber), [1, 2])
+        XCTAssertEqual(restored.imageFavorites.map(\.pageNumber), [3, 2, 1])
         XCTAssertTrue(restored.isImageFavorite(firstPage))
         XCTAssertTrue(restored.isImageFavorite(secondPage))
+        XCTAssertTrue(restored.isImageFavorite(thirdPage))
     }
 
     /// Confirms local state can be fully removed from persistence.
@@ -140,11 +151,6 @@ final class LibraryStoreTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
-    }
-
-    /// Returns a stored image favorite for the first test page.
-    private func firstPageFavorite(in store: LibraryStore) -> FavoriteImageRecord {
-        store.imageFavorites.first { $0.pageNumber == 1 }!
     }
 
     /// Creates a neutral reader image page fixture.

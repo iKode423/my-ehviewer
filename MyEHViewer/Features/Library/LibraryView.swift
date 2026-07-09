@@ -424,32 +424,40 @@ private struct FavoriteImageCard: View {
             }
 
             HStack(spacing: 8) {
-                Button {
-                    libraryStore.moveImageFavorite(favorite, direction: -1)
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .frame(width: 28, height: 28)
-                }
-                .disabled(rank == 0)
-                .accessibilityLabel(AppCopy.libraryMoveImageFavoriteUp)
-
-                Button {
-                    libraryStore.moveImageFavorite(favorite, direction: 1)
-                } label: {
-                    Image(systemName: "arrow.down")
-                        .frame(width: 28, height: 28)
-                }
-                .disabled(rank >= totalCount - 1)
-                .accessibilityLabel(AppCopy.libraryMoveImageFavoriteDown)
-
-                Spacer()
-
                 Text("#\(rank + 1)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Menu {
+                    Button {
+                        libraryStore.moveImageFavoriteToFront(favorite)
+                    } label: {
+                        Label(AppCopy.libraryMoveImageFavoriteToFront, systemImage: "arrow.up.to.line")
+                    }
+                    .disabled(rank == 0)
+
+                    Button {
+                        libraryStore.moveImageFavorite(favorite, direction: -1)
+                    } label: {
+                        Label(AppCopy.libraryMoveImageFavoriteUp, systemImage: "arrow.up")
+                    }
+                    .disabled(rank == 0)
+
+                    Button {
+                        libraryStore.moveImageFavorite(favorite, direction: 1)
+                    } label: {
+                        Label(AppCopy.libraryMoveImageFavoriteDown, systemImage: "arrow.down")
+                    }
+                    .disabled(rank >= totalCount - 1)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title3)
+                        .frame(width: 32, height: 28)
+                }
+                .accessibilityLabel(AppCopy.libraryImageFavoriteActions)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
         .padding(8)
         .background(Color.secondary.opacity(0.07))
