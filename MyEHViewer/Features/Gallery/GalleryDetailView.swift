@@ -89,8 +89,7 @@ struct GalleryDetailView: View {
             coverImage(url: detail.coverURL ?? result.thumbnailURL, referer: result.pageURL)
 
             VStack(alignment: .leading, spacing: 10) {
-                Text(detail.title)
-                    .font(.title3.weight(.semibold))
+                galleryTitleLabel(detail.title)
 
                 if let japaneseTitle = detail.japaneseTitle {
                     Text(japaneseTitle)
@@ -135,6 +134,20 @@ struct GalleryDetailView: View {
         .frame(width: 128, height: 176)
         .background(Color.secondary.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    /// Shows the gallery title and offers a long-press copy action.
+    private func galleryTitleLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.title3.weight(.semibold))
+            .textSelection(.enabled)
+            .contextMenu {
+                Button {
+                    UIPasteboard.general.string = title
+                } label: {
+                    Label(AppCopy.commonCopy, systemImage: "doc.on.doc")
+                }
+            }
     }
 
     /// Shows the author/uploader name and offers a long-press copy action.
@@ -238,8 +251,10 @@ struct GalleryDetailView: View {
 
     /// Shows reader page links parsed from the thumbnail grid.
     private func pageLinksSection(for detail: EHGalleryDetail) -> some View {
-        let resumeURL = libraryStore.record(for: detail.identifier)?.lastReadPageURL
+        let libraryRecord = libraryStore.record(for: detail.identifier)
+        let resumeURL = libraryRecord?.lastReadPageURL
         let startURL = resumeURL ?? detail.pageLinks.first?.pageURL
+        let readButtonTitle = galleryReadButtonTitle(resumePage: libraryRecord?.lastReadPage, hasResume: resumeURL != nil)
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -252,7 +267,7 @@ struct GalleryDetailView: View {
                     Button {
                         appNavigationStore.openReader(initialPageURL: startURL, pageLinks: detail.pageLinks, totalPageCount: detail.pageCount)
                     } label: {
-                        Label(resumeURL == nil ? AppCopy.galleryReadFromStart : AppCopy.galleryContinueReading, systemImage: "book")
+                        Label(readButtonTitle, systemImage: "book")
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -339,9 +354,11 @@ struct GalleryDetailView: View {
     private func cachedPageLinksSection(for summary: CachedGallerySummary) -> some View {
         let pageLinks = cachedPageLinks(for: summary)
         let resumeURL = libraryStore.record(for: summary.galleryIdentifier)?.lastReadPageURL
+        let resumePage = libraryStore.record(for: summary.galleryIdentifier)?.lastReadPage
         let cachedPageURLs = Set(pageLinks.map(\.pageURL))
         let cachedResumeURL = resumeURL.flatMap { cachedPageURLs.contains($0) ? $0 : nil }
         let startURL = cachedResumeURL ?? pageLinks.first?.pageURL
+        let readButtonTitle = galleryReadButtonTitle(resumePage: resumePage, hasResume: cachedResumeURL != nil)
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -363,7 +380,7 @@ struct GalleryDetailView: View {
                             totalPageCount: summary.totalPageCount
                         )
                     } label: {
-                        Label(cachedResumeURL == nil ? AppCopy.galleryReadFromStart : AppCopy.galleryContinueReading, systemImage: "book")
+                        Label(readButtonTitle, systemImage: "book")
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -411,6 +428,14 @@ struct GalleryDetailView: View {
             return String(format: AppCopy.galleryPagesTitleFormat, String(pageCount))
         }
         return AppCopy.galleryPagesTitle
+    }
+
+    /// Builds the reader button title with the remembered page when available.
+    private func galleryReadButtonTitle(resumePage: Int?, hasResume: Bool) -> String {
+        if let resumePage {
+            return String(format: AppCopy.galleryContinueReadingPage, String(resumePage))
+        }
+        return hasResume ? AppCopy.galleryContinueReading : AppCopy.galleryReadFromStart
     }
 
     /// Shows cache/download progress for the current gallery.

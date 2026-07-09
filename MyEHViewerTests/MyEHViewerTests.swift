@@ -202,16 +202,16 @@ final class MyEHViewerTests: XCTestCase {
         let groupMetadata = try XCTUnwrap(detail.metadata.first { $0.key == "Group" })
         let nextBatch = try await dataSource.galleryPageLinks(
             from: URL(string: "https://hitomi.la/galleries/\(galleryID).html")!,
-            startPage: 41
+            startPage: 21
         )
 
-        XCTAssertEqual(detail.pageLinks.count, 40)
+        XCTAssertEqual(detail.pageLinks.count, 20)
         XCTAssertEqual(detail.pageCount, 45)
         XCTAssertEqual(groupMetadata.value, "Baby Lop")
         XCTAssertEqual(groupMetadata.searchTags.first?.searchQuery, "group:\"Baby Lop\"")
         XCTAssertEqual(detail.relatedGalleries.map(\.identifier.gid), [relatedID])
         XCTAssertEqual(detail.relatedGalleries.first?.title, "Related Gallery")
-        XCTAssertEqual(nextBatch.map(\.pageNumber), Array(41...45))
+        XCTAssertEqual(nextBatch.map(\.pageNumber), Array(21...40))
     }
 
 

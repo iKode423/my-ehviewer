@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Displays the live search entry point and result list.
 struct SearchView: View {
@@ -122,14 +123,13 @@ struct SearchView: View {
     /// Provides the first visible search control for the application shell.
     private var searchBar: some View {
         HStack(spacing: 10) {
-            TextField(AppCopy.searchPlaceholder, text: $viewModel.query)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .textFieldStyle(.roundedBorder)
-                .submitLabel(.search)
-                .onSubmit {
-                    Task { await performSearch() }
-                }
+            ClearableSearchTextField(
+                title: AppCopy.searchPlaceholder,
+                text: $viewModel.query,
+                submitLabel: .search
+            ) {
+                Task { await performSearch() }
+            }
 
             Button {
                 Task { await performSearch() }
@@ -298,15 +298,19 @@ struct SearchView: View {
             compactFilterToggle(AppCopy.searchRequireTorrent, isOn: $viewModel.requireTorrent)
 
             HStack(spacing: 10) {
-                TextField(AppCopy.searchMinimumPages, text: $viewModel.minimumPagesText)
-                    .keyboardType(.numberPad)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 0, maxWidth: .infinity)
+                ClearableSearchTextField(
+                    title: AppCopy.searchMinimumPages,
+                    text: $viewModel.minimumPagesText,
+                    keyboardType: .numberPad
+                )
+                .frame(minWidth: 0, maxWidth: .infinity)
 
-                TextField(AppCopy.searchMaximumPages, text: $viewModel.maximumPagesText)
-                    .keyboardType(.numberPad)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 0, maxWidth: .infinity)
+                ClearableSearchTextField(
+                    title: AppCopy.searchMaximumPages,
+                    text: $viewModel.maximumPagesText,
+                    keyboardType: .numberPad
+                )
+                .frame(minWidth: 0, maxWidth: .infinity)
             }
             .frame(maxWidth: .infinity)
 
@@ -497,20 +501,22 @@ struct SearchView: View {
     /// Lets the user jump directly to a numbered result page.
     private var pageJumpControl: some View {
         HStack(spacing: 6) {
-            TextField(AppCopy.searchPageField, text: $pageJumpText)
-                .keyboardType(.numberPad)
-                .textFieldStyle(.plain)
-                .multilineTextAlignment(.center)
-                .font(.subheadline.weight(.semibold))
+            ClearableSearchTextField(
+                title: AppCopy.searchPageField,
+                text: $pageJumpText,
+                keyboardType: .numberPad,
+                submitLabel: .go,
+                textAlignment: .center,
+                font: .subheadline.weight(.semibold),
+                style: .plain
+            ) {
+                Task { await loadJumpPage() }
+            }
                 .frame(width: pageJumpFieldWidth, height: 30)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
                 )
-                .submitLabel(.go)
-                .onSubmit {
-                    Task { await loadJumpPage() }
-                }
 
             if let totalPageCount = viewModel.totalPageCount, totalPageCount > 0 {
                 Text("/ \(formattedNumber(totalPageCount))")
@@ -640,6 +646,70 @@ private struct SearchLoadingOverlay: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Selects the visual style for clearable search text fields.
+enum ClearableSearchTextFieldStyle {
+    case roundedBorder
+    case plain
+}
+
+/// Shows a search input with an inline clear button when text is present.
+struct ClearableSearchTextField: View {
+    let title: String
+    @Binding var text: String
+    var keyboardType: UIKeyboardType = .default
+    var submitLabel: SubmitLabel = .return
+    var textAlignment: TextAlignment = .leading
+    var font: Font?
+    var style: ClearableSearchTextFieldStyle = .roundedBorder
+    var onSubmit: () -> Void = {}
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            styledTextField
+
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .imageScale(.small)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 7)
+                .accessibilityLabel(AppCopy.commonClear)
+            }
+        }
+    }
+
+    /// Applies the requested field style without duplicating text input behavior.
+    @ViewBuilder
+    private var styledTextField: some View {
+        switch style {
+        case .roundedBorder:
+            baseTextField
+                .padding(.trailing, text.isEmpty ? 0 : 26)
+                .textFieldStyle(.roundedBorder)
+        case .plain:
+            baseTextField
+                .padding(.trailing, text.isEmpty ? 0 : 26)
+                .textFieldStyle(.plain)
+        }
+    }
+
+    /// Builds the shared text field behavior used by all styles.
+    private var baseTextField: some View {
+        TextField(title, text: $text)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .keyboardType(keyboardType)
+            .multilineTextAlignment(textAlignment)
+            .submitLabel(submitLabel)
+            .font(font)
+            .onSubmit(onSubmit)
     }
 }
 

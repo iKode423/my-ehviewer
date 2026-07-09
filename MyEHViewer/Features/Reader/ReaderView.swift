@@ -46,17 +46,7 @@ struct ReaderView: View {
             }
 
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if !viewModel.sortedPageLinks.isEmpty {
-                    Button {
-                        showsPageGridSheet = true
-                    } label: {
-                        Label(AppCopy.readerPageGrid, systemImage: "square.grid.3x3")
-                    }
-                    .disabled(viewModel.isLoading)
-                }
-
                 displayMenu
-
             }
         }
         .task {
@@ -216,8 +206,6 @@ struct ReaderView: View {
                 if showsReaderChrome {
                     readerChromeOverlay(for: imagePage)
                         .transition(.opacity)
-                } else {
-                    readerFloatingBackButton
                 }
             }
             .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: showsReaderChrome)
@@ -258,6 +246,7 @@ struct ReaderView: View {
         .contentShape(Rectangle())
         .simultaneousGesture(readerTapGesture(in: geometry.size))
         .simultaneousGesture(readerPinchGesture)
+        .simultaneousGesture(readerSwipeGesture)
     }
 
     /// Shows the reader controls when the middle tap zone reveals chrome.
@@ -407,6 +396,28 @@ struct ReaderView: View {
             }
     }
 
+    /// Handles horizontal swipes as previous and next page commands.
+    private func handleReaderSwipe(translation: CGSize) {
+        guard !viewModel.isLoading else { return }
+        let horizontalDistance = translation.width
+        let verticalDistance = abs(translation.height)
+        guard abs(horizontalDistance) > 64, abs(horizontalDistance) > verticalDistance * 1.25 else { return }
+
+        if horizontalDistance < 0 {
+            Task { await viewModel.loadNextPage() }
+        } else {
+            Task { await viewModel.loadPreviousPage() }
+        }
+    }
+
+    /// Creates the drag gesture used for horizontal page swipes.
+    private var readerSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 44)
+            .onEnded { value in
+                handleReaderSwipe(translation: value.translation)
+            }
+    }
+
     /// Creates the pinch gesture used for temporary reader zoom.
     private var readerPinchGesture: some Gesture {
         MagnificationGesture()
@@ -482,6 +493,17 @@ struct ReaderView: View {
                 Label(AppCopy.readerJumpPage, systemImage: "number.square")
             }
             .disabled(!viewModel.canPresentPageJump || viewModel.isLoading)
+
+            if !viewModel.sortedPageLinks.isEmpty {
+                Button {
+                    showsPageGridSheet = true
+                } label: {
+                    Image(systemName: "square.grid.3x3")
+                        .frame(width: 28, height: 20)
+                }
+                .disabled(viewModel.isLoading)
+                .accessibilityLabel(AppCopy.readerPageGrid)
+            }
 
             Spacer()
 

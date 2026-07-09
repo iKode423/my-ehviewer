@@ -88,7 +88,7 @@ final class HitomiDataSource {
     private let imageContextURL = URL(string: "https://ltn.gold-usergeneratedcontent.net/gg.js")!
     private let maxSearchNodeSize = 464
     private let resultsPerPage = 25
-    private let previewPageBatchSize = 40
+    private let previewPageBatchSize = 20
     private var galleriesIndexVersion: String?
     private var imageContext: HitomiImageContext?
 
@@ -133,7 +133,7 @@ final class HitomiDataSource {
     }
 
     /// Loads one batch of Hitomi preview page links from gallery metadata.
-    func galleryPageLinks(from pageURL: URL, startPage: Int, limit: Int = 40) async throws -> [EHGalleryPageLink] {
+    func galleryPageLinks(from pageURL: URL, startPage: Int, limit: Int = 20) async throws -> [EHGalleryPageLink] {
         let info = try await galleryInfo(from: pageURL)
         return try await pageLinks(from: info, startIndex: max(0, startPage - 1), limit: limit)
     }

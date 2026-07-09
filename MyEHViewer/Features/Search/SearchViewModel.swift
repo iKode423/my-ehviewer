@@ -4,6 +4,8 @@ import Foundation
 /// Manages search query state, loading, parsing, and pagination.
 @MainActor
 final class SearchViewModel: ObservableObject {
+    static let defaultRecentQueriesKey = "Search.recentQueries"
+
     @Published private(set) var site: ContentSite
     @Published var source = EHSearchSource.frontPage
     @Published var query = ""
@@ -62,7 +64,7 @@ final class SearchViewModel: ObservableObject {
         parser: EHSearchPageParser = EHSearchPageParser(),
         hitomiDataSource: HitomiDataSource = HitomiDataSource(),
         userDefaults: UserDefaults = .standard,
-        recentQueriesKey: String = "Search.recentQueries"
+        recentQueriesKey: String = SearchViewModel.defaultRecentQueriesKey
     ) {
         self.query = initialQuery
         let resolvedSite = initialSite ?? ContentSite.resolved(rawValue: userDefaults.string(forKey: ContentSite.storageKey) ?? "")

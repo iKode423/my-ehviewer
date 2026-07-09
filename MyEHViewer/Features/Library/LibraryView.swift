@@ -110,14 +110,13 @@ struct LibraryView: View {
     /// Provides keyword-only search for the online favorites collection.
     private var siteFavoritesSearchBar: some View {
         HStack(spacing: 12) {
-            TextField(AppCopy.searchPlaceholder, text: $siteFavoritesViewModel.query)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .textFieldStyle(.roundedBorder)
-                .submitLabel(.search)
-                .onSubmit {
-                    Task { await siteFavoritesViewModel.search() }
-                }
+            ClearableSearchTextField(
+                title: AppCopy.searchPlaceholder,
+                text: $siteFavoritesViewModel.query,
+                submitLabel: .search
+            ) {
+                Task { await siteFavoritesViewModel.search() }
+            }
 
             Button {
                 Task { await siteFavoritesViewModel.search() }
@@ -349,6 +348,8 @@ private struct LibraryRecordRow: View {
                     )
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
+                .font(.caption.weight(.semibold))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

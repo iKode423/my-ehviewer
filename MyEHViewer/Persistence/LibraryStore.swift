@@ -138,6 +138,7 @@ struct LibraryGalleryRecord: Codable, Hashable, Identifiable {
     var thumbnailURL: URL?
     var uploader: String?
     var pageCountText: String?
+    var tags: [EHTag]
     var lastOpenedAt: Date
     var lastReadPage: Int?
     var lastReadPageURL: URL?
@@ -154,7 +155,7 @@ struct LibraryGalleryRecord: Codable, Hashable, Identifiable {
             uploader: uploader,
             postedText: nil,
             pageCountText: pageCountText,
-            tags: []
+            tags: tags
         )
     }
 
@@ -173,6 +174,7 @@ struct LibraryGalleryRecord: Codable, Hashable, Identifiable {
         self.thumbnailURL = detail.coverURL ?? fallback.thumbnailURL
         self.uploader = detail.uploader ?? fallback.uploader
         self.pageCountText = detail.pageCount.map { "\($0) pages" } ?? detail.metadata.first { $0.key.lowercased().contains("length") }?.value ?? fallback.pageCountText
+        self.tags = detail.tags.isEmpty ? fallback.tags : detail.tags
         self.lastOpenedAt = Date()
         self.lastReadPage = existing?.lastReadPage
         self.lastReadPageURL = existing?.lastReadPageURL
@@ -187,9 +189,56 @@ struct LibraryGalleryRecord: Codable, Hashable, Identifiable {
         self.thumbnailURL = nil
         self.uploader = nil
         self.pageCountText = nil
+        self.tags = []
         self.lastOpenedAt = Date()
         self.lastReadPage = imagePage.pageNumber
         self.lastReadPageURL = imagePage.pageURL
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case identifier
+        case title
+        case category
+        case pageURL
+        case thumbnailURL
+        case uploader
+        case pageCountText
+        case tags
+        case lastOpenedAt
+        case lastReadPage
+        case lastReadPageURL
+    }
+
+    /// Decodes older records that did not persist parsed gallery tags.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        identifier = try container.decode(EHGalleryIdentifier.self, forKey: .identifier)
+        title = try container.decode(String.self, forKey: .title)
+        category = try container.decode(String.self, forKey: .category)
+        pageURL = try container.decode(URL.self, forKey: .pageURL)
+        thumbnailURL = try container.decodeIfPresent(URL.self, forKey: .thumbnailURL)
+        uploader = try container.decodeIfPresent(String.self, forKey: .uploader)
+        pageCountText = try container.decodeIfPresent(String.self, forKey: .pageCountText)
+        tags = try container.decodeIfPresent([EHTag].self, forKey: .tags) ?? []
+        lastOpenedAt = try container.decode(Date.self, forKey: .lastOpenedAt)
+        lastReadPage = try container.decodeIfPresent(Int.self, forKey: .lastReadPage)
+        lastReadPageURL = try container.decodeIfPresent(URL.self, forKey: .lastReadPageURL)
+    }
+
+    /// Encodes library records with parsed tags for local statistics.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(identifier, forKey: .identifier)
+        try container.encode(title, forKey: .title)
+        try container.encode(category, forKey: .category)
+        try container.encode(pageURL, forKey: .pageURL)
+        try container.encodeIfPresent(thumbnailURL, forKey: .thumbnailURL)
+        try container.encodeIfPresent(uploader, forKey: .uploader)
+        try container.encodeIfPresent(pageCountText, forKey: .pageCountText)
+        try container.encode(tags, forKey: .tags)
+        try container.encode(lastOpenedAt, forKey: .lastOpenedAt)
+        try container.encodeIfPresent(lastReadPage, forKey: .lastReadPage)
+        try container.encodeIfPresent(lastReadPageURL, forKey: .lastReadPageURL)
     }
 }
 
