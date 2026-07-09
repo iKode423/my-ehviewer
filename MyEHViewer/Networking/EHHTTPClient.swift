@@ -348,10 +348,12 @@ final class ImageCacheStore: ObservableObject {
     private var cacheKeyByContentDigest: [String: String] = [:]
     private var cacheFileSizeByKey: [String: Int64] = [:]
     private var gallerySummaryByID: [String: CachedGallerySummary] = [:]
+    private var pendingIndexSaveTask: Task<Void, Never>?
     private var pendingGallerySummaryRefreshTask: Task<Void, Never>?
     private var lastGallerySummaryRefreshAt = Date.distantPast
     private var lastDiskRefreshAt = Date.distantPast
     private let gallerySummaryRefreshInterval: TimeInterval = 1.0
+    private let indexSaveDelayNanoseconds: UInt64 = 1_000_000_000
     private var deferredGallerySummaryRefreshDepth = 0
 
     /// Creates a cache store rooted in the app caches directory by default.
@@ -427,6 +429,7 @@ final class ImageCacheStore: ObservableObject {
     func endDeferredGallerySummaryRefreshes() {
         deferredGallerySummaryRefreshDepth = max(0, deferredGallerySummaryRefreshDepth - 1)
         if deferredGallerySummaryRefreshDepth == 0 {
+            flushPendingIndexSave()
             publishGallerySummaries()
         }
     }
@@ -530,7 +533,7 @@ final class ImageCacheStore: ObservableObject {
             cacheKeyByContentDigest[dataDigest] = cacheKey
             storeAliases(for: cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL), cacheKey: cacheKey)
             upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: storedByteCount)
-            saveIndex()
+            saveIndexAfterCacheMutation()
             refreshAfterSaving(cacheKey: cacheKey, byteCount: storedByteCount, context: context)
         } catch {
             assertionFailure("Failed to save image cache: \(error.localizedDescription)")
@@ -558,7 +561,7 @@ final class ImageCacheStore: ObservableObject {
             cacheKeyByContentDigest[dataDigest] = cacheKey
             storeAliases(for: cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL), cacheKey: cacheKey)
             upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: storedByteCount)
-            saveIndex()
+            saveIndexAfterCacheMutation()
             refreshAfterSaving(cacheKey: cacheKey, byteCount: storedByteCount, context: context)
         } catch {
             assertionFailure("Failed to save image cache: \(error.localizedDescription)")
@@ -576,13 +579,15 @@ final class ImageCacheStore: ObservableObject {
         let cacheKey = fileURL.lastPathComponent
         storeAliases(for: cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL), cacheKey: cacheKey)
         upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: byteCount)
-        saveIndex()
+        saveIndexAfterCacheMutation()
         refreshAfterSaving(cacheKey: cacheKey, byteCount: byteCount, context: context)
     }
 
     /// Removes all cached image files from disk.
     func clear() {
         do {
+            pendingIndexSaveTask?.cancel()
+            pendingIndexSaveTask = nil
             if fileManager.fileExists(atPath: directoryURL.path) {
                 try fileManager.removeItem(at: directoryURL)
             }
@@ -845,8 +850,45 @@ final class ImageCacheStore: ObservableObject {
         index = decoded
     }
 
-    /// Saves the JSON index next to cached data files.
+    /// Saves the JSON index immediately when data must be durable before the next user action.
     private func saveIndex() {
+        pendingIndexSaveTask?.cancel()
+        pendingIndexSaveTask = nil
+        writeIndex()
+    }
+
+    /// Saves immediately only when a delayed index write is waiting.
+    private func flushPendingIndexSave() {
+        guard pendingIndexSaveTask != nil else { return }
+        saveIndex()
+    }
+
+    /// Coalesces repeated image cache writes during bulk downloads.
+    private func saveIndexAfterCacheMutation() {
+        if deferredGallerySummaryRefreshDepth > 0 {
+            scheduleIndexSave()
+        } else {
+            saveIndex()
+        }
+    }
+
+    /// Schedules one delayed index write for rapid page cache mutations.
+    private func scheduleIndexSave() {
+        pendingIndexSaveTask?.cancel()
+        pendingIndexSaveTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: self?.indexSaveDelayNanoseconds ?? 1_000_000_000)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.pendingIndexSaveTask = nil
+            self.writeIndex()
+        }
+    }
+
+    /// Encodes and writes the cache index JSON.
+    private func writeIndex() {
         do {
             try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(index)
@@ -1068,6 +1110,10 @@ final class GalleryDownloadManager: ObservableObject {
     @Published private(set) var progressByGalleryID: [String: GalleryDownloadProgress] = [:]
     @Published private(set) var aggregateProgress: GalleryDownloadAggregateProgress?
 
+    private var latestProgressByGalleryID: [String: GalleryDownloadProgress] = [:]
+    private var latestAggregateProgress: GalleryDownloadAggregateProgress?
+    private var pendingProgressPublishTask: Task<Void, Never>?
+    private let progressPublishDelayNanoseconds: UInt64 = 350_000_000
     private let client: any EHDataHTTPClient
     private let galleryParser: EHGalleryPageParser
     private let parser: EHImagePageParser
@@ -1108,12 +1154,12 @@ final class GalleryDownloadManager: ObservableObject {
 
     /// Returns the latest progress for one gallery.
     func progress(for identifier: EHGalleryIdentifier) -> GalleryDownloadProgress? {
-        guard let storedProgress = progressByGalleryID[identifier.id] else {
+        guard let storedProgress = latestProgressByGalleryID[identifier.id] ?? progressByGalleryID[identifier.id] else {
             return cachedProgress(for: identifier)
         }
 
         let cachedProgress = cachedProgress(for: identifier)
-        let downloadedPageCount = cachedProgress?.downloadedPageCount ?? 0
+        let downloadedPageCount = cachedProgress?.downloadedPageCount ?? storedProgress.downloadedPageCount
         let totalPageCount = max(storedProgress.totalPageCount, cachedProgress?.totalPageCount ?? 0)
         return GalleryDownloadProgress(
             galleryID: storedProgress.galleryID,
@@ -1130,13 +1176,16 @@ final class GalleryDownloadManager: ObservableObject {
         guard !hasPendingOrRunningJob(for: detail.identifier) else { return }
         cacheStore.saveGalleryMetadata(detail: detail, fallback: fallback)
         let totalPageCount = detail.pageCount ?? detail.pageLinks.count
-        progressByGalleryID[detail.identifier.id] = GalleryDownloadProgress(
-            galleryID: detail.identifier.id,
-            title: detail.title,
-            downloadedPageCount: cachedPageCount(for: detail.identifier),
-            totalPageCount: totalPageCount,
-            isRunning: true,
-            errorMessage: nil
+        setProgress(
+            GalleryDownloadProgress(
+                galleryID: detail.identifier.id,
+                title: detail.title,
+                downloadedPageCount: cachedPageCount(for: detail.identifier),
+                totalPageCount: totalPageCount,
+                isRunning: true,
+                errorMessage: nil
+            ),
+            publishesImmediately: true
         )
 
         enqueue(
@@ -1158,13 +1207,15 @@ final class GalleryDownloadManager: ObservableObject {
 
         for summary in unfinishedSummaries where !hasPendingOrRunningJob(for: summary.galleryIdentifier) {
             let totalPageCount = summary.totalPageCount ?? summary.cachedPageCount
-            progressByGalleryID[summary.galleryIdentifier.id] = GalleryDownloadProgress(
-                galleryID: summary.galleryIdentifier.id,
-                title: summary.title,
-                downloadedPageCount: summary.cachedPageCount,
-                totalPageCount: totalPageCount,
-                isRunning: true,
-                errorMessage: nil
+            setProgress(
+                GalleryDownloadProgress(
+                    galleryID: summary.galleryIdentifier.id,
+                    title: summary.title,
+                    downloadedPageCount: summary.cachedPageCount,
+                    totalPageCount: totalPageCount,
+                    isRunning: true,
+                    errorMessage: nil
+                )
             )
 
             enqueue(
@@ -1176,6 +1227,8 @@ final class GalleryDownloadManager: ObservableObject {
                 )
             )
         }
+
+        updateAggregateProgress(publishesImmediately: true)
     }
 
     /// Pauses every queued or running gallery download.
@@ -1189,20 +1242,23 @@ final class GalleryDownloadManager: ObservableObject {
         runningTasks.removeAll()
 
         for id in affectedIDs {
-            guard let progress = progressByGalleryID[id] else { continue }
-            progressByGalleryID[id] = GalleryDownloadProgress(
-                galleryID: progress.galleryID,
-                title: progress.title,
-                downloadedPageCount: progress.downloadedPageCount,
-                totalPageCount: progress.totalPageCount,
-                isRunning: false,
-                errorMessage: progress.errorMessage
+            guard let progress = latestProgressByGalleryID[id] ?? progressByGalleryID[id] else { continue }
+            setProgress(
+                GalleryDownloadProgress(
+                    galleryID: progress.galleryID,
+                    title: progress.title,
+                    downloadedPageCount: progress.downloadedPageCount,
+                    totalPageCount: progress.totalPageCount,
+                    isRunning: false,
+                    errorMessage: progress.errorMessage
+                )
             )
         }
 
-        aggregateProgress = nil
+        latestAggregateProgress = nil
         activeRunStartedAt = nil
         activeRunDownloadedByteCount = 0
+        publishDownloadProgress()
     }
 
     /// Downloads reader images one page at a time.
@@ -1214,7 +1270,7 @@ final class GalleryDownloadManager: ObservableObject {
         defer {
             cacheStore.endDeferredGallerySummaryRefreshes()
         }
-        updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
+        updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil, publishesImmediately: true)
 
         let missingPageLinks = detail.pageLinks
             .sorted { $0.pageNumber < $1.pageNumber }
@@ -1226,7 +1282,7 @@ final class GalleryDownloadManager: ObservableObject {
             }
 
         if missingPageLinks.isEmpty {
-            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: nil)
+            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: nil, publishesImmediately: true)
             return
         }
 
@@ -1251,28 +1307,71 @@ final class GalleryDownloadManager: ObservableObject {
                 }
             }
         } catch is CancellationError {
-            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
+            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage, publishesImmediately: true)
             return
         } catch {
             lastErrorMessage = error.localizedDescription
-            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
+            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage, publishesImmediately: true)
             return
         }
 
-        updateProgress(detail: detail, downloadedPageCount: cachedPageCount(for: detail.identifier), totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage)
+        updateProgress(detail: detail, downloadedPageCount: cachedPageCount(for: detail.identifier), totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage, publishesImmediately: true)
     }
 
     /// Updates observable progress for a gallery.
-    private func updateProgress(detail: EHGalleryDetail, downloadedPageCount: Int, totalPageCount: Int, isRunning: Bool, errorMessage: String?) {
-        progressByGalleryID[detail.identifier.id] = GalleryDownloadProgress(
-            galleryID: detail.identifier.id,
-            title: detail.title,
-            downloadedPageCount: downloadedPageCount,
-            totalPageCount: totalPageCount,
-            isRunning: isRunning,
-            errorMessage: errorMessage
+    private func updateProgress(
+        detail: EHGalleryDetail,
+        downloadedPageCount: Int,
+        totalPageCount: Int,
+        isRunning: Bool,
+        errorMessage: String?,
+        publishesImmediately: Bool = false
+    ) {
+        setProgress(
+            GalleryDownloadProgress(
+                galleryID: detail.identifier.id,
+                title: detail.title,
+                downloadedPageCount: downloadedPageCount,
+                totalPageCount: totalPageCount,
+                isRunning: isRunning,
+                errorMessage: errorMessage
+            ),
+            publishesImmediately: publishesImmediately
         )
-        updateAggregateProgress()
+    }
+
+    /// Stores fresh progress and publishes it with optional throttling.
+    private func setProgress(_ progress: GalleryDownloadProgress, publishesImmediately: Bool = false) {
+        latestProgressByGalleryID[progress.galleryID] = progress
+        updateAggregateProgress(publishesImmediately: publishesImmediately)
+    }
+
+    /// Schedules a coalesced SwiftUI progress update for rapid page completions.
+    private func scheduleProgressPublish() {
+        guard pendingProgressPublishTask == nil else { return }
+        pendingProgressPublishTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: self?.progressPublishDelayNanoseconds ?? 350_000_000)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.pendingProgressPublishTask = nil
+            self.publishDownloadProgressNow()
+        }
+    }
+
+    /// Publishes the latest download progress immediately.
+    private func publishDownloadProgress() {
+        pendingProgressPublishTask?.cancel()
+        pendingProgressPublishTask = nil
+        publishDownloadProgressNow()
+    }
+
+    /// Assigns published progress properties without touching pending timers.
+    private func publishDownloadProgressNow() {
+        progressByGalleryID = latestProgressByGalleryID
+        aggregateProgress = latestAggregateProgress
     }
 
     /// Builds progress from cache when no download is running.
@@ -1336,30 +1435,34 @@ final class GalleryDownloadManager: ObservableObject {
                 cacheStore.markGalleryDownloadUnavailable(job.identifier, title: job.title, totalPageCount: job.totalPageCount)
             }
             let downloadedPageCount = cachedPageCount(for: job.identifier)
-            progressByGalleryID[job.identifier.id] = GalleryDownloadProgress(
-                galleryID: job.identifier.id,
-                title: job.title,
-                downloadedPageCount: downloadedPageCount,
-                totalPageCount: job.totalPageCount,
-                isRunning: false,
-                errorMessage: error.localizedDescription
+            setProgress(
+                GalleryDownloadProgress(
+                    galleryID: job.identifier.id,
+                    title: job.title,
+                    downloadedPageCount: downloadedPageCount,
+                    totalPageCount: job.totalPageCount,
+                    isRunning: false,
+                    errorMessage: error.localizedDescription
+                ),
+                publishesImmediately: true
             )
-            updateAggregateProgress()
         }
     }
 
     /// Marks a cancelled job as paused instead of failed.
     private func markJobPaused(_ job: GalleryDownloadJob) {
-        let progress = progressByGalleryID[job.identifier.id]
-        progressByGalleryID[job.identifier.id] = GalleryDownloadProgress(
-            galleryID: job.identifier.id,
-            title: progress?.title ?? job.title,
-            downloadedPageCount: cachedPageCount(for: job.identifier),
-            totalPageCount: progress?.totalPageCount ?? job.totalPageCount,
-            isRunning: false,
-            errorMessage: progress?.errorMessage
+        let progress = latestProgressByGalleryID[job.identifier.id] ?? progressByGalleryID[job.identifier.id]
+        setProgress(
+            GalleryDownloadProgress(
+                galleryID: job.identifier.id,
+                title: progress?.title ?? job.title,
+                downloadedPageCount: cachedPageCount(for: job.identifier),
+                totalPageCount: progress?.totalPageCount ?? job.totalPageCount,
+                isRunning: false,
+                errorMessage: progress?.errorMessage
+            ),
+            publishesImmediately: true
         )
-        updateAggregateProgress()
     }
 
     /// Resolves full gallery page links for a queued job.
@@ -1579,12 +1682,17 @@ final class GalleryDownloadManager: ObservableObject {
     }
 
     /// Publishes aggregate progress while at least one gallery download is active.
-    private func updateAggregateProgress() {
+    private func updateAggregateProgress(publishesImmediately: Bool = false) {
         let activeDownloadCount = runningTasks.count
         guard activeDownloadCount > 0 else {
-            aggregateProgress = nil
+            latestAggregateProgress = nil
             activeRunStartedAt = nil
             activeRunDownloadedByteCount = 0
+            if publishesImmediately {
+                publishDownloadProgress()
+            } else {
+                scheduleProgressPublish()
+            }
             return
         }
 
@@ -1593,19 +1701,25 @@ final class GalleryDownloadManager: ObservableObject {
             activeRunDownloadedByteCount = 0
         }
 
-        let runningProgresses = progressByGalleryID.values.filter(\.isRunning)
+        let runningProgresses = latestProgressByGalleryID.values.filter(\.isRunning)
         let downloadedPageCount = runningProgresses.reduce(0) { $0 + $1.downloadedPageCount }
         let totalPageCount = runningProgresses.reduce(0) { $0 + $1.totalPageCount }
         let elapsed = max(Date().timeIntervalSince(activeRunStartedAt ?? Date()), 0.1)
         let bytesPerSecond = Int64(Double(activeRunDownloadedByteCount) / elapsed)
 
-        aggregateProgress = GalleryDownloadAggregateProgress(
+        latestAggregateProgress = GalleryDownloadAggregateProgress(
             activeDownloadCount: activeDownloadCount,
             queuedDownloadCount: queuedJobs.count,
             downloadedPageCount: downloadedPageCount,
             totalPageCount: totalPageCount,
             bytesPerSecond: bytesPerSecond
         )
+
+        if publishesImmediately {
+            publishDownloadProgress()
+        } else {
+            scheduleProgressPublish()
+        }
     }
 }
 
