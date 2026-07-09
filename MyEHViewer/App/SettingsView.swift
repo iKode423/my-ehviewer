@@ -298,15 +298,11 @@ private struct ImageCacheManagementView: View {
                     cacheDownloadControls
 
                     ForEach(currentSiteGallerySummaries) { summary in
-                        VStack(alignment: .leading, spacing: 8) {
-                            NavigationLink {
-                                CachedGalleryEntryView(summary: summary)
-                                    .environmentObject(libraryStore)
-                            } label: {
-                                cachedGalleryRow(summary)
-                            }
-
-                            CachedGalleryNoteField(summary: summary)
+                        NavigationLink {
+                            CachedGalleryEntryView(summary: summary)
+                                .environmentObject(libraryStore)
+                        } label: {
+                            cachedGalleryRow(summary)
                         }
                         .contextMenu {
                             Button(role: .destructive) {
@@ -569,6 +565,8 @@ private struct CachedGalleryEntryView: View {
             VStack(alignment: .leading, spacing: 14) {
                 cacheSummaryHeader
 
+                CachedGalleryNoteField(summary: summary)
+
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], alignment: .leading, spacing: 10) {
                     ForEach(displayPageNumbers, id: \.self) { pageNumber in
                         cachedPageTile(pageNumber: pageNumber, record: cachedPageRecordByNumber[pageNumber])
@@ -577,7 +575,7 @@ private struct CachedGalleryEntryView: View {
             }
             .padding()
         }
-        .navigationTitle(summary.note ?? summary.title)
+        .navigationTitle(currentNote ?? summary.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .safeAreaInset(edge: .bottom) {
@@ -608,12 +606,17 @@ private struct CachedGalleryEntryView: View {
         }
     }
 
+    /// Reads the latest note so edits on this page update the title immediately.
+    private var currentNote: String? {
+        imageCacheStore.note(for: summary.galleryIdentifier) ?? summary.note
+    }
+
     /// Shows cache progress and storage usage for the opened gallery.
     private var cacheSummaryHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
             GalleryTitleText(
                 title: summary.title,
-                note: summary.note,
+                note: currentNote,
                 titleFont: .title3.weight(.semibold),
                 originalTitleFont: .subheadline
             )

@@ -365,3 +365,12 @@ xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'p
 ```
 
 结果：通过。缓存管理图库备注默认折叠显示，需要编辑时再展开输入框，并改为提交或失焦时保存，避免逐字刷新缓存索引造成卡顿；图片收藏分区文案调整为“图片收藏”；图片收藏卡片的排序操作收进菜单，并新增“移动到最前”；图片收藏排序持久化测试覆盖普通移动和移动到最前，完整回归测试通过。
+
+### 缓存预览备注入口与图片收藏布局回归
+
+```sh
+git diff --check
+xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath /tmp/MyEHViewerCachePreviewNoteDerived
+```
+
+结果：通过。缓存管理列表页移除备注编辑控件，恢复为直接进入缓存预览；缓存预览页顶部增加备注编辑入口，并在保存后即时刷新页面标题和顶部标题；图片收藏排序菜单图标改为无外环的省空间省略号；图片收藏前五张统一使用第一张的大图尺寸，后续普通图片尺寸保持不变；完整回归测试通过。

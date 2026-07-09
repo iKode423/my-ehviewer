@@ -452,7 +452,7 @@ private struct FavoriteImageCard: View {
                     }
                     .disabled(rank >= totalCount - 1)
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Image(systemName: "ellipsis")
                         .font(.title3)
                         .frame(width: 32, height: 28)
                 }
@@ -465,14 +465,7 @@ private struct FavoriteImageCard: View {
     }
 
     private var imageHeight: CGFloat {
-        switch rank {
-        case 0: 260
-        case 1: 228
-        case 2: 204
-        case 3: 180
-        case 4: 156
-        default: 132
-        }
+        rank < 5 ? 260 : 132
     }
 
     private var decodeMaxPixelSize: Int {
