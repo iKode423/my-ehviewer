@@ -6,6 +6,7 @@ import Foundation
 final class LibraryStore: ObservableObject {
     @Published private(set) var records: [LibraryGalleryRecord] = []
     @Published private(set) var favoriteIDs: Set<String> = []
+    @Published private(set) var imageFavorites: [FavoriteImageRecord] = []
 
     private let userDefaults: UserDefaults
     private let storageKey: String
@@ -73,9 +74,56 @@ final class LibraryStore: ObservableObject {
             records[index].lastReadPage = imagePage.pageNumber
             records[index].lastReadPageURL = imagePage.pageURL
             records[index].lastOpenedAt = Date()
+            updateFavoriteImageGalleryTitle(for: records[index])
         } else {
-            records.append(LibraryGalleryRecord(imagePage: imagePage, identifier: identifier))
+            let record = LibraryGalleryRecord(imagePage: imagePage, identifier: identifier)
+            records.append(record)
+            updateFavoriteImageGalleryTitle(for: record)
         }
+        save()
+    }
+
+    /// Returns true when the loaded reader page is an image favorite.
+    func isImageFavorite(_ imagePage: EHImagePage) -> Bool {
+        imageFavorites.contains { $0.pageURL == imagePage.pageURL }
+    }
+
+    /// Toggles the image favorite state for the loaded reader page.
+    func toggleImageFavorite(imagePage: EHImagePage) {
+        guard
+            let galleryURL = imagePage.galleryURL,
+            let identifier = EHGalleryIdentifier(galleryURL: galleryURL)
+        else {
+            return
+        }
+
+        if let index = imageFavorites.firstIndex(where: { $0.pageURL == imagePage.pageURL }) {
+            imageFavorites.remove(at: index)
+        } else {
+            let galleryTitle = record(for: identifier)?.title ?? imagePage.title ?? "图库 \(identifier.gid)"
+            imageFavorites.insert(
+                FavoriteImageRecord(
+                    imagePage: imagePage,
+                    galleryIdentifier: identifier,
+                    galleryTitle: galleryTitle
+                ),
+                at: 0
+            )
+        }
+        save()
+    }
+
+    /// Moves an image favorite one position for manual sorting.
+    func moveImageFavorite(_ favorite: FavoriteImageRecord, direction: Int) {
+        guard
+            direction != 0,
+            let index = imageFavorites.firstIndex(where: { $0.id == favorite.id })
+        else {
+            return
+        }
+        let targetIndex = max(0, min(imageFavorites.count - 1, index + direction))
+        guard targetIndex != index else { return }
+        imageFavorites.swapAt(index, targetIndex)
         save()
     }
 
@@ -83,6 +131,7 @@ final class LibraryStore: ObservableObject {
     func removeAll() {
         records = []
         favoriteIDs = []
+        imageFavorites = []
         save()
     }
 
@@ -91,6 +140,7 @@ final class LibraryStore: ObservableObject {
         let removedIDs = Set(records.filter { $0.identifier.site == site }.map(\.id))
         records.removeAll { $0.identifier.site == site }
         favoriteIDs.subtract(removedIDs)
+        imageFavorites.removeAll { $0.galleryIdentifier.site == site }
         save()
     }
 
@@ -106,7 +156,15 @@ final class LibraryStore: ObservableObject {
         } else {
             records.append(record)
         }
+        updateFavoriteImageGalleryTitle(for: record)
         save()
+    }
+
+    /// Keeps image favorite captions aligned with the latest gallery title.
+    private func updateFavoriteImageGalleryTitle(for record: LibraryGalleryRecord) {
+        for index in imageFavorites.indices where imageFavorites[index].galleryIdentifier == record.identifier {
+            imageFavorites[index].galleryTitle = record.title
+        }
     }
 
     /// Loads JSON state from UserDefaults.
@@ -119,11 +177,12 @@ final class LibraryStore: ObservableObject {
         }
         records = state.records
         favoriteIDs = Set(state.favoriteIDs)
+        imageFavorites = state.imageFavorites
     }
 
     /// Saves JSON state to UserDefaults.
     private func save() {
-        let state = LibraryState(records: records, favoriteIDs: Array(favoriteIDs))
+        let state = LibraryState(records: records, favoriteIDs: Array(favoriteIDs), imageFavorites: imageFavorites)
         guard let data = try? JSONEncoder().encode(state) else { return }
         userDefaults.set(data, forKey: storageKey)
     }
@@ -242,8 +301,47 @@ struct LibraryGalleryRecord: Codable, Hashable, Identifiable {
     }
 }
 
+struct FavoriteImageRecord: Codable, Hashable, Identifiable {
+    let galleryIdentifier: EHGalleryIdentifier
+    var galleryTitle: String
+    let pageNumber: Int
+    let pageURL: URL
+    let imageURL: URL
+    let originalImageURL: URL?
+    let createdAt: Date
+
+    var id: String { pageURL.absoluteString }
+
+    /// Creates a favorite image record from the current reader page.
+    init(imagePage: EHImagePage, galleryIdentifier: EHGalleryIdentifier, galleryTitle: String) {
+        self.galleryIdentifier = galleryIdentifier
+        self.galleryTitle = galleryTitle
+        self.pageNumber = imagePage.pageNumber
+        self.pageURL = imagePage.pageURL
+        self.imageURL = imagePage.imageURL
+        self.originalImageURL = imagePage.originalImageURL
+        self.createdAt = Date()
+    }
+}
+
 /// Stores the full persisted library payload.
 private struct LibraryState: Codable {
     let records: [LibraryGalleryRecord]
     let favoriteIDs: [String]
+    let imageFavorites: [FavoriteImageRecord]
+
+    /// Creates persisted library state with optional image favorites.
+    init(records: [LibraryGalleryRecord], favoriteIDs: [String], imageFavorites: [FavoriteImageRecord] = []) {
+        self.records = records
+        self.favoriteIDs = favoriteIDs
+        self.imageFavorites = imageFavorites
+    }
+
+    /// Decodes older library state that did not contain image favorites.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        records = try container.decode([LibraryGalleryRecord].self, forKey: .records)
+        favoriteIDs = try container.decode([String].self, forKey: .favoriteIDs)
+        imageFavorites = try container.decodeIfPresent([FavoriteImageRecord].self, forKey: .imageFavorites) ?? []
+    }
 }

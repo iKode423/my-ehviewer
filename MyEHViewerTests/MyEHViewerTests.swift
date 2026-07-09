@@ -191,6 +191,7 @@ final class MyEHViewerTests: XCTestCase {
                     title: "Main Gallery",
                     fileCount: 45,
                     groups: ["Baby Lop"],
+                    characters: ["Alice"],
                     relatedIDs: [relatedID]
                 ),
                 relatedID: Self.hitomiGalleryInfoJSON(id: relatedID, title: "Related Gallery")
@@ -209,6 +210,8 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(detail.pageCount, 45)
         XCTAssertEqual(groupMetadata.value, "Baby Lop")
         XCTAssertEqual(groupMetadata.searchTags.first?.searchQuery, "group:\"Baby Lop\"")
+        XCTAssertTrue(detail.tags.contains(EHTag(namespace: "group", name: "Baby Lop")))
+        XCTAssertTrue(detail.tags.contains(EHTag(namespace: "character", name: "Alice")))
         XCTAssertEqual(detail.relatedGalleries.map(\.identifier.gid), [relatedID])
         XCTAssertEqual(detail.relatedGalleries.first?.title, "Related Gallery")
         XCTAssertEqual(nextBatch.map(\.pageNumber), Array(21...40))
@@ -354,6 +357,49 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertNil(store.data(for: secondResponseURL))
         XCTAssertEqual(store.snapshot, .empty)
         XCTAssertTrue(store.gallerySummaries.isEmpty)
+    }
+
+    /// Confirms custom cache notes survive later gallery metadata refreshes.
+    @MainActor
+    func testImageCacheStorePreservesGalleryNote() {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let store = ImageCacheStore(directoryURL: directoryURL)
+        let identifier = EHGalleryIdentifier(gid: 100, token: "abcdef1234")
+        let detail = EHGalleryDetail(
+            identifier: identifier,
+            title: "Original Gallery",
+            japaneseTitle: nil,
+            category: "Manga",
+            coverURL: nil,
+            uploader: nil,
+            metadata: [],
+            ratingLabel: nil,
+            ratingCount: nil,
+            tags: [],
+            pageLinks: [],
+            thumbnailPageURLs: [],
+            pageCount: 1
+        )
+
+        store.saveGalleryMetadata(detail: detail)
+        store.save(
+            Data([0x01, 0x02]),
+            for: URL(string: "https://example.test/page-1.webp")!,
+            responseURL: URL(string: "https://example.test/page-1.webp")!,
+            context: ImageCacheContext(
+                galleryIdentifier: identifier,
+                galleryTitle: "Original Gallery",
+                pageNumber: 1,
+                pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!,
+                totalPageCount: 1,
+                thumbnailURL: nil
+            )
+        )
+        store.setGalleryNote("Short note", for: identifier)
+        store.saveGalleryMetadata(detail: detail)
+
+        XCTAssertEqual(store.note(for: identifier), "Short note")
+        XCTAssertEqual(store.gallerySummaries.first?.note, "Short note")
     }
 
     /// Confirms clearing non-gallery cache keeps downloaded reader page images.
@@ -531,6 +577,7 @@ final class MyEHViewerTests: XCTestCase {
         hasAVIF: Bool = false,
         fileCount: Int = 1,
         groups: [String] = [],
+        characters: [String] = [],
         relatedIDs: [Int] = []
     ) -> String {
         let files = (0..<fileCount).map { index in
@@ -538,9 +585,10 @@ final class MyEHViewerTests: XCTestCase {
             return #"{"name":"\#(index + 1).jpg","hash":"\#(fileHash)","haswebp":1,"hasavif":\#(hasAVIF ? 1 : 0)}"#
         }
         let groupsJSON = groups.isEmpty ? "" : #","groups":[\#(groups.map { #"{"group":"\#($0)"}"# }.joined(separator: ","))]"#
+        let charactersJSON = characters.isEmpty ? "" : #","characters":[\#(characters.map { #"{"character":"\#($0)"}"# }.joined(separator: ","))]"#
         let relatedJSON = relatedIDs.isEmpty ? "" : #","related":[\#(relatedIDs.map(String.init).joined(separator: ","))]"#
         return """
-        {"id":"\(id)","title":"\(title)","type":"doujinshi","language":"english","files":[\(files.joined(separator: ","))]\(groupsJSON)\(relatedJSON)}
+        {"id":"\(id)","title":"\(title)","type":"doujinshi","language":"english","files":[\(files.joined(separator: ","))]\(groupsJSON)\(charactersJSON)\(relatedJSON)}
         """
     }
 

@@ -346,3 +346,12 @@ xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'p
 ```
 
 结果：通过。最近搜索上限从 10 条调整为 20 条并增加持久化上限测试；统计分析页不再展示搜索词数量，进入后隐藏底部 TabBar；概览下方增加已缓存图库页数分布图；缓存资源下方增加最喜欢的角色排行；常见作者下方增加 Group 排行；完整回归测试通过。
+
+### 图库跳页、缓存备注与图片收藏回归
+
+```sh
+git diff --check
+xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath /tmp/MyEHViewerFavoriteImagesDerived
+```
+
+结果：通过。E-Hentai 跳页改为沿当前搜索结果的上一页/下一页链接逐页定位，避免把页码误写入 `jump`；Hitomi 的 character 信息统一进入 `character` 标签并参与统计分析，搜索首页在只有 Hitomi 单一来源时隐藏“首页”按钮；缓存管理图库增加可直接编辑的备注，备注会在列表、详情和缓存子页中优先显示并保留原标题；阅读页增加当前图片收藏按钮，书架页新增收藏图片分区并支持排序管理。

@@ -76,6 +76,24 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(restored.history.first?.pageCount, nil)
     }
 
+    /// Confirms image favorites persist and can be manually reordered.
+    func testImageFavoritesPersistAndMove() {
+        let userDefaults = makeUserDefaults()
+        let store = LibraryStore(userDefaults: userDefaults, storageKey: "library-image-favorite-test")
+        let firstPage = makeImagePage(pageNumber: 1)
+        let secondPage = makeImagePage(pageNumber: 2)
+
+        store.toggleImageFavorite(imagePage: firstPage)
+        store.toggleImageFavorite(imagePage: secondPage)
+        store.moveImageFavorite(firstPageFavorite(in: store), direction: -1)
+
+        let restored = LibraryStore(userDefaults: userDefaults, storageKey: "library-image-favorite-test")
+
+        XCTAssertEqual(restored.imageFavorites.map(\.pageNumber), [1, 2])
+        XCTAssertTrue(restored.isImageFavorite(firstPage))
+        XCTAssertTrue(restored.isImageFavorite(secondPage))
+    }
+
     /// Confirms local state can be fully removed from persistence.
     func testRemoveAllClearsPersistedState() {
         let userDefaults = makeUserDefaults()
@@ -122,6 +140,26 @@ final class LibraryStoreTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    /// Returns a stored image favorite for the first test page.
+    private func firstPageFavorite(in store: LibraryStore) -> FavoriteImageRecord {
+        store.imageFavorites.first { $0.pageNumber == 1 }!
+    }
+
+    /// Creates a neutral reader image page fixture.
+    private func makeImagePage(pageNumber: Int) -> EHImagePage {
+        EHImagePage(
+            galleryID: 100,
+            pageNumber: pageNumber,
+            pageURL: URL(string: "https://e-hentai.org/s/page-token/100-\(pageNumber)")!,
+            title: "Sample Gallery",
+            imageURL: URL(string: "https://example.test/\(pageNumber).webp")!,
+            previousPageURL: nil,
+            nextPageURL: nil,
+            galleryURL: URL(string: "https://e-hentai.org/g/100/abcdef1234/")!,
+            originalImageURL: nil
+        )
     }
 
     /// Creates a neutral gallery detail fixture.

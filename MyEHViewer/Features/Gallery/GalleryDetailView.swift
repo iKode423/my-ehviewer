@@ -89,7 +89,7 @@ struct GalleryDetailView: View {
             coverImage(url: detail.coverURL ?? result.thumbnailURL, referer: result.pageURL)
 
             VStack(alignment: .leading, spacing: 10) {
-                galleryTitleLabel(detail.title)
+                galleryTitleLabel(detail)
 
                 if let japaneseTitle = detail.japaneseTitle {
                     Text(japaneseTitle)
@@ -137,13 +137,17 @@ struct GalleryDetailView: View {
     }
 
     /// Shows the gallery title and offers a long-press copy action.
-    private func galleryTitleLabel(_ title: String) -> some View {
-        Text(title)
-            .font(.title3.weight(.semibold))
+    private func galleryTitleLabel(_ detail: EHGalleryDetail) -> some View {
+        GalleryTitleText(
+            title: detail.title,
+            note: imageCacheStore.note(for: detail.identifier),
+            titleFont: .title3.weight(.semibold),
+            originalTitleFont: .subheadline
+        )
             .textSelection(.enabled)
             .contextMenu {
                 Button {
-                    UIPasteboard.general.string = title
+                    UIPasteboard.general.string = detail.title
                 } label: {
                     Label(AppCopy.commonCopy, systemImage: "doc.on.doc")
                 }

@@ -102,9 +102,11 @@ struct SearchView: View {
                 .padding([.horizontal, .top])
 
             if chromeMode == .full {
-                sourcePicker
-                    .padding(.horizontal)
-                    .padding(.top, 8)
+                if viewModel.availableSources.count > 1 {
+                    sourcePicker
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                }
 
                 recentQueries
                     .padding(.horizontal)

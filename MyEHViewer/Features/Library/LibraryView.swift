@@ -52,6 +52,8 @@ struct LibraryView: View {
             siteFavoritesContent
         case .localFavorites, .history:
             localRecordsContent
+        case .imageFavorites:
+            favoriteImagesContent
         }
     }
 
@@ -77,6 +79,47 @@ struct LibraryView: View {
                             .padding(.leading, 100)
                     }
                 }
+            }
+        }
+    }
+
+    /// Displays all image favorites across galleries and sites.
+    @ViewBuilder
+    private var favoriteImagesContent: some View {
+        libraryScrollContent {
+            if libraryStore.imageFavorites.isEmpty {
+                ContentUnavailableView(
+                    AppCopy.libraryEmptyImageFavoritesTitle,
+                    systemImage: "heart",
+                    description: Text(AppCopy.libraryEmptyImageFavoritesMessage)
+                )
+                .frame(maxWidth: .infinity, minHeight: 320)
+            } else {
+                let topFavorites = Array(libraryStore.imageFavorites.prefix(5))
+                let remainingFavorites = Array(libraryStore.imageFavorites.dropFirst(5))
+
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(topFavorites.enumerated()), id: \.element.id) { index, favorite in
+                        FavoriteImageCard(
+                            favorite: favorite,
+                            rank: index,
+                            totalCount: libraryStore.imageFavorites.count
+                        )
+                    }
+
+                    if !remainingFavorites.isEmpty {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], alignment: .leading, spacing: 10) {
+                            ForEach(Array(remainingFavorites.enumerated()), id: \.element.id) { offset, favorite in
+                                FavoriteImageCard(
+                                    favorite: favorite,
+                                    rank: offset + 5,
+                                    totalCount: libraryStore.imageFavorites.count
+                                )
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal)
             }
         }
     }
@@ -256,7 +299,7 @@ struct LibraryView: View {
     }
 
     private var availableSelections: [LibrarySelection] {
-        currentSite.supportsOnlineFavorites ? LibrarySelection.allCases : [.localFavorites, .history]
+        currentSite.supportsOnlineFavorites ? LibrarySelection.allCases : [.localFavorites, .imageFavorites, .history]
     }
 
     /// Keeps online favorite controls hidden for sites that do not support them.
@@ -272,6 +315,7 @@ struct LibraryView: View {
 private enum LibrarySelection: String, CaseIterable, Identifiable {
     case localFavorites
     case siteFavorites
+    case imageFavorites
     case history
 
     var id: String { rawValue }
@@ -280,6 +324,7 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
         switch self {
         case .localFavorites: AppCopy.libraryFavorites
         case .siteFavorites: AppCopy.librarySiteFavorites
+        case .imageFavorites: AppCopy.libraryImageFavorites
         case .history: AppCopy.libraryHistory
         }
     }
@@ -288,6 +333,7 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
         switch self {
         case .localFavorites: AppCopy.libraryEmptyFavoritesTitle
         case .siteFavorites: AppCopy.librarySiteFavoritesCookieTitle
+        case .imageFavorites: AppCopy.libraryEmptyImageFavoritesTitle
         case .history: AppCopy.libraryEmptyHistoryTitle
         }
     }
@@ -296,6 +342,7 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
         switch self {
         case .localFavorites: AppCopy.libraryEmptyFavoritesMessage
         case .siteFavorites: AppCopy.librarySiteFavoritesCookieMessage
+        case .imageFavorites: AppCopy.libraryEmptyImageFavoritesMessage
         case .history: AppCopy.libraryEmptyHistoryMessage
         }
     }
@@ -304,6 +351,7 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
         switch self {
         case .localFavorites: "star"
         case .siteFavorites: "icloud"
+        case .imageFavorites: "heart"
         case .history: "clock"
         }
     }
@@ -314,8 +362,113 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
         switch self {
         case .localFavorites: store.favorites(for: site)
         case .siteFavorites: []
+        case .imageFavorites: []
         case .history: store.history(for: site)
         }
+    }
+}
+
+private struct FavoriteImageCard: View {
+    let favorite: FavoriteImageRecord
+    let rank: Int
+    let totalCount: Int
+    @EnvironmentObject private var libraryStore: LibraryStore
+    @EnvironmentObject private var appNavigationStore: AppNavigationStore
+    @StateObject private var imageCacheStore = ImageCacheStore.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                appNavigationStore.openReader(initialPageURL: favorite.pageURL)
+            } label: {
+                CachedRemoteImageView(
+                    url: favorite.imageURL,
+                    referer: favorite.pageURL,
+                    contentMode: .fill,
+                    animationMode: .staticPreview,
+                    decodeMaxPixelSize: decodeMaxPixelSize
+                ) {
+                    ProgressView()
+                } failure: {
+                    Image(systemName: "photo")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: imageHeight)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .clipped()
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(AppCopy.libraryOpenFavoriteImage)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(AppCopy.libraryImageFavoriteSource)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    GalleryTitleText(
+                        title: favorite.galleryTitle,
+                        note: imageCacheStore.note(for: favorite.galleryIdentifier),
+                        titleFont: .caption.weight(.semibold),
+                        originalTitleFont: .caption2
+                    )
+                    .lineLimit(2)
+                }
+
+                Text(String(format: AppCopy.galleryOpenPage, String(favorite.pageNumber)))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    libraryStore.moveImageFavorite(favorite, direction: -1)
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .frame(width: 28, height: 28)
+                }
+                .disabled(rank == 0)
+                .accessibilityLabel(AppCopy.libraryMoveImageFavoriteUp)
+
+                Button {
+                    libraryStore.moveImageFavorite(favorite, direction: 1)
+                } label: {
+                    Image(systemName: "arrow.down")
+                        .frame(width: 28, height: 28)
+                }
+                .disabled(rank >= totalCount - 1)
+                .accessibilityLabel(AppCopy.libraryMoveImageFavoriteDown)
+
+                Spacer()
+
+                Text("#\(rank + 1)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var imageHeight: CGFloat {
+        switch rank {
+        case 0: 260
+        case 1: 228
+        case 2: 204
+        case 3: 180
+        case 4: 156
+        default: 132
+        }
+    }
+
+    private var decodeMaxPixelSize: Int {
+        rank < 5 ? 900 : 420
     }
 }
 

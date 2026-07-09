@@ -211,11 +211,16 @@ final class SearchViewModel: ObservableObject {
     @discardableResult
     func loadPage(number: Int) async -> Bool {
         guard number > 0 else { return false }
-        if await loadSearchPage(number: number) {
-            currentPageNumber = number
-            return true
+        switch site {
+        case .eHentai:
+            return await loadEHentaiPage(number: number)
+        case .hitomi:
+            if await loadHitomiPage(number: number) {
+                currentPageNumber = number
+                return true
+            }
+            return false
         }
-        return false
     }
 
     /// Routes the current search to the active site's page loader.
@@ -223,10 +228,40 @@ final class SearchViewModel: ObservableObject {
     private func loadSearchPage(number: Int, trimmedQuery: String? = nil) async -> Bool {
         switch site {
         case .eHentai:
-            return await load(currentRequest(trimmedQuery: trimmedQuery, pageIndex: number - 1).url(baseURL: site.baseURL))
+            return await load(currentRequest(trimmedQuery: trimmedQuery).url(baseURL: site.baseURL))
         case .hitomi:
             return await loadHitomiPage(number: number, trimmedQuery: trimmedQuery)
         }
+    }
+
+    @discardableResult
+    private func loadEHentaiPage(number targetPageNumber: Int) async -> Bool {
+        guard targetPageNumber > 0 else { return false }
+        if targetPageNumber == currentPageNumber, hasSearched {
+            return true
+        }
+
+        if !hasSearched || results.isEmpty || targetPageNumber == 1 {
+            guard await load(currentRequest().url(baseURL: site.baseURL)) else { return false }
+            currentPageNumber = 1
+            if targetPageNumber == 1 {
+                return true
+            }
+        }
+
+        while currentPageNumber < targetPageNumber {
+            guard let nextPageURL else { return false }
+            guard await load(nextPageURL) else { return false }
+            currentPageNumber += 1
+        }
+
+        while currentPageNumber > targetPageNumber {
+            guard let previousPageURL else { return false }
+            guard await load(previousPageURL) else { return false }
+            currentPageNumber = max(1, currentPageNumber - 1)
+        }
+
+        return currentPageNumber == targetPageNumber
     }
 
     /// Performs the request and replaces the current page with parsed results.

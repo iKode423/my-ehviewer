@@ -3,6 +3,7 @@ import SwiftUI
 /// Renders one gallery result in the search list.
 struct SearchResultRow: View {
     let result: EHSearchResult
+    @StateObject private var imageCacheStore = ImageCacheStore.shared
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -21,9 +22,13 @@ struct SearchResultRow: View {
                     }
                 }
 
-                Text(result.title)
-                    .font(.body.weight(.semibold))
-                    .lineLimit(3)
+                GalleryTitleText(
+                    title: result.title,
+                    note: imageCacheStore.note(for: result.identifier),
+                    titleFont: .body.weight(.semibold),
+                    originalTitleFont: .caption
+                )
+                .lineLimit(3)
 
                 if let uploader = result.uploader, !uploader.isEmpty {
                     Label(uploader, systemImage: "person")
@@ -88,6 +93,45 @@ struct SearchResultRow: View {
         return pageCountText
             .replacingOccurrences(of: " pages", with: " 页")
             .replacingOccurrences(of: " page", with: " 页")
+    }
+}
+
+/// Renders a gallery note before the original title when a custom note exists.
+struct GalleryTitleText: View {
+    let title: String
+    let note: String?
+    let titleFont: Font
+    let originalTitleFont: Font
+
+    /// Creates a styled gallery title that can highlight a user note.
+    init(
+        title: String,
+        note: String?,
+        titleFont: Font = .body,
+        originalTitleFont: Font = .caption
+    ) {
+        self.title = title
+        self.note = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.titleFont = titleFont
+        self.originalTitleFont = originalTitleFont
+    }
+
+    var body: some View {
+        composedText
+    }
+
+    private var composedText: Text {
+        if let note, !note.isEmpty {
+            return Text(note)
+                .font(titleFont)
+                .foregroundColor(.accentColor) +
+                Text(" (\(title))")
+                .font(originalTitleFont)
+                .foregroundColor(.secondary)
+        } else {
+            return Text(title)
+                .font(titleFont)
+        }
     }
 }
 

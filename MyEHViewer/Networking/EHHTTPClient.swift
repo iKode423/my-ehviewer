@@ -270,6 +270,7 @@ struct CachedImagePageRecord: Codable, Hashable, Identifiable {
 struct CachedGallerySummary: Hashable, Identifiable {
     let galleryIdentifier: EHGalleryIdentifier
     let title: String
+    let note: String?
     let thumbnailURL: URL?
     let cachedPageCount: Int
     let totalPageCount: Int?
@@ -282,6 +283,7 @@ struct CachedGallerySummary: Hashable, Identifiable {
     init(
         galleryIdentifier: EHGalleryIdentifier,
         title: String,
+        note: String? = nil,
         thumbnailURL: URL?,
         cachedPageCount: Int,
         totalPageCount: Int?,
@@ -292,6 +294,7 @@ struct CachedGallerySummary: Hashable, Identifiable {
     ) {
         self.galleryIdentifier = galleryIdentifier
         self.title = title
+        self.note = note
         self.thumbnailURL = thumbnailURL
         self.cachedPageCount = cachedPageCount
         self.totalPageCount = totalPageCount
@@ -411,13 +414,40 @@ final class ImageCacheStore: ObservableObject {
 
     /// Stores gallery metadata so cache management can list partially downloaded galleries.
     func saveGalleryMetadata(detail: EHGalleryDetail, fallback: EHSearchResult? = nil) {
+        let existing = index.galleryMetadata[detail.identifier.id]
         index.galleryMetadata[detail.identifier.id] = CachedGalleryMetadata(
             identifier: detail.identifier,
             title: detail.title,
+            note: existing?.note,
             thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL,
             totalPageCount: detail.pageCount,
             updatedAt: Date(),
             isDownloadUnavailable: false
+        )
+        saveIndex()
+        refresh(compactsDuplicates: false)
+    }
+
+    /// Returns the custom cache note for a gallery.
+    func note(for identifier: EHGalleryIdentifier) -> String? {
+        index.galleryMetadata[identifier.id]?.note
+    }
+
+    /// Updates the user-defined note for a cached gallery.
+    func setGalleryNote(_ note: String, for identifier: EHGalleryIdentifier) {
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existing = index.galleryMetadata[identifier.id]
+        let records = index.pages.values.filter { $0.galleryIdentifier == identifier }
+        guard existing != nil || !records.isEmpty else { return }
+
+        index.galleryMetadata[identifier.id] = CachedGalleryMetadata(
+            identifier: identifier,
+            title: existing?.title ?? records.first?.galleryTitle ?? "图库 \(identifier.gid)",
+            note: trimmedNote.isEmpty ? nil : trimmedNote,
+            thumbnailURL: existing?.thumbnailURL ?? records.first?.thumbnailURL,
+            totalPageCount: existing?.totalPageCount ?? records.compactMap(\.totalPageCount).max(),
+            updatedAt: Date(),
+            isDownloadUnavailable: existing?.isDownloadUnavailable ?? false
         )
         saveIndex()
         refresh(compactsDuplicates: false)
@@ -434,6 +464,7 @@ final class ImageCacheStore: ObservableObject {
         index.galleryMetadata[identifier.id] = CachedGalleryMetadata(
             identifier: identifier,
             title: title ?? existing?.title ?? "图库 \(identifier.gid)",
+            note: existing?.note,
             thumbnailURL: thumbnailURL ?? existing?.thumbnailURL,
             totalPageCount: totalPageCount ?? existing?.totalPageCount,
             updatedAt: Date(),
@@ -668,6 +699,7 @@ final class ImageCacheStore: ObservableObject {
         index.galleryMetadata[identifier.id] = CachedGalleryMetadata(
             identifier: identifier,
             title: title,
+            note: metadata?.note,
             thumbnailURL: thumbnailURL,
             totalPageCount: context.totalPageCount ?? metadata?.totalPageCount,
             updatedAt: Date(),
@@ -689,6 +721,7 @@ final class ImageCacheStore: ObservableObject {
                 return CachedGallerySummary(
                     galleryIdentifier: identifier,
                     title: metadata?.title ?? records.first?.galleryTitle ?? "图库 \(identifier.gid)",
+                    note: metadata?.note,
                     thumbnailURL: metadata?.thumbnailURL ?? records.first?.thumbnailURL,
                     cachedPageCount: Set(records.map(\.pageNumber)).count,
                     totalPageCount: metadata?.totalPageCount ?? records.compactMap(\.totalPageCount).max(),
@@ -1523,6 +1556,7 @@ private struct ImageCacheIndex: Codable {
 private struct CachedGalleryMetadata: Codable, Hashable {
     let identifier: EHGalleryIdentifier
     let title: String
+    let note: String?
     let thumbnailURL: URL?
     let totalPageCount: Int?
     let updatedAt: Date
@@ -1532,6 +1566,7 @@ private struct CachedGalleryMetadata: Codable, Hashable {
     init(
         identifier: EHGalleryIdentifier,
         title: String,
+        note: String? = nil,
         thumbnailURL: URL?,
         totalPageCount: Int?,
         updatedAt: Date,
@@ -1539,6 +1574,7 @@ private struct CachedGalleryMetadata: Codable, Hashable {
     ) {
         self.identifier = identifier
         self.title = title
+        self.note = note
         self.thumbnailURL = thumbnailURL
         self.totalPageCount = totalPageCount
         self.updatedAt = updatedAt
@@ -1550,6 +1586,7 @@ private struct CachedGalleryMetadata: Codable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         identifier = try container.decode(EHGalleryIdentifier.self, forKey: .identifier)
         title = try container.decode(String.self, forKey: .title)
+        note = try container.decodeIfPresent(String.self, forKey: .note)
         thumbnailURL = try container.decodeIfPresent(URL.self, forKey: .thumbnailURL)
         totalPageCount = try container.decodeIfPresent(Int.self, forKey: .totalPageCount)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)

@@ -139,12 +139,16 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentPageNumber, 1)
     }
 
-    /// Confirms jump-to-page requests keep the active query and use the site's zero-based jump parameter.
+    /// Confirms e-hentai jump-to-page walks cursor URLs instead of the site's date jump parameter.
     func testLoadPageNumberUsesCurrentSearchParameters() async {
         let recorder = SearchRequestRecorder()
+        let client = QueueHTTPClient(
+            responses: [Self.searchHTML, Self.previousAndNextHTML, Self.previousAndNextHTML],
+            recorder: recorder
+        )
         let viewModel = SearchViewModel(
             initialSource: .favorites,
-            client: MockHTTPClient(body: Self.searchHTML, recorder: recorder),
+            client: client,
             userDefaults: makeUserDefaults()
         )
         viewModel.query = "sample"
@@ -152,12 +156,16 @@ final class SearchViewModelTests: XCTestCase {
         await viewModel.loadPage(number: 3)
 
         XCTAssertEqual(viewModel.currentPageNumber, 3)
-        XCTAssertEqual(recorder.requestedURLs.count, 1)
+        XCTAssertEqual(recorder.requestedURLs.map(\.absoluteString), [
+            "https://e-hentai.org/favorites.php?favcat=all&f_search=sample",
+            "https://e-hentai.org/?next=100",
+            "https://e-hentai.org/?next=150"
+        ])
         let queryItems = URLComponents(url: recorder.requestedURLs[0], resolvingAgainstBaseURL: false)?.queryItems ?? []
         let queryByName = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
         XCTAssertEqual(queryByName["favcat"], "all")
         XCTAssertEqual(queryByName["f_search"], "sample")
-        XCTAssertEqual(queryByName["jump"], "2")
+        XCTAssertNil(queryByName["jump"])
     }
 
     /// Confirms cursor pagination keeps the visible page number in sync.

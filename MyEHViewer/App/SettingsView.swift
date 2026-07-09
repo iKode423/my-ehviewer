@@ -298,11 +298,15 @@ private struct ImageCacheManagementView: View {
                     cacheDownloadControls
 
                     ForEach(currentSiteGallerySummaries) { summary in
-                        NavigationLink {
-                            CachedGalleryEntryView(summary: summary)
-                                .environmentObject(libraryStore)
-                        } label: {
-                            cachedGalleryRow(summary)
+                        VStack(alignment: .leading, spacing: 8) {
+                            NavigationLink {
+                                CachedGalleryEntryView(summary: summary)
+                                    .environmentObject(libraryStore)
+                            } label: {
+                                cachedGalleryRow(summary)
+                            }
+
+                            CachedGalleryNoteField(summary: summary)
                         }
                         .contextMenu {
                             Button(role: .destructive) {
@@ -383,8 +387,12 @@ private struct ImageCacheManagementView: View {
     /// Renders one cached gallery summary row.
     private func cachedGalleryRow(_ summary: CachedGallerySummary) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(summary.title)
-                .font(.headline)
+            GalleryTitleText(
+                title: summary.title,
+                note: summary.note,
+                titleFont: .headline,
+                originalTitleFont: .caption
+            )
                 .lineLimit(2)
 
             HStack {
@@ -429,6 +437,52 @@ private struct ImageCacheManagementView: View {
     }
 }
 
+private struct CachedGalleryNoteField: View {
+    let summary: CachedGallerySummary
+    @StateObject private var imageCacheStore = ImageCacheStore.shared
+    @State private var noteText: String
+
+    /// Creates an inline editor for one cached gallery note.
+    init(summary: CachedGallerySummary) {
+        self.summary = summary
+        _noteText = State(initialValue: summary.note ?? "")
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "note.text")
+                .foregroundStyle(.secondary)
+
+            TextField(AppCopy.cacheManagementNotePlaceholder, text: $noteText)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+                .font(.subheadline)
+                .submitLabel(.done)
+                .onSubmit {
+                    saveNote()
+                }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .accessibilityLabel(AppCopy.cacheManagementNoteField)
+        .onChange(of: noteText) { _, _ in
+            saveNote()
+        }
+        .onChange(of: summary.note) { _, note in
+            if noteText != (note ?? "") {
+                noteText = note ?? ""
+            }
+        }
+    }
+
+    /// Persists the latest note text to the shared image cache store.
+    private func saveNote() {
+        imageCacheStore.setGalleryNote(noteText, for: summary.galleryIdentifier)
+    }
+}
+
 /// Opens cached galleries without requiring the remote detail page to load first.
 private struct CachedGalleryEntryView: View {
     let summary: CachedGallerySummary
@@ -449,7 +503,7 @@ private struct CachedGalleryEntryView: View {
             }
             .padding()
         }
-        .navigationTitle(summary.title)
+        .navigationTitle(summary.note ?? summary.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .safeAreaInset(edge: .bottom) {
@@ -483,6 +537,14 @@ private struct CachedGalleryEntryView: View {
     /// Shows cache progress and storage usage for the opened gallery.
     private var cacheSummaryHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
+            GalleryTitleText(
+                title: summary.title,
+                note: summary.note,
+                titleFont: .title3.weight(.semibold),
+                originalTitleFont: .subheadline
+            )
+            .lineLimit(3)
+
             Text(summary.progressText)
                 .font(.headline)
 

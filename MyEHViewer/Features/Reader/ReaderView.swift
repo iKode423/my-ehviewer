@@ -46,6 +46,7 @@ struct ReaderView: View {
             }
 
             ToolbarItemGroup(placement: .topBarTrailing) {
+                imageFavoriteButton
                 displayMenu
             }
         }
@@ -281,6 +282,20 @@ struct ReaderView: View {
                 .foregroundStyle(readerForegroundStyle.opacity(0.72))
         }
         .padding()
+    }
+
+    /// Toggles the current image in the local image favorites collection.
+    @ViewBuilder
+    private var imageFavoriteButton: some View {
+        if let imagePage = viewModel.imagePage {
+            let isFavorite = libraryStore.isImageFavorite(imagePage)
+            Button {
+                libraryStore.toggleImageFavorite(imagePage: imagePage)
+            } label: {
+                Image(systemName: isFavorite ? "heart.fill" : "heart")
+            }
+            .accessibilityLabel(isFavorite ? AppCopy.readerUnfavoriteImage : AppCopy.readerFavoriteImage)
+        }
     }
 
     /// Shows an inline retry action when the image resource fails to load.

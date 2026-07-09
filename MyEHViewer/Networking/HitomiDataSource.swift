@@ -499,7 +499,7 @@ final class HitomiDataSource {
 
     /// Converts Hitomi tags to shared tag models.
     private func tags(from info: HitomiGalleryInfo) -> [EHTag] {
-        info.tags?.map { tag in
+        let baseTags: [EHTag] = info.tags?.map { tag in
             let namespace: String
             if tag.female?.isEmpty == false {
                 namespace = "female"
@@ -510,6 +510,31 @@ final class HitomiDataSource {
             }
             return EHTag(namespace: namespace, name: tag.tag)
         } ?? []
+        let namedTags = namedTags(from: info.artists, namespace: "artist", value: \.artist) +
+            namedTags(from: info.groups, namespace: "group", value: \.group) +
+            namedTags(from: info.parodys, namespace: "parody", value: \.parody) +
+            namedTags(from: info.characters, namespace: "character", value: \.character)
+        return deduplicatedTags(baseTags + namedTags)
+    }
+
+    /// Converts Hitomi named metadata into regular searchable tags.
+    private func namedTags(
+        from items: [HitomiNamedItem]?,
+        namespace: String,
+        value: KeyPath<HitomiNamedItem, String?>
+    ) -> [EHTag] {
+        items?.compactMap { item in
+            guard let name = item[keyPath: value], !name.isEmpty else { return nil }
+            return EHTag(namespace: namespace, name: name)
+        } ?? []
+    }
+
+    /// Removes duplicate tags while preserving Hitomi's original order.
+    private func deduplicatedTags(_ tags: [EHTag]) -> [EHTag] {
+        var seenIDs: Set<String> = []
+        return tags.filter { tag in
+            seenIDs.insert(tag.id.lowercased()).inserted
+        }
     }
 
     /// Builds search row tags with the gallery language first.
