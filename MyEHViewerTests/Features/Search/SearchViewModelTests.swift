@@ -70,6 +70,23 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(restored.recentQueries, ["sample"])
     }
 
+    /// Confirms recent searches keep the newest twenty unique entries.
+    func testSuccessfulSearchKeepsTwentyRecentQueries() async {
+        let defaults = makeUserDefaults()
+        let viewModel = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML), userDefaults: defaults, recentQueriesKey: "recent-limit-test")
+
+        for index in 0..<22 {
+            viewModel.query = "term-\(index)"
+            await viewModel.search()
+        }
+
+        let restored = SearchViewModel(client: MockHTTPClient(body: Self.searchHTML), userDefaults: defaults, recentQueriesKey: "recent-limit-test")
+        XCTAssertEqual(restored.recentQueries.count, 20)
+        XCTAssertEqual(Array(restored.recentQueries.prefix(2)), ["term-21", "term-20"])
+        XCTAssertFalse(restored.recentQueries.contains("term-0"))
+        XCTAssertFalse(restored.recentQueries.contains("term-1"))
+    }
+
     /// Confirms an initial query can auto-search exactly once.
     func testSearchIfNeededUsesInitialQueryOnce() async {
         let recorder = SearchRequestRecorder()

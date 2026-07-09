@@ -337,3 +337,12 @@ xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'p
 ```
 
 结果：通过。缓存管理页无未完成任务时不再显示“继续未完成下载”；缓存图库子页面直接展示全部已知页缩略图，未下载页显示占位，并在底部提供“前往图库”和有阅读记录时的继续阅读入口；阅读器支持左右滑翻页，隐藏阅读模式下的左上浮动返回按钮，并把页面目录入口移动到下方跳页按钮右侧；搜索相关输入框增加清空按钮；图库和缓存入口的继续阅读按钮显示页码；Hitomi 图库详情初始预览改为最多 20 张；设置页新增基于缓存、收藏、历史、最近搜索、作者、标签和分类的统计分析页；完整回归测试通过。
+
+### 统计分析与最近搜索回归
+
+```sh
+git diff --check
+xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath /tmp/MyEHViewerStatisticsDerived
+```
+
+结果：通过。最近搜索上限从 10 条调整为 20 条并增加持久化上限测试；统计分析页不再展示搜索词数量，进入后隐藏底部 TabBar；概览下方增加已缓存图库页数分布图；缓存资源下方增加最喜欢的角色排行；常见作者下方增加 Group 排行；完整回归测试通过。

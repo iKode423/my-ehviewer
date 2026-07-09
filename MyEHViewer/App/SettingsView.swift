@@ -623,8 +623,7 @@ private struct LocalStatisticsView: View {
         LocalStatisticsSnapshot(
             records: libraryStore.records,
             favoriteCount: libraryStore.favorites.count,
-            cacheSummaries: imageCacheStore.gallerySummaries,
-            recentQueries: recentQueries
+            cacheSummaries: imageCacheStore.gallerySummaries
         )
     }
 
@@ -643,6 +642,14 @@ private struct LocalStatisticsView: View {
                     overviewChart(for: snapshot)
                         .frame(height: 180)
                         .padding(.vertical, 6)
+                }
+
+                if !snapshot.cachedPageDistribution.isEmpty {
+                    Section(AppCopy.statisticsCachedPageDistributionTitle) {
+                        cachedPageDistributionChart(for: snapshot.cachedPageDistribution)
+                            .frame(height: 180)
+                            .padding(.vertical, 6)
+                    }
                 }
 
                 Section(AppCopy.statisticsCacheTitle) {
@@ -667,9 +674,21 @@ private struct LocalStatisticsView: View {
                 }
 
                 rankedSection(
+                    title: AppCopy.statisticsFavoriteCharactersTitle,
+                    items: snapshot.topCharacters,
+                    emptyMessage: AppCopy.statisticsNoCharacters
+                )
+
+                rankedSection(
                     title: AppCopy.statisticsTopAuthorsTitle,
                     items: snapshot.topAuthors,
                     emptyMessage: AppCopy.statisticsNoAuthors
+                )
+
+                rankedSection(
+                    title: AppCopy.statisticsTopGroupsTitle,
+                    items: snapshot.topGroups,
+                    emptyMessage: AppCopy.statisticsNoGroups
                 )
 
                 rankedSection(
@@ -687,6 +706,7 @@ private struct LocalStatisticsView: View {
         }
         .navigationTitle(AppCopy.statisticsTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .onAppear {
             imageCacheStore.refresh()
         }
@@ -723,6 +743,26 @@ private struct LocalStatisticsView: View {
         }
     }
 
+    /// Shows cached gallery page-count buckets as a compact bar chart.
+    private func cachedPageDistributionChart(for items: [StatisticRankedItem]) -> some View {
+        Chart(items) { item in
+            BarMark(
+                x: .value(AppCopy.statisticsCachedGalleries, item.count),
+                y: .value(AppCopy.statisticsCachedPageDistributionTitle, item.title)
+            )
+            .foregroundStyle(.teal)
+            .annotation(position: .trailing) {
+                Text(String(item.count))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .chartLegend(.hidden)
+        .chartXAxis {
+            AxisMarks(position: .bottom)
+        }
+    }
+
     /// Shows ranked local metadata with progress bars.
     @ViewBuilder
     private func rankedSection(title: String, items: [StatisticRankedItem], emptyMessage: String) -> some View {
@@ -753,10 +793,6 @@ private struct LocalStatisticsView: View {
         }
     }
 
-    /// Reads recent search queries from the same storage used by SearchViewModel.
-    private var recentQueries: [String] {
-        UserDefaults.standard.stringArray(forKey: SearchViewModel.defaultRecentQueriesKey) ?? []
-    }
 }
 
 /// Stores one overview chart item.
@@ -790,8 +826,10 @@ private struct LocalStatisticsSnapshot {
     let cachedPageCount: Int
     let knownCachedPageTotal: Int
     let cacheByteCount: Int64
-    let recentQueryCount: Int
+    let cachedPageDistribution: [StatisticRankedItem]
+    let topCharacters: [StatisticRankedItem]
     let topAuthors: [StatisticRankedItem]
+    let topGroups: [StatisticRankedItem]
     let topTags: [StatisticRankedItem]
     let topCategories: [StatisticRankedItem]
 
@@ -799,8 +837,7 @@ private struct LocalStatisticsSnapshot {
     init(
         records: [LibraryGalleryRecord],
         favoriteCount: Int,
-        cacheSummaries: [CachedGallerySummary],
-        recentQueries: [String]
+        cacheSummaries: [CachedGallerySummary]
     ) {
         historyCount = records.count
         self.favoriteCount = favoriteCount
@@ -808,9 +845,12 @@ private struct LocalStatisticsSnapshot {
         cachedPageCount = cacheSummaries.reduce(0) { $0 + $1.cachedPageCount }
         knownCachedPageTotal = cacheSummaries.reduce(0) { $0 + ($1.totalPageCount ?? $1.cachedPageCount) }
         cacheByteCount = cacheSummaries.reduce(Int64(0)) { $0 + $1.byteCount }
-        recentQueryCount = recentQueries.count
+        cachedPageDistribution = Self.cachedPageDistribution(from: cacheSummaries)
 
+        let tags = records.flatMap { $0.tags }
+        topCharacters = Self.rankedItems(from: Self.tagNames(in: tags, namespace: "character"), limit: 10)
         topAuthors = Self.rankedItems(from: records.compactMap { Self.normalized($0.uploader) })
+        topGroups = Self.rankedItems(from: Self.tagNames(in: tags, namespace: "group"), limit: 10)
         topTags = Self.rankedItems(from: records.flatMap { $0.tags.map(\.displayName).compactMap { Self.normalized($0) } })
         topCategories = Self.rankedItems(from: records.compactMap { record in
             Self.normalized(EHGalleryCategory.displayName(forSiteLabel: record.category))
@@ -821,8 +861,7 @@ private struct LocalStatisticsSnapshot {
         historyCount == 0 &&
             favoriteCount == 0 &&
             cachedGalleryCount == 0 &&
-            cachedPageCount == 0 &&
-            recentQueryCount == 0
+            cachedPageCount == 0
     }
 
     var overviewItems: [StatisticOverviewItem] {
@@ -830,8 +869,7 @@ private struct LocalStatisticsSnapshot {
             StatisticOverviewItem(title: AppCopy.statisticsHistoryGalleries, value: historyCount, color: .blue),
             StatisticOverviewItem(title: AppCopy.statisticsFavoriteGalleries, value: favoriteCount, color: .yellow),
             StatisticOverviewItem(title: AppCopy.statisticsCachedGalleries, value: cachedGalleryCount, color: .green),
-            StatisticOverviewItem(title: AppCopy.statisticsCachedPages, value: cachedPageCount, color: .purple),
-            StatisticOverviewItem(title: AppCopy.statisticsRecentQueries, value: recentQueryCount, color: .orange)
+            StatisticOverviewItem(title: AppCopy.statisticsCachedPages, value: cachedPageCount, color: .purple)
         ]
         .filter { $0.value > 0 }
     }
@@ -859,6 +897,38 @@ private struct LocalStatisticsSnapshot {
             }
             .prefix(limit)
             .map { $0 }
+    }
+
+    /// Builds page-count buckets for cached galleries.
+    private static func cachedPageDistribution(from summaries: [CachedGallerySummary]) -> [StatisticRankedItem] {
+        let pageCounts = summaries
+            .map { $0.totalPageCount ?? $0.cachedPageCount }
+            .filter { $0 > 0 }
+
+        guard !pageCounts.isEmpty else { return [] }
+
+        let buckets: [(title: String, contains: (Int) -> Bool)] = [
+            ("1-20 页", { $0 <= 20 }),
+            ("21-50 页", { 21...50 ~= $0 }),
+            ("51-100 页", { 51...100 ~= $0 }),
+            ("101-200 页", { 101...200 ~= $0 }),
+            ("201+ 页", { $0 >= 201 })
+        ]
+        let bucketCounts = buckets.map { bucket in
+            (title: bucket.title, count: pageCounts.filter(bucket.contains).count)
+        }
+        let maximumCount = bucketCounts.map(\.count).max() ?? 0
+
+        return bucketCounts
+            .filter { $0.count > 0 }
+            .map { StatisticRankedItem(title: $0.title, count: $0.count, maximumCount: maximumCount) }
+    }
+
+    /// Extracts normalized tag names for a single namespace.
+    private static func tagNames(in tags: [EHTag], namespace: String) -> [String] {
+        tags
+            .filter { $0.namespace.caseInsensitiveCompare(namespace) == .orderedSame }
+            .compactMap { Self.normalized($0.name) }
     }
 
     /// Trims empty values so charts do not show meaningless rows.

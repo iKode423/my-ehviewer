@@ -5,6 +5,8 @@ import Foundation
 @MainActor
 final class SearchViewModel: ObservableObject {
     static let defaultRecentQueriesKey = "Search.recentQueries"
+    /// Limits the stored search terms shown in the recent search list.
+    private static let maximumRecentQueryCount = 20
 
     @Published private(set) var site: ContentSite
     @Published var source = EHSearchSource.frontPage
@@ -298,7 +300,7 @@ final class SearchViewModel: ObservableObject {
 
         recentQueries.removeAll { $0.caseInsensitiveCompare(recentQuery) == .orderedSame }
         recentQueries.insert(recentQuery, at: 0)
-        recentQueries = Array(recentQueries.prefix(10))
+        recentQueries = Array(recentQueries.prefix(Self.maximumRecentQueryCount))
         userDefaults.set(recentQueries, forKey: recentQueriesKey)
     }
 
