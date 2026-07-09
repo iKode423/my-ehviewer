@@ -374,3 +374,13 @@ xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'p
 ```
 
 结果：通过。缓存管理列表页移除备注编辑控件，恢复为直接进入缓存预览；缓存预览页顶部增加备注编辑入口，并在保存后即时刷新页面标题和顶部标题；图片收藏排序菜单图标改为无外环的省空间省略号；图片收藏前五张统一使用第一张的大图尺寸，后续普通图片尺寸保持不变；完整回归测试通过。
+
+### 缓存筛选、图片收藏 Tab 与下载节流回归
+
+```sh
+git diff --check
+xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:MyEHViewerTests/MyEHViewerTests/testImageCacheStoreDeduplicatesAliasesAndPageRecords -only-testing:MyEHViewerTests/GalleryDownloadManagerTests/testCachedGalleryDetailNotFoundSkipsFutureBulkResume -derivedDataPath /tmp/MyEHViewerImageFavoritesTabDerived
+xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath /tmp/MyEHViewerImageFavoritesTabDerived
+```
+
+结果：通过。缓存管理页增加可清空的图库筛选框，按标题和备注过滤列表；图片收藏从书架移动到底部独立 Tab，支持右下角随机显示 10 张大图，随机模式下下拉刷新会恢复默认排序；图片收藏菜单增加“前往图库”；下载批量写入期间合并图库摘要刷新，减少每张图片保存都重建缓存列表造成的卡顿，同时普通缓存写入仍保持即时更新；定向回归和完整回归测试通过。

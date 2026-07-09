@@ -284,6 +284,7 @@ private struct ImageCacheManagementView: View {
     @StateObject private var imageCacheStore = ImageCacheStore.shared
     @StateObject private var downloadManager = GalleryDownloadManager.shared
     @AppStorage(ContentSite.storageKey) private var contentSiteRaw = ContentSite.eHentai.rawValue
+    @State private var galleryFilterText = ""
 
     var body: some View {
         Group {
@@ -295,24 +296,38 @@ private struct ImageCacheManagementView: View {
                 )
             } else {
                 List {
+                    Section {
+                        ClearableSearchTextField(
+                            title: AppCopy.cacheManagementFilterPlaceholder,
+                            text: $galleryFilterText,
+                            submitLabel: .done
+                        )
+                    }
+
                     cacheDownloadControls
 
-                    ForEach(currentSiteGallerySummaries) { summary in
-                        NavigationLink {
-                            CachedGalleryEntryView(summary: summary)
-                                .environmentObject(libraryStore)
-                        } label: {
-                            cachedGalleryRow(summary)
-                        }
-                        .contextMenu {
-                            Button(role: .destructive) {
-                                imageCacheStore.clearGallery(summary.galleryIdentifier)
+                    if filteredGallerySummaries.isEmpty {
+                        ContentUnavailableView.search(text: galleryFilterText)
+                            .frame(maxWidth: .infinity, minHeight: 220)
+                            .listRowSeparator(.hidden)
+                    } else {
+                        ForEach(filteredGallerySummaries) { summary in
+                            NavigationLink {
+                                CachedGalleryEntryView(summary: summary)
+                                    .environmentObject(libraryStore)
                             } label: {
-                                Label(AppCopy.cacheManagementDeleteGallery, systemImage: "trash")
+                                cachedGalleryRow(summary)
+                            }
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    imageCacheStore.clearGallery(summary.galleryIdentifier)
+                                } label: {
+                                    Label(AppCopy.cacheManagementDeleteGallery, systemImage: "trash")
+                                }
                             }
                         }
+                        .onDelete(perform: deleteCachedGalleries)
                     }
-                    .onDelete(perform: deleteCachedGalleries)
                 }
             }
         }
@@ -410,13 +425,24 @@ private struct ImageCacheManagementView: View {
 
     /// Removes cached data for galleries selected from the management list.
     private func deleteCachedGalleries(at offsets: IndexSet) {
-        let summaries = currentSiteGallerySummaries
+        let summaries = filteredGallerySummaries
         for offset in offsets where summaries.indices.contains(offset) {
             imageCacheStore.clearGallery(summaries[offset].galleryIdentifier)
         }
     }
 
     /// Returns cached galleries that still have pages missing from the local cache.
+    private var filteredGallerySummaries: [CachedGallerySummary] {
+        let trimmedFilterText = galleryFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedFilterText.isEmpty else {
+            return currentSiteGallerySummaries
+        }
+        return currentSiteGallerySummaries.filter { summary in
+            summary.title.localizedCaseInsensitiveContains(trimmedFilterText)
+                || (summary.note?.localizedCaseInsensitiveContains(trimmedFilterText) ?? false)
+        }
+    }
+
     private var unfinishedSummaries: [CachedGallerySummary] {
         currentSiteGallerySummaries.filter { summary in
             guard let totalPageCount = summary.totalPageCount else { return false }

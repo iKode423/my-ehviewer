@@ -52,8 +52,6 @@ struct LibraryView: View {
             siteFavoritesContent
         case .localFavorites, .history:
             localRecordsContent
-        case .imageFavorites:
-            favoriteImagesContent
         }
     }
 
@@ -79,47 +77,6 @@ struct LibraryView: View {
                             .padding(.leading, 100)
                     }
                 }
-            }
-        }
-    }
-
-    /// Displays all image favorites across galleries and sites.
-    @ViewBuilder
-    private var favoriteImagesContent: some View {
-        libraryScrollContent {
-            if libraryStore.imageFavorites.isEmpty {
-                ContentUnavailableView(
-                    AppCopy.libraryEmptyImageFavoritesTitle,
-                    systemImage: "heart",
-                    description: Text(AppCopy.libraryEmptyImageFavoritesMessage)
-                )
-                .frame(maxWidth: .infinity, minHeight: 320)
-            } else {
-                let topFavorites = Array(libraryStore.imageFavorites.prefix(5))
-                let remainingFavorites = Array(libraryStore.imageFavorites.dropFirst(5))
-
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array(topFavorites.enumerated()), id: \.element.id) { index, favorite in
-                        FavoriteImageCard(
-                            favorite: favorite,
-                            rank: index,
-                            totalCount: libraryStore.imageFavorites.count
-                        )
-                    }
-
-                    if !remainingFavorites.isEmpty {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], alignment: .leading, spacing: 10) {
-                            ForEach(Array(remainingFavorites.enumerated()), id: \.element.id) { offset, favorite in
-                                FavoriteImageCard(
-                                    favorite: favorite,
-                                    rank: offset + 5,
-                                    totalCount: libraryStore.imageFavorites.count
-                                )
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal)
             }
         }
     }
@@ -299,7 +256,7 @@ struct LibraryView: View {
     }
 
     private var availableSelections: [LibrarySelection] {
-        currentSite.supportsOnlineFavorites ? LibrarySelection.allCases : [.localFavorites, .imageFavorites, .history]
+        currentSite.supportsOnlineFavorites ? LibrarySelection.allCases : [.localFavorites, .history]
     }
 
     /// Keeps online favorite controls hidden for sites that do not support them.
@@ -315,7 +272,6 @@ struct LibraryView: View {
 private enum LibrarySelection: String, CaseIterable, Identifiable {
     case localFavorites
     case siteFavorites
-    case imageFavorites
     case history
 
     var id: String { rawValue }
@@ -324,7 +280,6 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
         switch self {
         case .localFavorites: AppCopy.libraryFavorites
         case .siteFavorites: AppCopy.librarySiteFavorites
-        case .imageFavorites: AppCopy.libraryImageFavorites
         case .history: AppCopy.libraryHistory
         }
     }
@@ -333,7 +288,6 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
         switch self {
         case .localFavorites: AppCopy.libraryEmptyFavoritesTitle
         case .siteFavorites: AppCopy.librarySiteFavoritesCookieTitle
-        case .imageFavorites: AppCopy.libraryEmptyImageFavoritesTitle
         case .history: AppCopy.libraryEmptyHistoryTitle
         }
     }
@@ -342,7 +296,6 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
         switch self {
         case .localFavorites: AppCopy.libraryEmptyFavoritesMessage
         case .siteFavorites: AppCopy.librarySiteFavoritesCookieMessage
-        case .imageFavorites: AppCopy.libraryEmptyImageFavoritesMessage
         case .history: AppCopy.libraryEmptyHistoryMessage
         }
     }
@@ -351,7 +304,6 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
         switch self {
         case .localFavorites: "star"
         case .siteFavorites: "icloud"
-        case .imageFavorites: "heart"
         case .history: "clock"
         }
     }
@@ -362,9 +314,99 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
         switch self {
         case .localFavorites: store.favorites(for: site)
         case .siteFavorites: []
-        case .imageFavorites: []
         case .history: store.history(for: site)
         }
+    }
+}
+
+struct FavoriteImagesView: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
+    @State private var randomFavorites: [FavoriteImageRecord]?
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            favoriteImagesContent
+
+            if !libraryStore.imageFavorites.isEmpty {
+                Button {
+                    showRandomFavorites()
+                } label: {
+                    Image(systemName: "shuffle")
+                        .font(.headline)
+                        .frame(width: 44, height: 44)
+                        .background(.regularMaterial)
+                        .clipShape(Circle())
+                        .shadow(radius: 4, y: 2)
+                }
+                .accessibilityLabel(AppCopy.libraryRandomImageFavorites)
+                .padding(.trailing, 18)
+                .padding(.bottom, 18)
+            }
+        }
+        .navigationTitle(AppCopy.libraryImageFavorites)
+        .refreshable {
+            randomFavorites = nil
+        }
+    }
+
+    @ViewBuilder
+    private var favoriteImagesContent: some View {
+        ScrollView {
+            if libraryStore.imageFavorites.isEmpty {
+                ContentUnavailableView(
+                    AppCopy.libraryEmptyImageFavoritesTitle,
+                    systemImage: "heart",
+                    description: Text(AppCopy.libraryEmptyImageFavoritesMessage)
+                )
+                .frame(maxWidth: .infinity, minHeight: 320)
+                .padding(.horizontal)
+            } else if let randomFavorites {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(randomFavorites.enumerated()), id: \.element.id) { index, favorite in
+                        FavoriteImageCard(
+                            favorite: favorite,
+                            rank: index,
+                            totalCount: libraryStore.imageFavorites.count,
+                            usesLargeImage: true
+                        )
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 76)
+            } else {
+                let topFavorites = Array(libraryStore.imageFavorites.prefix(5))
+                let remainingFavorites = Array(libraryStore.imageFavorites.dropFirst(5))
+
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(topFavorites.enumerated()), id: \.element.id) { index, favorite in
+                        FavoriteImageCard(
+                            favorite: favorite,
+                            rank: index,
+                            totalCount: libraryStore.imageFavorites.count
+                        )
+                    }
+
+                    if !remainingFavorites.isEmpty {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], alignment: .leading, spacing: 10) {
+                            ForEach(Array(remainingFavorites.enumerated()), id: \.element.id) { offset, favorite in
+                                FavoriteImageCard(
+                                    favorite: favorite,
+                                    rank: offset + 5,
+                                    totalCount: libraryStore.imageFavorites.count
+                                )
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 76)
+            }
+        }
+    }
+
+    /// Enters random mode without mutating the persisted favorite image order.
+    private func showRandomFavorites() {
+        randomFavorites = Array(libraryStore.imageFavorites.shuffled().prefix(10))
     }
 }
 
@@ -372,6 +414,7 @@ private struct FavoriteImageCard: View {
     let favorite: FavoriteImageRecord
     let rank: Int
     let totalCount: Int
+    var usesLargeImage = false
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var appNavigationStore: AppNavigationStore
     @StateObject private var imageCacheStore = ImageCacheStore.shared
@@ -431,6 +474,12 @@ private struct FavoriteImageCard: View {
                 Spacer()
 
                 Menu {
+                    NavigationLink {
+                        GalleryDetailView(result: galleryResult)
+                    } label: {
+                        Label(AppCopy.libraryOpenFavoriteGallery, systemImage: "info.circle")
+                    }
+
                     Button {
                         libraryStore.moveImageFavoriteToFront(favorite)
                     } label: {
@@ -464,12 +513,26 @@ private struct FavoriteImageCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
+    private var galleryResult: EHSearchResult {
+        EHSearchResult(
+            identifier: favorite.galleryIdentifier,
+            title: favorite.galleryTitle,
+            category: favorite.galleryIdentifier.site.title,
+            pageURL: favorite.galleryIdentifier.url(),
+            thumbnailURL: favorite.imageURL,
+            uploader: nil,
+            postedText: nil,
+            pageCountText: nil,
+            tags: []
+        )
+    }
+
     private var imageHeight: CGFloat {
-        rank < 5 ? 260 : 132
+        usesLargeImage || rank < 5 ? 260 : 132
     }
 
     private var decodeMaxPixelSize: Int {
-        rank < 5 ? 900 : 420
+        usesLargeImage || rank < 5 ? 900 : 420
     }
 }
 

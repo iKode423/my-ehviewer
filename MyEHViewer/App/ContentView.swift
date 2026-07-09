@@ -24,6 +24,14 @@ struct ContentView: View {
                 }
                 .tag(ContentTab.library)
 
+            NavigationStack {
+                FavoriteImagesView()
+            }
+                .tabItem {
+                    Label(AppCopy.libraryImageFavorites, systemImage: "heart")
+                }
+                .tag(ContentTab.imageFavorites)
+
             SettingsView()
                 .tabItem {
                     Label(AppCopy.settingsTitle, systemImage: "gearshape")
@@ -112,6 +120,7 @@ struct ContentView: View {
 enum ContentTab: Hashable {
     case search
     case library
+    case imageFavorites
     case settings
 }
 

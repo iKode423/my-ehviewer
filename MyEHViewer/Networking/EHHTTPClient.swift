@@ -347,6 +347,10 @@ final class ImageCacheStore: ObservableObject {
     private var contentDigestByCacheKey: [String: String] = [:]
     private var cacheKeyByContentDigest: [String: String] = [:]
     private var cacheFileSizeByKey: [String: Int64] = [:]
+    private var pendingGallerySummaryRefreshTask: Task<Void, Never>?
+    private var lastGallerySummaryRefreshAt = Date.distantPast
+    private let gallerySummaryRefreshInterval: TimeInterval = 1.0
+    private var deferredGallerySummaryRefreshDepth = 0
 
     /// Creates a cache store rooted in the app caches directory by default.
     init(directoryURL: URL? = nil, fileManager: FileManager = .default) {
@@ -413,6 +417,19 @@ final class ImageCacheStore: ObservableObject {
     }
 
     /// Stores gallery metadata so cache management can list partially downloaded galleries.
+    /// Defers expensive gallery summary rebuilds while a download batch writes many pages.
+    func beginDeferredGallerySummaryRefreshes() {
+        deferredGallerySummaryRefreshDepth += 1
+    }
+
+    /// Ends a deferred refresh batch and publishes the latest gallery summaries when all batches finish.
+    func endDeferredGallerySummaryRefreshes() {
+        deferredGallerySummaryRefreshDepth = max(0, deferredGallerySummaryRefreshDepth - 1)
+        if deferredGallerySummaryRefreshDepth == 0 {
+            publishGallerySummaries()
+        }
+    }
+
     func saveGalleryMetadata(detail: EHGalleryDetail, fallback: EHSearchResult? = nil) {
         let existing = index.galleryMetadata[detail.identifier.id]
         index.galleryMetadata[detail.identifier.id] = CachedGalleryMetadata(
@@ -616,6 +633,10 @@ final class ImageCacheStore: ObservableObject {
 
     /// Recomputes cache usage stats from disk.
     func refresh(compactsDuplicates: Bool = false) {
+        pendingGallerySummaryRefreshTask?.cancel()
+        pendingGallerySummaryRefreshTask = nil
+        lastGallerySummaryRefreshAt = Date()
+
         guard let allFileURLs = try? fileManager.contentsOfDirectory(
             at: directoryURL,
             includingPropertiesForKeys: [.fileSizeKey],
@@ -743,12 +764,49 @@ final class ImageCacheStore: ObservableObject {
         let fileDelta = previousByteCount == nil ? 1 : 0
         let byteDelta = byteCount - (previousByteCount ?? 0)
 
-        if context?.galleryIdentifier != nil {
-            gallerySummaries = makeGallerySummaries()
-        }
         snapshot = ImageCacheSnapshot(
             fileCount: max(0, snapshot.fileCount + fileDelta),
             byteCount: max(0, snapshot.byteCount + byteDelta),
+            galleryCount: gallerySummaries.count
+        )
+
+        if context?.galleryIdentifier != nil {
+            if deferredGallerySummaryRefreshDepth > 0 {
+                scheduleGallerySummaryRefresh()
+            } else {
+                publishGallerySummaries()
+            }
+        }
+    }
+
+    /// Coalesces gallery summary refreshes while downloads save many pages quickly.
+    private func scheduleGallerySummaryRefresh() {
+        let elapsed = Date().timeIntervalSince(lastGallerySummaryRefreshAt)
+        if elapsed >= gallerySummaryRefreshInterval {
+            publishGallerySummaries()
+            return
+        }
+
+        guard pendingGallerySummaryRefreshTask == nil else { return }
+        let delay = max(0, gallerySummaryRefreshInterval - elapsed)
+        pendingGallerySummaryRefreshTask = Task { @MainActor [weak self] in
+            let nanoseconds = UInt64(delay * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled else { return }
+            self?.publishGallerySummaries()
+            self?.pendingGallerySummaryRefreshTask = nil
+        }
+    }
+
+    /// Publishes the latest gallery summaries and keeps the snapshot gallery count in sync.
+    private func publishGallerySummaries() {
+        pendingGallerySummaryRefreshTask?.cancel()
+        pendingGallerySummaryRefreshTask = nil
+        gallerySummaries = makeGallerySummaries()
+        lastGallerySummaryRefreshAt = Date()
+        snapshot = ImageCacheSnapshot(
+            fileCount: snapshot.fileCount,
+            byteCount: snapshot.byteCount,
             galleryCount: gallerySummaries.count
         )
     }
@@ -1129,6 +1187,10 @@ final class GalleryDownloadManager: ObservableObject {
         let totalPageCount = detail.pageCount ?? detail.pageLinks.count
         var downloadedPageCount = cachedPageCount(for: detail.identifier)
         var lastErrorMessage: String?
+        cacheStore.beginDeferredGallerySummaryRefreshes()
+        defer {
+            cacheStore.endDeferredGallerySummaryRefreshes()
+        }
         updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
 
         let missingPageLinks = detail.pageLinks
