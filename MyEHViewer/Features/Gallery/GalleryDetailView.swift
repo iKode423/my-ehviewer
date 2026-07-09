@@ -407,12 +407,7 @@ struct GalleryDetailView: View {
 
     /// Returns cached pages for this gallery when the cache index has local records.
     private var cachedSummary: CachedGallerySummary? {
-        imageCacheStore.gallerySummaries.first { $0.galleryIdentifier == result.identifier }
-            ?? imageCacheStore.gallerySummaries.first { summary in
-                summary.galleryIdentifier.site == result.identifier.site
-                    && summary.galleryIdentifier.gid == result.identifier.gid
-                    && summary.galleryIdentifier.token == result.identifier.token
-            }
+        imageCacheStore.gallerySummary(for: result.identifier)
     }
 
     /// Converts cached page records into reader page links.

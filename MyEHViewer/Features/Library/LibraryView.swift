@@ -417,7 +417,6 @@ private struct FavoriteImageCard: View {
     var usesLargeImage = false
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var appNavigationStore: AppNavigationStore
-    @StateObject private var imageCacheStore = ImageCacheStore.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -454,7 +453,7 @@ private struct FavoriteImageCard: View {
 
                     GalleryTitleText(
                         title: favorite.galleryTitle,
-                        note: imageCacheStore.note(for: favorite.galleryIdentifier),
+                        note: galleryNote,
                         titleFont: .caption.weight(.semibold),
                         originalTitleFont: .caption2
                     )
@@ -525,6 +524,10 @@ private struct FavoriteImageCard: View {
             pageCountText: nil,
             tags: []
         )
+    }
+
+    private var galleryNote: String? {
+        ImageCacheStore.shared.note(for: favorite.galleryIdentifier)
     }
 
     private var imageHeight: CGFloat {

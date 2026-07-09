@@ -347,8 +347,10 @@ final class ImageCacheStore: ObservableObject {
     private var contentDigestByCacheKey: [String: String] = [:]
     private var cacheKeyByContentDigest: [String: String] = [:]
     private var cacheFileSizeByKey: [String: Int64] = [:]
+    private var gallerySummaryByID: [String: CachedGallerySummary] = [:]
     private var pendingGallerySummaryRefreshTask: Task<Void, Never>?
     private var lastGallerySummaryRefreshAt = Date.distantPast
+    private var lastDiskRefreshAt = Date.distantPast
     private let gallerySummaryRefreshInterval: TimeInterval = 1.0
     private var deferredGallerySummaryRefreshDepth = 0
 
@@ -416,7 +418,6 @@ final class ImageCacheStore: ObservableObject {
         return record.imageURL
     }
 
-    /// Stores gallery metadata so cache management can list partially downloaded galleries.
     /// Defers expensive gallery summary rebuilds while a download batch writes many pages.
     func beginDeferredGallerySummaryRefreshes() {
         deferredGallerySummaryRefreshDepth += 1
@@ -430,6 +431,18 @@ final class ImageCacheStore: ObservableObject {
         }
     }
 
+    /// Returns the cached gallery summary using the in-memory lookup table.
+    func gallerySummary(for identifier: EHGalleryIdentifier) -> CachedGallerySummary? {
+        gallerySummaryByID[identifier.id]
+    }
+
+    /// Skips the expensive disk scan when the cache was refreshed recently.
+    func refreshIfNeeded(minimumInterval: TimeInterval = 300, compactsDuplicates: Bool = false) {
+        guard Date().timeIntervalSince(lastDiskRefreshAt) >= minimumInterval else { return }
+        refresh(compactsDuplicates: compactsDuplicates)
+    }
+
+    /// Stores gallery metadata so cache management can list partially downloaded galleries.
     func saveGalleryMetadata(detail: EHGalleryDetail, fallback: EHSearchResult? = nil) {
         let existing = index.galleryMetadata[detail.identifier.id]
         index.galleryMetadata[detail.identifier.id] = CachedGalleryMetadata(
@@ -442,7 +455,7 @@ final class ImageCacheStore: ObservableObject {
             isDownloadUnavailable: false
         )
         saveIndex()
-        refresh(compactsDuplicates: false)
+        publishGallerySummaries()
     }
 
     /// Returns the custom cache note for a gallery.
@@ -467,7 +480,7 @@ final class ImageCacheStore: ObservableObject {
             isDownloadUnavailable: existing?.isDownloadUnavailable ?? false
         )
         saveIndex()
-        refresh(compactsDuplicates: false)
+        publishGallerySummaries()
     }
 
     /// Marks a cached gallery as unavailable for future bulk download resumes.
@@ -488,7 +501,7 @@ final class ImageCacheStore: ObservableObject {
             isDownloadUnavailable: true
         )
         saveIndex()
-        refresh(compactsDuplicates: false)
+        publishGallerySummaries()
     }
 
     /// Saves image data and refreshes cache usage stats.
@@ -579,6 +592,8 @@ final class ImageCacheStore: ObservableObject {
             cacheFileSizeByKey = [:]
             snapshot = .empty
             gallerySummaries = []
+            gallerySummaryByID = [:]
+            lastDiskRefreshAt = Date()
         } catch {
             refresh()
         }
@@ -647,6 +662,8 @@ final class ImageCacheStore: ObservableObject {
             cacheFileSizeByKey = [:]
             snapshot = .empty
             gallerySummaries = []
+            gallerySummaryByID = [:]
+            lastDiskRefreshAt = Date()
             return
         }
 
@@ -686,7 +703,8 @@ final class ImageCacheStore: ObservableObject {
         if !duplicateKeyMap.isEmpty || removedMissingEntries {
             saveIndex()
         }
-        gallerySummaries = makeGallerySummaries()
+        setGallerySummaries(makeGallerySummaries())
+        lastDiskRefreshAt = Date()
         snapshot = ImageCacheSnapshot(fileCount: uniqueFileCount, byteCount: uniqueByteCount, galleryCount: gallerySummaries.count)
     }
 
@@ -755,8 +773,6 @@ final class ImageCacheStore: ObservableObject {
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    /// Loads the JSON index used for aliases and gallery summaries.
-
     /// Updates visible cache stats after saving one image without scanning every file.
     private func refreshAfterSaving(cacheKey: String, byteCount: Int64, context: ImageCacheContext?) {
         let previousByteCount = cacheFileSizeByKey[cacheKey]
@@ -802,7 +818,7 @@ final class ImageCacheStore: ObservableObject {
     private func publishGallerySummaries() {
         pendingGallerySummaryRefreshTask?.cancel()
         pendingGallerySummaryRefreshTask = nil
-        gallerySummaries = makeGallerySummaries()
+        setGallerySummaries(makeGallerySummaries())
         lastGallerySummaryRefreshAt = Date()
         snapshot = ImageCacheSnapshot(
             fileCount: snapshot.fileCount,
@@ -811,6 +827,13 @@ final class ImageCacheStore: ObservableObject {
         )
     }
 
+    /// Updates the published array and fast lookup table together.
+    private func setGallerySummaries(_ summaries: [CachedGallerySummary]) {
+        gallerySummaries = summaries
+        gallerySummaryByID = Dictionary(uniqueKeysWithValues: summaries.map { ($0.galleryIdentifier.id, $0) })
+    }
+
+    /// Loads the JSON index used for aliases and gallery summaries.
     private func loadIndex() {
         guard
             let data = try? Data(contentsOf: indexURL),
@@ -1254,7 +1277,7 @@ final class GalleryDownloadManager: ObservableObject {
 
     /// Builds progress from cache when no download is running.
     private func cachedProgress(for identifier: EHGalleryIdentifier) -> GalleryDownloadProgress? {
-        guard let summary = cacheStore.gallerySummaries.first(where: { $0.galleryIdentifier == identifier }) else { return nil }
+        guard let summary = cacheStore.gallerySummary(for: identifier) else { return nil }
         return GalleryDownloadProgress(
             galleryID: identifier.id,
             title: summary.title,
@@ -1267,7 +1290,7 @@ final class GalleryDownloadManager: ObservableObject {
 
     /// Counts cached pages for one gallery.
     private func cachedPageCount(for identifier: EHGalleryIdentifier) -> Int {
-        cacheStore.gallerySummaries.first(where: { $0.galleryIdentifier == identifier })?.cachedPageCount ?? 0
+        cacheStore.gallerySummary(for: identifier)?.cachedPageCount ?? 0
     }
 
     /// Returns true when a gallery is already queued or actively downloading.

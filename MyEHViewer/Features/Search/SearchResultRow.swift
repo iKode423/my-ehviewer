@@ -3,7 +3,6 @@ import SwiftUI
 /// Renders one gallery result in the search list.
 struct SearchResultRow: View {
     let result: EHSearchResult
-    @StateObject private var imageCacheStore = ImageCacheStore.shared
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -24,7 +23,7 @@ struct SearchResultRow: View {
 
                 GalleryTitleText(
                     title: result.title,
-                    note: imageCacheStore.note(for: result.identifier),
+                    note: galleryNote,
                     titleFont: .body.weight(.semibold),
                     originalTitleFont: .caption
                 )
@@ -93,6 +92,10 @@ struct SearchResultRow: View {
         return pageCountText
             .replacingOccurrences(of: " pages", with: " 页")
             .replacingOccurrences(of: " page", with: " 页")
+    }
+
+    private var galleryNote: String? {
+        ImageCacheStore.shared.note(for: result.identifier)
     }
 }
 

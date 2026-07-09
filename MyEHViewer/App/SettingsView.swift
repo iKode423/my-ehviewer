@@ -36,7 +36,7 @@ struct SettingsView: View {
             .id(accentRefreshID)
             .onAppear {
                 cookieInput = siteCookieStore.cookieHeader
-                imageCacheStore.refresh()
+                imageCacheStore.refreshIfNeeded()
             }
             .onChange(of: accentColorHex) { _, _ in
                 accentRefreshID = UUID()
@@ -334,7 +334,7 @@ private struct ImageCacheManagementView: View {
         .navigationTitle(AppCopy.cacheManagementTitle)
         .toolbar(.hidden, for: .tabBar)
         .onAppear {
-            imageCacheStore.refresh()
+            imageCacheStore.refreshIfNeeded()
         }
     }
 
@@ -873,7 +873,7 @@ private struct LocalStatisticsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .onAppear {
-            imageCacheStore.refresh()
+            imageCacheStore.refreshIfNeeded()
         }
     }
 
