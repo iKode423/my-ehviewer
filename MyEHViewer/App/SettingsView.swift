@@ -14,6 +14,8 @@ struct SettingsView: View {
     @AppStorage(ReaderZoomLevel.storageKey) private var zoomLevelRaw = ReaderZoomLevel.x1.rawValue
     @AppStorage(ReaderBackgroundMode.storageKey) private var backgroundModeRaw = ReaderBackgroundMode.system.rawValue
     @State private var cookieInput = ""
+    @State private var showsAppearanceSettings = false
+    @State private var showsReaderPreferences = false
     @State private var showsClearConfirmation = false
     @State private var showsCookieClearConfirmation = false
     @State private var showsImageCacheClearConfirmation = false
@@ -30,9 +32,9 @@ struct SettingsView: View {
                 contentSiteSection
                 appearanceSection
                 readerPreferencesSection
-                cachePolicySection
                 imageCacheSection
                 localDataSection
+                cachePolicySection
                 siteAccessSection
             }
             .navigationTitle(AppCopy.settingsTitle)
@@ -87,18 +89,22 @@ struct SettingsView: View {
 
     /// Shows app-wide appearance controls.
     private var appearanceSection: some View {
-        Section(AppCopy.settingsAppearanceTitle) {
-            Picker(AppCopy.settingsThemeMode, selection: $themeModeRaw) {
-                ForEach(AppThemeMode.allCases) { mode in
-                    Text(mode.title).tag(mode.rawValue)
+        Section {
+            DisclosureGroup(isExpanded: $showsAppearanceSettings) {
+                Picker(AppCopy.settingsThemeMode, selection: $themeModeRaw) {
+                    ForEach(AppThemeMode.allCases) { mode in
+                        Text(mode.title).tag(mode.rawValue)
+                    }
                 }
-            }
-            .accentColor(settingsAccentColor)
-            .tint(settingsAccentColor)
-
-            ColorPicker(AppCopy.settingsAccentColor, selection: accentColorBinding, supportsOpacity: false)
                 .accentColor(settingsAccentColor)
                 .tint(settingsAccentColor)
+
+                ColorPicker(AppCopy.settingsAccentColor, selection: accentColorBinding, supportsOpacity: false)
+                    .accentColor(settingsAccentColor)
+                    .tint(settingsAccentColor)
+            } label: {
+                Label(AppCopy.settingsAppearanceTitle, systemImage: "paintpalette")
+            }
         }
     }
 
@@ -118,30 +124,34 @@ struct SettingsView: View {
 
     /// Shows reader display preferences shared with ReaderView.
     private var readerPreferencesSection: some View {
-        Section(AppCopy.settingsReaderPreferencesTitle) {
-            Picker(AppCopy.readerDisplayMode, selection: $fitModeRaw) {
-                ForEach(ReaderFitMode.allCases) { mode in
-                    Text(mode.title).tag(mode.rawValue)
+        Section {
+            DisclosureGroup(isExpanded: $showsReaderPreferences) {
+                Picker(AppCopy.readerDisplayMode, selection: $fitModeRaw) {
+                    ForEach(ReaderFitMode.allCases) { mode in
+                        Text(mode.title).tag(mode.rawValue)
+                    }
                 }
-            }
-            .accentColor(settingsAccentColor)
-            .tint(settingsAccentColor)
+                .accentColor(settingsAccentColor)
+                .tint(settingsAccentColor)
 
-            Picker(AppCopy.readerZoomMode, selection: $zoomLevelRaw) {
-                ForEach(ReaderZoomLevel.allCases) { level in
-                    Text(level.title).tag(level.rawValue)
+                Picker(AppCopy.readerZoomMode, selection: $zoomLevelRaw) {
+                    ForEach(ReaderZoomLevel.allCases) { level in
+                        Text(level.title).tag(level.rawValue)
+                    }
                 }
-            }
-            .accentColor(settingsAccentColor)
-            .tint(settingsAccentColor)
+                .accentColor(settingsAccentColor)
+                .tint(settingsAccentColor)
 
-            Picker(AppCopy.readerBackgroundMode, selection: $backgroundModeRaw) {
-                ForEach(ReaderBackgroundMode.allCases) { mode in
-                    Text(mode.title).tag(mode.rawValue)
+                Picker(AppCopy.readerBackgroundMode, selection: $backgroundModeRaw) {
+                    ForEach(ReaderBackgroundMode.allCases) { mode in
+                        Text(mode.title).tag(mode.rawValue)
+                    }
                 }
+                .accentColor(settingsAccentColor)
+                .tint(settingsAccentColor)
+            } label: {
+                Label(AppCopy.settingsReaderPreferencesTitle, systemImage: "book.pages")
             }
-            .accentColor(settingsAccentColor)
-            .tint(settingsAccentColor)
         }
     }
 

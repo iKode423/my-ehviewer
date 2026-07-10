@@ -15,6 +15,7 @@ struct SearchView: View {
     @State private var pageJumpText = ""
     @State private var scrollToTopRequest = 0
     @State private var showsQRCodeScanner = false
+    @State private var pendingScannedContent: String?
     @State private var scannedGalleryResult: EHSearchResult?
     @State private var scannerAlert: SearchScannerAlert?
 
@@ -40,6 +41,7 @@ struct SearchView: View {
             NavigationStack {
                 titledSearchContent
             }
+            .id(appNavigationStore.searchNavigationID)
         } else {
             titledSearchContent
         }
@@ -58,10 +60,10 @@ struct SearchView: View {
         .navigationDestination(item: $scannedGalleryResult) { result in
             GalleryDetailView(result: result)
         }
-        .sheet(isPresented: $showsQRCodeScanner) {
+        .sheet(isPresented: $showsQRCodeScanner, onDismiss: handleDismissedScanner) {
             QRCodeScannerSheet { content in
+                pendingScannedContent = content
                 showsQRCodeScanner = false
-                handleScannedContent(content)
             }
         }
         .alert(item: $scannerAlert) { alert in
@@ -635,6 +637,13 @@ struct SearchView: View {
         appNavigationStore.consumeSearchRequest(id: request.id)
     }
 
+    /// Processes a scanned value after the camera sheet finishes dismissing.
+    private func handleDismissedScanner() {
+        guard let content = pendingScannedContent else { return }
+        pendingScannedContent = nil
+        handleScannedContent(content)
+    }
+
     /// Opens supported gallery links and reports every other scanned value.
     private func handleScannedContent(_ content: String) {
         let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -827,10 +836,7 @@ private struct QRCodeScannerSheet: View {
                     .foregroundStyle(.white)
                 } else {
                     QRCodeCameraView(
-                        onCode: { code in
-                            dismiss()
-                            onCode(code)
-                        },
+                        onCode: onCode,
                         onError: { errorMessage = $0 }
                     )
                     .ignoresSafeArea()
@@ -877,8 +883,14 @@ private struct QRCodeCameraView: UIViewControllerRepresentable {
 }
 
 /// Captures QR metadata and returns the first decoded string.
+/// Wraps AVCaptureSession for serialized background start and stop calls.
+private final class QRCodeCaptureSessionBox: @unchecked Sendable {
+    let session = AVCaptureSession()
+}
+
 private final class QRCodeScannerViewController: UIViewController, @preconcurrency AVCaptureMetadataOutputObjectsDelegate {
-    private let captureSession = AVCaptureSession()
+    private let captureSessionBox = QRCodeCaptureSessionBox()
+    private let captureSessionQueue = DispatchQueue(label: "com.ikode.MyEHViewer.qr-scanner")
     private let onCode: (String) -> Void
     private let onError: (String) -> Void
     private var previewLayer: AVCaptureVideoPreviewLayer?
@@ -911,8 +923,11 @@ private final class QRCodeScannerViewController: UIViewController, @preconcurren
 
     /// Stops the camera session when scanning ends or the sheet closes.
     func stopScanning() {
-        guard captureSession.isRunning else { return }
-        captureSession.stopRunning()
+        let captureSessionBox = captureSessionBox
+        captureSessionQueue.async {
+            guard captureSessionBox.session.isRunning else { return }
+            captureSessionBox.session.stopRunning()
+        }
     }
 
     /// Handles the current video authorization state.
@@ -948,6 +963,7 @@ private final class QRCodeScannerViewController: UIViewController, @preconcurren
         do {
             let input = try AVCaptureDeviceInput(device: camera)
             let output = AVCaptureMetadataOutput()
+            let captureSession = captureSessionBox.session
             guard captureSession.canAddInput(input), captureSession.canAddOutput(output) else {
                 onError(AppCopy.searchScannerUnavailableMessage)
                 return
@@ -965,7 +981,12 @@ private final class QRCodeScannerViewController: UIViewController, @preconcurren
             previewLayer.frame = view.bounds
             view.layer.addSublayer(previewLayer)
             self.previewLayer = previewLayer
-            captureSession.startRunning()
+
+            let captureSessionBox = captureSessionBox
+            captureSessionQueue.async {
+                guard !captureSessionBox.session.isRunning else { return }
+                captureSessionBox.session.startRunning()
+            }
         } catch {
             onError(error.localizedDescription)
         }

@@ -110,14 +110,14 @@ private struct HitomiTag: Decodable {
         from container: KeyedDecodingContainer<CodingKeys>,
         forKey key: CodingKeys
     ) -> Bool {
-        if let value = try? container.decodeIfPresent(Bool.self, forKey: key) {
-            return value ?? false
+        if let value = try? container.decode(Bool.self, forKey: key) {
+            return value
         }
-        if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
-            return (value ?? 0) != 0
+        if let value = try? container.decode(Int.self, forKey: key) {
+            return value != 0
         }
-        if let value = try? container.decodeIfPresent(String.self, forKey: key) {
-            let normalized = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let value = try? container.decode(String.self, forKey: key) {
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             return !normalized.isEmpty && normalized != "0" && normalized != "false"
         }
         return false

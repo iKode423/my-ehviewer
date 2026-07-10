@@ -549,12 +549,14 @@ final class MyEHViewerTests: XCTestCase {
     @MainActor
     func testAppNavigationStoreOpensAndConsumesSearchRequest() throws {
         let store = AppNavigationStore()
+        let previousNavigationID = store.searchNavigationID
         store.selectedTab = .library
 
         store.openSearch(query: "demo", site: .hitomi)
 
         let request = try XCTUnwrap(store.searchRequest)
         XCTAssertEqual(store.selectedTab, .search)
+        XCTAssertNotEqual(store.searchNavigationID, previousNavigationID)
         XCTAssertEqual(request.query, "demo")
         XCTAssertEqual(request.site, .hitomi)
 
@@ -575,6 +577,12 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(EHTag(namespace: "group", name: "sample").searchQuery, "group:sample")
         XCTAssertEqual(EHTag(namespace: "group", name: "sample tag").searchQuery, "group:\"sample tag\"")
         XCTAssertEqual(EHTag(namespace: "", name: "sample tag").searchQuery, "\"sample tag\"")
+    }
+
+    /// Confirms gallery author taps use each site's expected artist query syntax.
+    func testArtistSearchQueryUsesSiteSyntax() {
+        XCTAssertEqual(ContentSite.hitomi.artistSearchQuery(for: "ssa"), "artist:ssa")
+        XCTAssertEqual(ContentSite.eHentai.artistSearchQuery(for: "ssa"), "artist:\"ssa$\"")
     }
 
     /// Builds a tiny AVIF image for decoder tests.

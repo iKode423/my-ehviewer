@@ -41,6 +41,16 @@ enum ContentSite: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// Builds the site-specific exact artist query used from gallery details.
+    func artistSearchQuery(for artist: String) -> String {
+        switch self {
+        case .eHentai:
+            return "artist:\"\(artist)$\""
+        case .hitomi:
+            return "artist:\(artist)"
+        }
+    }
+
     /// Resolves a persisted raw value while keeping e-hentai as the stable default.
     static func resolved(rawValue: String) -> ContentSite {
         ContentSite(rawValue: rawValue) ?? .eHentai

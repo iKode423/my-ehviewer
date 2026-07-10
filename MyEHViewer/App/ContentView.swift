@@ -145,6 +145,7 @@ final class AppNavigationStore: ObservableObject {
     @Published var selectedTab = ContentTab.search
     @Published private(set) var readerRoute: ReaderRoute?
     @Published private(set) var searchRequest: AppSearchRequest?
+    @Published private(set) var searchNavigationID = UUID()
 
     /// Opens a full-screen reader with the requested image page.
     func openReader(initialPageURL: URL, pageLinks: [EHGalleryPageLink] = [], totalPageCount: Int? = nil) {
@@ -159,6 +160,7 @@ final class AppNavigationStore: ObservableObject {
     /// Switches to the search tab and requests a search for the supplied name.
     func openSearch(query: String, site: ContentSite) {
         searchRequest = AppSearchRequest(query: query, site: site)
+        searchNavigationID = UUID()
         selectedTab = .search
     }
 
