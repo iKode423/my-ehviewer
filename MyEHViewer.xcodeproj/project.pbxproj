@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		09D0335A6BCAFCBBD8192695 /* SharedVideoPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9763D28858FCB3055A91A81 /* SharedVideoPlayerView.swift */; };
 		0A0000010000000000000001 /* MyEHViewerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000020000000000000001 /* MyEHViewerApp.swift */; };
 		0A0000010000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000020000000000000002 /* ContentView.swift */; };
 		0A0000010000000000000003 /* AppCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000020000000000000003 /* AppCopy.swift */; };
@@ -38,6 +39,16 @@
 		0A1500010000000000000001 /* SiteCookieStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1500020000000000000001 /* SiteCookieStore.swift */; };
 		0A1500010000000000000002 /* SiteCookieStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1500020000000000000002 /* SiteCookieStoreTests.swift */; };
 		0A1700010000000000000001 /* HitomiDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1700020000000000000001 /* HitomiDataSource.swift */; };
+		1DB5432D1B47F34A7D257641 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = C9B9AB76AA0C3486DFC4136E /* ZIPFoundation */; };
+		20B8DC79441520E3C9667A78 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27DBCF4E6084CC0F0D15E17E /* ShareViewController.swift */; };
+		455FEF93F32B97B6BFB60405 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5E0B7D8C3856A591BDE17335 /* Foundation.framework */; };
+		86141E01747D5FF9E54927C8 /* ShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = ABDF6F287E115A5FAF197478 /* ShareExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		99FD19FDF64B77B49A26A380 /* SharedImageReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F23B142BF88C5E7F9E79C5AE /* SharedImageReaderView.swift */; };
+		9D0400A5625FE66B1C5D5AC7 /* SharedMediaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CB362AE05291836155D070A /* SharedMediaView.swift */; };
+		B4EBE4F565EDEDF0572ED5E7 /* SharedMediaStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240CD499BF4C36B378643337 /* SharedMediaStore.swift */; };
+		B806D4A28F8EF400EEDC62E1 /* SharedMediaStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F5E0C269F82C6C297B14FDB /* SharedMediaStoreTests.swift */; };
+		D51ECECA4778EAC79ABDBBAC /* SharedMediaModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FC185699041B09BE20E92B5 /* SharedMediaModels.swift */; };
+		DF8B7D2200376AF0FCAA5B48 /* SharedMediaModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FC185699041B09BE20E92B5 /* SharedMediaModels.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -48,7 +59,28 @@
 			remoteGlobalIDString = 0A00000C0000000000000001;
 			remoteInfo = MyEHViewer;
 		};
+		F3E62B5A051576D758859020 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0A00000B0000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BA889B125861E14C46DB2E81;
+			remoteInfo = ShareExtension;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		3162229F05B68AF64EACEE9E /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				86141E01747D5FF9E54927C8 /* ShareExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		0A0000020000000000000001 /* MyEHViewerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyEHViewerApp.swift; sourceTree = "<group>"; };
@@ -62,8 +94,6 @@
 		0A0000020000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		0A000002000000000000000A /* MyEHViewer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyEHViewer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A000002000000000000000B /* MyEHViewerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MyEHViewerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		0A1600020000000000000001 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
-		0A1600020000000000000002 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		0A1000020000000000000001 /* EHModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHModels.swift; sourceTree = "<group>"; };
 		0A1000020000000000000002 /* EHHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHHTTPClient.swift; sourceTree = "<group>"; };
 		0A1000020000000000000003 /* EHHTMLParsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EHHTMLParsing.swift; sourceTree = "<group>"; };
@@ -86,7 +116,21 @@
 		0A1400020000000000000003 /* LibraryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStoreTests.swift; sourceTree = "<group>"; };
 		0A1500020000000000000001 /* SiteCookieStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteCookieStore.swift; sourceTree = "<group>"; };
 		0A1500020000000000000002 /* SiteCookieStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteCookieStoreTests.swift; sourceTree = "<group>"; };
+		0A1600020000000000000001 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		0A1600020000000000000002 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		0A1700020000000000000001 /* HitomiDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HitomiDataSource.swift; sourceTree = "<group>"; };
+		0CB362AE05291836155D070A /* SharedMediaView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedMediaView.swift; sourceTree = "<group>"; };
+		1F5E0C269F82C6C297B14FDB /* SharedMediaStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedMediaStoreTests.swift; sourceTree = "<group>"; };
+		2399AA6C96C5783F011B3AFA /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		240CD499BF4C36B378643337 /* SharedMediaStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedMediaStore.swift; sourceTree = "<group>"; };
+		27DBCF4E6084CC0F0D15E17E /* ShareViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		5E0B7D8C3856A591BDE17335 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		6D7677349B75B87883E2CD66 /* MyEHViewer.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = MyEHViewer.entitlements; sourceTree = "<group>"; };
+		6FC185699041B09BE20E92B5 /* SharedMediaModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedMediaModels.swift; sourceTree = "<group>"; };
+		ABDF6F287E115A5FAF197478 /* ShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B9763D28858FCB3055A91A81 /* SharedVideoPlayerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedVideoPlayerView.swift; sourceTree = "<group>"; };
+		DB600F7B46B206A13083F5EF /* ShareExtension.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = ShareExtension.entitlements; sourceTree = "<group>"; };
+		F23B142BF88C5E7F9E79C5AE /* SharedImageReaderView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedImageReaderView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -94,6 +138,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1DB5432D1B47F34A7D257641 /* ZIPFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -101,6 +146,14 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6B33E0B762F5ADD77F12D713 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				455FEF93F32B97B6BFB60405 /* Foundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -114,6 +167,8 @@
 				0A0000040000000000000002 /* MyEHViewer */,
 				0A0000040000000000000008 /* MyEHViewerTests */,
 				0A0000040000000000000009 /* Products */,
+				58E0545555E7F670FA3A978D /* ShareExtension */,
+				794EB80E246FB2F45923CC66 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -139,6 +194,7 @@
 				0A0000020000000000000009 /* Info.plist */,
 				0A0000020000000000000001 /* MyEHViewerApp.swift */,
 				0A0000020000000000000004 /* SettingsView.swift */,
+				6D7677349B75B87883E2CD66 /* MyEHViewer.entitlements */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -150,6 +206,7 @@
 				0A1400040000000000000002 /* Library */,
 				0A0000040000000000000005 /* Search */,
 				0A0000040000000000000006 /* Reader */,
+				97D72A766239DC29727C1012 /* SharedMedia */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -197,23 +254,16 @@
 			children = (
 				0A000002000000000000000A /* MyEHViewer.app */,
 				0A000002000000000000000B /* MyEHViewerTests.xctest */,
+				ABDF6F287E115A5FAF197478 /* ShareExtension.appex */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		0A1600040000000000000001 /* Config */ = {
-			isa = PBXGroup;
-			children = (
-				0A1600020000000000000002 /* Local.xcconfig.example */,
-				0A1600020000000000000001 /* Signing.xcconfig */,
-			);
-			path = Config;
 			sourceTree = "<group>";
 		};
 		0A1000040000000000000001 /* Models */ = {
 			isa = PBXGroup;
 			children = (
 				0A1000020000000000000001 /* EHModels.swift */,
+				6FC185699041B09BE20E92B5 /* SharedMediaModels.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -296,6 +346,7 @@
 			children = (
 				0A1400020000000000000002 /* LibraryStore.swift */,
 				0A1500020000000000000001 /* SiteCookieStore.swift */,
+				240CD499BF4C36B378643337 /* SharedMediaStore.swift */,
 			);
 			path = Persistence;
 			sourceTree = "<group>";
@@ -313,8 +364,54 @@
 			children = (
 				0A1400020000000000000003 /* LibraryStoreTests.swift */,
 				0A1500020000000000000002 /* SiteCookieStoreTests.swift */,
+				1F5E0C269F82C6C297B14FDB /* SharedMediaStoreTests.swift */,
 			);
 			path = Persistence;
+			sourceTree = "<group>";
+		};
+		0A1600040000000000000001 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				0A1600020000000000000002 /* Local.xcconfig.example */,
+				0A1600020000000000000001 /* Signing.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		1EEC068EC7CFC0554302A523 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				5E0B7D8C3856A591BDE17335 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		58E0545555E7F670FA3A978D /* ShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				27DBCF4E6084CC0F0D15E17E /* ShareViewController.swift */,
+				2399AA6C96C5783F011B3AFA /* Info.plist */,
+				DB600F7B46B206A13083F5EF /* ShareExtension.entitlements */,
+			);
+			path = ShareExtension;
+			sourceTree = "<group>";
+		};
+		794EB80E246FB2F45923CC66 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				1EEC068EC7CFC0554302A523 /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		97D72A766239DC29727C1012 /* SharedMedia */ = {
+			isa = PBXGroup;
+			children = (
+				0CB362AE05291836155D070A /* SharedMediaView.swift */,
+				F23B142BF88C5E7F9E79C5AE /* SharedImageReaderView.swift */,
+				B9763D28858FCB3055A91A81 /* SharedVideoPlayerView.swift */,
+			);
+			path = SharedMedia;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -327,12 +424,17 @@
 				0A0000050000000000000001 /* Sources */,
 				0A0000030000000000000001 /* Frameworks */,
 				0A0000060000000000000001 /* Resources */,
+				3162229F05B68AF64EACEE9E /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				28BDA40C2155A5D285C2A500 /* PBXTargetDependency */,
 			);
 			name = MyEHViewer;
+			packageProductDependencies = (
+				C9B9AB76AA0C3486DFC4136E /* ZIPFoundation */,
+			);
 			productName = MyEHViewer;
 			productReference = 0A000002000000000000000A /* MyEHViewer.app */;
 			productType = "com.apple.product-type.application";
@@ -355,6 +457,23 @@
 			productReference = 0A000002000000000000000B /* MyEHViewerTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		BA889B125861E14C46DB2E81 /* ShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CDA299E367509CE0F51415C0 /* Build configuration list for PBXNativeTarget "ShareExtension" */;
+			buildPhases = (
+				1792F8A6EFDD0624FC8F98F2 /* Sources */,
+				6B33E0B762F5ADD77F12D713 /* Frameworks */,
+				81B3E1CA4E8D46176A666248 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ShareExtension;
+			productName = ShareExtension;
+			productReference = ABDF6F287E115A5FAF197478 /* ShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -367,10 +486,22 @@
 				TargetAttributes = {
 					0A00000C0000000000000001 = {
 						CreatedOnToolsVersion = 26.6;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
 					};
 					0A00000C0000000000000002 = {
 						CreatedOnToolsVersion = 26.6;
 						TestTargetID = 0A00000C0000000000000001;
+					};
+					BA889B125861E14C46DB2E81 = {
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
 					};
 				};
 			};
@@ -384,12 +515,16 @@
 				Base,
 			);
 			mainGroup = 0A0000040000000000000001;
+			packageReferences = (
+				AAF0754D66AF1F7047385DFD /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
+			);
 			productRefGroup = 0A0000040000000000000009 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				0A00000C0000000000000001 /* MyEHViewer */,
 				0A00000C0000000000000002 /* MyEHViewerTests */,
+				BA889B125861E14C46DB2E81 /* ShareExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -404,6 +539,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		0A0000060000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		81B3E1CA4E8D46176A666248 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -440,6 +582,11 @@
 				0A1100010000000000000001 /* SearchResultRow.swift in Sources */,
 				0A0000010000000000000005 /* SearchView.swift in Sources */,
 				0A1100010000000000000002 /* SearchViewModel.swift in Sources */,
+				DF8B7D2200376AF0FCAA5B48 /* SharedMediaModels.swift in Sources */,
+				B4EBE4F565EDEDF0572ED5E7 /* SharedMediaStore.swift in Sources */,
+				9D0400A5625FE66B1C5D5AC7 /* SharedMediaView.swift in Sources */,
+				99FD19FDF64B77B49A26A380 /* SharedImageReaderView.swift in Sources */,
+				09D0335A6BCAFCBBD8192695 /* SharedVideoPlayerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -454,6 +601,16 @@
 				0A1300010000000000000002 /* ReaderViewModelTests.swift in Sources */,
 				0A1100010000000000000003 /* SearchViewModelTests.swift in Sources */,
 				0A1500010000000000000002 /* SiteCookieStoreTests.swift in Sources */,
+				B806D4A28F8EF400EEDC62E1 /* SharedMediaStoreTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1792F8A6EFDD0624FC8F98F2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				20B8DC79441520E3C9667A78 /* ShareViewController.swift in Sources */,
+				D51ECECA4778EAC79ABDBBAC /* SharedMediaModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -464,6 +621,12 @@
 			isa = PBXTargetDependency;
 			target = 0A00000C0000000000000001 /* MyEHViewer */;
 			targetProxy = 0A00000E0000000000000001 /* PBXContainerItemProxy */;
+		};
+		28BDA40C2155A5D285C2A500 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ShareExtension;
+			target = BA889B125861E14C46DB2E81 /* ShareExtension */;
+			targetProxy = F3E62B5A051576D758859020 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -587,6 +750,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = MyEHViewer/App/MyEHViewer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
@@ -616,6 +780,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = MyEHViewer/App/MyEHViewer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
@@ -686,6 +851,51 @@
 			};
 			name = Release;
 		};
+		4B4D97BA765428AD6C2EFE6A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Z4W26VKL2Q;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ikode.MyEHViewer.ShareExtension;
+				PRODUCT_MODULE_NAME = ShareExtension;
+				PRODUCT_NAME = ShareExtension;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		FBDDCA712776018B6C6FD6A0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Z4W26VKL2Q;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ikode.MyEHViewer.ShareExtension;
+				PRODUCT_MODULE_NAME = ShareExtension;
+				PRODUCT_NAME = ShareExtension;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -716,7 +926,35 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		CDA299E367509CE0F51415C0 /* Build configuration list for PBXNativeTarget "ShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4B4D97BA765428AD6C2EFE6A /* Release */,
+				FBDDCA712776018B6C6FD6A0 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AAF0754D66AF1F7047385DFD /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.20;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C9B9AB76AA0C3486DFC4136E /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AAF0754D66AF1F7047385DFD /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 0A00000B0000000000000001 /* Project object */;
 }

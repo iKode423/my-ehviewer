@@ -3,7 +3,9 @@ import UIKit
 
 /// Hosts the root tab navigation for search, library, and settings.
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var libraryStore = LibraryStore()
+    @StateObject private var sharedMediaStore = SharedMediaStore()
     @StateObject private var appNavigationStore = AppNavigationStore()
     @AppStorage(AppThemeMode.storageKey) private var themeModeRaw = AppThemeMode.system.rawValue
     @AppStorage(AppAccentColor.storageKey) private var accentColorHex = AppAccentColor.defaultHex
@@ -32,6 +34,14 @@ struct ContentView: View {
                 }
                 .tag(ContentTab.imageFavorites)
 
+            NavigationStack {
+                SharedMediaView()
+            }
+                .tabItem {
+                    Label(AppCopy.sharedMediaTitle, systemImage: "square.and.arrow.down")
+                }
+                .tag(ContentTab.sharedMedia)
+
             SettingsView()
                 .tabItem {
                     Label(AppCopy.settingsTitle, systemImage: "gearshape")
@@ -39,6 +49,7 @@ struct ContentView: View {
                 .tag(ContentTab.settings)
         }
         .environmentObject(libraryStore)
+        .environmentObject(sharedMediaStore)
         .environmentObject(appNavigationStore)
         .preferredColorScheme(preferredColorScheme)
         .accentColor(accentColor)
@@ -51,6 +62,10 @@ struct ContentView: View {
         }
         .onChange(of: accentColorHex) { _, _ in
             applyUIKitAccentColor(accentColor)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            Task { await sharedMediaStore.importIncomingAndRefresh() }
         }
     }
 
@@ -121,6 +136,7 @@ enum ContentTab: Hashable {
     case search
     case library
     case imageFavorites
+    case sharedMedia
     case settings
 }
 

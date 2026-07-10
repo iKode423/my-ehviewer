@@ -321,13 +321,14 @@ private enum LibrarySelection: String, CaseIterable, Identifiable {
 
 struct FavoriteImagesView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
-    @State private var randomFavorites: [FavoriteImageRecord]?
+    @EnvironmentObject private var sharedMediaStore: SharedMediaStore
+    @State private var randomFavorites: [FavoriteImageDisplayItem]?
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             favoriteImagesContent
 
-            if !libraryStore.imageFavorites.isEmpty {
+            if !favoriteItems.isEmpty {
                 Button {
                     showRandomFavorites()
                 } label: {
@@ -346,13 +347,14 @@ struct FavoriteImagesView: View {
         .navigationTitle(AppCopy.libraryImageFavorites)
         .refreshable {
             randomFavorites = nil
+            await sharedMediaStore.importIncomingAndRefresh()
         }
     }
 
     @ViewBuilder
     private var favoriteImagesContent: some View {
         ScrollView {
-            if libraryStore.imageFavorites.isEmpty {
+            if favoriteItems.isEmpty {
                 ContentUnavailableView(
                     AppCopy.libraryEmptyImageFavoritesTitle,
                     systemImage: "heart",
@@ -363,37 +365,24 @@ struct FavoriteImagesView: View {
             } else if let randomFavorites {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(Array(randomFavorites.enumerated()), id: \.element.id) { index, favorite in
-                        FavoriteImageCard(
-                            favorite: favorite,
-                            rank: index,
-                            totalCount: libraryStore.imageFavorites.count,
-                            usesLargeImage: true
-                        )
+                        favoriteCard(favorite, rank: index, usesLargeImage: true)
                     }
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 76)
             } else {
-                let topFavorites = Array(libraryStore.imageFavorites.prefix(5))
-                let remainingFavorites = Array(libraryStore.imageFavorites.dropFirst(5))
+                let topFavorites = Array(favoriteItems.prefix(5))
+                let remainingFavorites = Array(favoriteItems.dropFirst(5))
 
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(Array(topFavorites.enumerated()), id: \.element.id) { index, favorite in
-                        FavoriteImageCard(
-                            favorite: favorite,
-                            rank: index,
-                            totalCount: libraryStore.imageFavorites.count
-                        )
+                        favoriteCard(favorite, rank: index)
                     }
 
                     if !remainingFavorites.isEmpty {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], alignment: .leading, spacing: 10) {
                             ForEach(Array(remainingFavorites.enumerated()), id: \.element.id) { offset, favorite in
-                                FavoriteImageCard(
-                                    favorite: favorite,
-                                    rank: offset + 5,
-                                    totalCount: libraryStore.imageFavorites.count
-                                )
+                                favoriteCard(favorite, rank: offset + 5)
                             }
                         }
                     }
@@ -404,9 +393,102 @@ struct FavoriteImagesView: View {
         }
     }
 
-    /// Enters random mode without mutating the persisted favorite image order.
+    private var favoriteItems: [FavoriteImageDisplayItem] {
+        libraryStore.imageFavorites.map(FavoriteImageDisplayItem.gallery)
+            + sharedMediaStore.favoriteImages.map(FavoriteImageDisplayItem.shared)
+    }
+
+    @ViewBuilder
+    private func favoriteCard(
+        _ item: FavoriteImageDisplayItem,
+        rank: Int,
+        usesLargeImage: Bool = false
+    ) -> some View {
+        switch item {
+        case .gallery(let favorite):
+            FavoriteImageCard(
+                favorite: favorite,
+                rank: rank,
+                totalCount: favoriteItems.count,
+                usesLargeImage: usesLargeImage
+            )
+        case .shared(let record):
+            SharedFavoriteImageCard(
+                record: record,
+                rank: rank,
+                usesLargeImage: usesLargeImage
+            )
+        }
+    }
+
+    /// Enters random mode without mutating either persisted favorite order.
     private func showRandomFavorites() {
-        randomFavorites = Array(libraryStore.imageFavorites.shuffled().prefix(10))
+        randomFavorites = Array(favoriteItems.shuffled().prefix(10))
+    }
+}
+
+
+/// Wraps gallery and shared images in one image-favorite collection.
+private enum FavoriteImageDisplayItem: Hashable, Identifiable {
+    case gallery(FavoriteImageRecord)
+    case shared(SharedMediaRecord)
+
+    var id: String {
+        switch self {
+        case .gallery(let favorite): "gallery-\(favorite.id)"
+        case .shared(let record): "shared-\(record.id.uuidString)"
+        }
+    }
+}
+
+/// Displays one shared image inside the combined image favorites page.
+private struct SharedFavoriteImageCard: View {
+    @EnvironmentObject private var sharedMediaStore: SharedMediaStore
+    let record: SharedMediaRecord
+    let rank: Int
+    var usesLargeImage = false
+
+    var body: some View {
+        NavigationLink {
+            SharedImageReaderView(
+                records: sharedMediaStore.imageRecords,
+                initialRecordID: record.id
+            )
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                SharedMediaThumbnail(record: record)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: imageHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                Text(record.displayName)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(2)
+
+                Label(AppCopy.sharedMediaTitle, systemImage: "square.and.arrow.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button { sharedMediaStore.moveFavoriteToFront(record) } label: {
+                Label(AppCopy.libraryMoveImageFavoriteToFront, systemImage: "arrow.up.to.line")
+            }
+            Button { sharedMediaStore.moveFavorite(record, direction: -1) } label: {
+                Label(AppCopy.libraryMoveImageFavoriteUp, systemImage: "arrow.up")
+            }
+            Button { sharedMediaStore.moveFavorite(record, direction: 1) } label: {
+                Label(AppCopy.libraryMoveImageFavoriteDown, systemImage: "arrow.down")
+            }
+            Button(role: .destructive) { sharedMediaStore.toggleFavorite(record) } label: {
+                Label(AppCopy.libraryUnfavoriteAction, systemImage: "heart.slash")
+            }
+        }
+    }
+
+    private var imageHeight: CGFloat {
+        usesLargeImage || rank < 5 ? 260 : 132
     }
 }
 
@@ -580,6 +662,7 @@ private struct LibraryRecordRow: View {
     NavigationStack {
         LibraryView()
             .environmentObject(LibraryStore())
+            .environmentObject(SharedMediaStore.preview)
             .environmentObject(AppNavigationStore())
     }
 }

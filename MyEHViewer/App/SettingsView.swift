@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// Shows local data controls and reader-related preferences.
 struct SettingsView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
+    @EnvironmentObject private var sharedMediaStore: SharedMediaStore
     @StateObject private var siteCookieStore = SiteCookieStore.shared
     @StateObject private var imageCacheStore = ImageCacheStore.shared
     @AppStorage(ContentSite.storageKey) private var contentSiteRaw = ContentSite.eHentai.rawValue
@@ -431,6 +432,7 @@ private struct ImageCacheManagementView: View {
     @StateObject private var imageCacheStore = ImageCacheStore.shared
     @StateObject private var downloadManager = GalleryDownloadManager.shared
     @AppStorage(ContentSite.storageKey) private var contentSiteRaw = ContentSite.eHentai.rawValue
+    @AppStorage("CacheManagement.layoutMode") private var layoutModeRaw = CollectionLayoutMode.list.rawValue
     @State private var galleryFilterText = ""
 
     var body: some View {
@@ -457,29 +459,44 @@ private struct ImageCacheManagementView: View {
                         ContentUnavailableView.search(text: galleryFilterText)
                             .frame(maxWidth: .infinity, minHeight: 220)
                             .listRowSeparator(.hidden)
-                    } else {
+                    } else if layoutMode == .list {
                         ForEach(filteredGallerySummaries) { summary in
-                            NavigationLink {
-                                CachedGalleryEntryView(summary: summary)
-                                    .environmentObject(libraryStore)
-                            } label: {
+                            cachedGalleryLink(summary) {
                                 cachedGalleryRow(summary)
-                            }
-                            .contextMenu {
-                                Button(role: .destructive) {
-                                    imageCacheStore.clearGallery(summary.galleryIdentifier)
-                                } label: {
-                                    Label(AppCopy.cacheManagementDeleteGallery, systemImage: "trash")
-                                }
                             }
                         }
                         .onDelete(perform: deleteCachedGalleries)
+                    } else {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 148), spacing: 12)],
+                            alignment: .leading,
+                            spacing: 12
+                        ) {
+                            ForEach(filteredGallerySummaries) { summary in
+                                cachedGalleryLink(summary) {
+                                    cachedGalleryGridCard(summary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
+                        .listRowSeparator(.hidden)
                     }
                 }
             }
         }
         .navigationTitle(AppCopy.cacheManagementTitle)
         .toolbar(.hidden, for: .tabBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Picker(AppCopy.cacheManagementLayoutTitle, selection: layoutModeBinding) {
+                    Image(systemName: "list.bullet").tag(CollectionLayoutMode.list)
+                    Image(systemName: "square.grid.2x2").tag(CollectionLayoutMode.grid)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 88)
+            }
+        }
         .onAppear {
             imageCacheStore.refreshIfNeeded()
         }
@@ -568,6 +585,81 @@ private struct ImageCacheManagementView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// Builds a cached gallery link with the shared delete action.
+    private func cachedGalleryLink<Content: View>(
+        _ summary: CachedGallerySummary,
+        @ViewBuilder label: () -> Content
+    ) -> some View {
+        NavigationLink {
+            CachedGalleryEntryView(summary: summary)
+                .environmentObject(libraryStore)
+        } label: {
+            label()
+        }
+        .contextMenu {
+            Button(role: .destructive) {
+                imageCacheStore.clearGallery(summary.galleryIdentifier)
+            } label: {
+                Label(AppCopy.cacheManagementDeleteGallery, systemImage: "trash")
+            }
+        }
+    }
+
+    /// Renders a cover-forward cached gallery card for grid mode.
+    private func cachedGalleryGridCard(_ summary: CachedGallerySummary) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            CachedRemoteImageView(
+                url: summary.thumbnailURL,
+                contentMode: .fill,
+                animationMode: .staticPreview,
+                decodeMaxPixelSize: 420
+            ) {
+                ProgressView()
+            } failure: {
+                Image(systemName: "photo")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .aspectRatio(0.72, contentMode: .fill)
+            .background(Color.secondary.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            GalleryTitleText(
+                title: summary.title,
+                note: summary.note,
+                titleFont: .caption.weight(.semibold),
+                originalTitleFont: .caption2
+            )
+            .lineLimit(2)
+
+            HStack(spacing: 5) {
+                Text(summary.progressText)
+                Spacer(minLength: 2)
+                Text(summary.localizedByteCount)
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+            if summary.isDownloadUnavailable {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private var layoutMode: CollectionLayoutMode {
+        CollectionLayoutMode(rawValue: layoutModeRaw) ?? .list
+    }
+
+    private var layoutModeBinding: Binding<CollectionLayoutMode> {
+        Binding {
+            layoutMode
+        } set: { newValue in
+            layoutModeRaw = newValue.rawValue
+        }
     }
 
     /// Removes cached data for galleries selected from the management list.
@@ -929,13 +1021,15 @@ private struct CachedGalleryEntryView: View {
 /// Shows local library, cache, and search statistics.
 private struct LocalStatisticsView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
+    @EnvironmentObject private var sharedMediaStore: SharedMediaStore
     @StateObject private var imageCacheStore = ImageCacheStore.shared
 
     private var snapshot: LocalStatisticsSnapshot {
         LocalStatisticsSnapshot(
             records: libraryStore.records,
             favoriteCount: libraryStore.favorites.count,
-            cacheSummaries: imageCacheStore.gallerySummaries
+            cacheSummaries: imageCacheStore.gallerySummaries,
+            sharedMediaRecords: sharedMediaStore.records
         )
     }
 
@@ -983,6 +1077,35 @@ private struct LocalStatisticsView: View {
                         }
                         .padding(.vertical, 4)
                     }
+                }
+
+                if snapshot.sharedMediaCount > 0 {
+                    Section(AppCopy.statisticsSharedMediaTitle) {
+                        statisticsValueRow(title: AppCopy.statisticsSharedImages, value: String(snapshot.sharedImageCount))
+                        statisticsValueRow(title: AppCopy.statisticsSharedVideos, value: String(snapshot.sharedVideoCount))
+                        statisticsValueRow(title: AppCopy.statisticsSharedFavorites, value: String(snapshot.sharedFavoriteCount))
+                        statisticsValueRow(title: AppCopy.statisticsSharedBytes, value: snapshot.localizedSharedByteCount)
+                        if snapshot.sharedVideoDuration > 0 {
+                            statisticsValueRow(
+                                title: AppCopy.statisticsSharedVideoDuration,
+                                value: snapshot.localizedSharedVideoDuration
+                            )
+                        }
+                    }
+
+                    if !snapshot.sharedImportTrend.isEmpty {
+                        Section(AppCopy.statisticsSharedImportTrend) {
+                            sharedImportTrendChart(snapshot.sharedImportTrend)
+                                .frame(height: 180)
+                                .padding(.vertical, 6)
+                        }
+                    }
+
+                    rankedSection(
+                        title: AppCopy.statisticsSharedFormats,
+                        items: snapshot.topSharedFormats,
+                        emptyMessage: AppCopy.statisticsNoSharedFormats
+                    )
                 }
 
                 rankedSection(
@@ -1075,6 +1198,23 @@ private struct LocalStatisticsView: View {
         }
     }
 
+    /// Shows monthly shared media import counts.
+    private func sharedImportTrendChart(_ items: [StatisticRankedItem]) -> some View {
+        Chart(items) { item in
+            BarMark(
+                x: .value(AppCopy.statisticsSharedImportTrend, item.title),
+                y: .value(AppCopy.statisticsSharedMedia, item.count)
+            )
+            .foregroundStyle(.cyan)
+            .annotation(position: .top) {
+                Text(String(item.count))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .chartLegend(.hidden)
+    }
+
     /// Shows ranked local metadata with progress bars.
     @ViewBuilder
     private func rankedSection(title: String, items: [StatisticRankedItem], emptyMessage: String) -> some View {
@@ -1138,6 +1278,14 @@ private struct LocalStatisticsSnapshot {
     let cachedPageCount: Int
     let knownCachedPageTotal: Int
     let cacheByteCount: Int64
+    let sharedMediaCount: Int
+    let sharedImageCount: Int
+    let sharedVideoCount: Int
+    let sharedFavoriteCount: Int
+    let sharedByteCount: Int64
+    let sharedVideoDuration: Double
+    let sharedImportTrend: [StatisticRankedItem]
+    let topSharedFormats: [StatisticRankedItem]
     let cachedPageDistribution: [StatisticRankedItem]
     let topCharacters: [StatisticRankedItem]
     let topAuthors: [StatisticRankedItem]
@@ -1149,7 +1297,8 @@ private struct LocalStatisticsSnapshot {
     init(
         records: [LibraryGalleryRecord],
         favoriteCount: Int,
-        cacheSummaries: [CachedGallerySummary]
+        cacheSummaries: [CachedGallerySummary],
+        sharedMediaRecords: [SharedMediaRecord]
     ) {
         historyCount = records.count
         self.favoriteCount = favoriteCount
@@ -1157,6 +1306,20 @@ private struct LocalStatisticsSnapshot {
         cachedPageCount = cacheSummaries.reduce(0) { $0 + $1.cachedPageCount }
         knownCachedPageTotal = cacheSummaries.reduce(0) { $0 + ($1.totalPageCount ?? $1.cachedPageCount) }
         cacheByteCount = cacheSummaries.reduce(Int64(0)) { $0 + $1.byteCount }
+        sharedMediaCount = sharedMediaRecords.count
+        sharedImageCount = sharedMediaRecords.filter { $0.kind == .image }.count
+        sharedVideoCount = sharedMediaRecords.filter { $0.kind == .video }.count
+        sharedFavoriteCount = sharedMediaRecords.filter(\.isFavorite).count
+        sharedByteCount = sharedMediaRecords.reduce(0) { $0 + $1.byteCount }
+        sharedVideoDuration = sharedMediaRecords.reduce(0) { $0 + ($1.duration ?? 0) }
+        sharedImportTrend = Self.sharedImportTrend(from: sharedMediaRecords)
+        topSharedFormats = Self.rankedItems(
+            from: sharedMediaRecords.map { record in
+                let fileExtension = URL(fileURLWithPath: record.relativePath).pathExtension.uppercased()
+                return fileExtension.isEmpty ? record.contentType : fileExtension
+            },
+            limit: 8
+        )
         cachedPageDistribution = Self.cachedPageDistribution(from: cacheSummaries)
 
         let tags = records.flatMap { $0.tags }
@@ -1173,7 +1336,8 @@ private struct LocalStatisticsSnapshot {
         historyCount == 0 &&
             favoriteCount == 0 &&
             cachedGalleryCount == 0 &&
-            cachedPageCount == 0
+            cachedPageCount == 0 &&
+            sharedMediaCount == 0
     }
 
     var overviewItems: [StatisticOverviewItem] {
@@ -1181,13 +1345,25 @@ private struct LocalStatisticsSnapshot {
             StatisticOverviewItem(title: AppCopy.statisticsHistoryGalleries, value: historyCount, color: .blue),
             StatisticOverviewItem(title: AppCopy.statisticsFavoriteGalleries, value: favoriteCount, color: .yellow),
             StatisticOverviewItem(title: AppCopy.statisticsCachedGalleries, value: cachedGalleryCount, color: .green),
-            StatisticOverviewItem(title: AppCopy.statisticsCachedPages, value: cachedPageCount, color: .purple)
+            StatisticOverviewItem(title: AppCopy.statisticsCachedPages, value: cachedPageCount, color: .purple),
+            StatisticOverviewItem(title: AppCopy.statisticsSharedMedia, value: sharedMediaCount, color: .teal)
         ]
         .filter { $0.value > 0 }
     }
 
     var localizedCacheByteCount: String {
         ByteCountFormatter.string(fromByteCount: cacheByteCount, countStyle: .file)
+    }
+
+    var localizedSharedByteCount: String {
+        ByteCountFormatter.string(fromByteCount: sharedByteCount, countStyle: .file)
+    }
+
+    var localizedSharedVideoDuration: String {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute, .second]
+        formatter.unitsStyle = .abbreviated
+        return formatter.string(from: sharedVideoDuration) ?? "0s"
     }
 
     var cacheCompletionFraction: Double {
@@ -1236,6 +1412,19 @@ private struct LocalStatisticsSnapshot {
             .map { StatisticRankedItem(title: $0.title, count: $0.count, maximumCount: maximumCount) }
     }
 
+    /// Groups shared imports into chronological month buckets.
+    private static func sharedImportTrend(from records: [SharedMediaRecord]) -> [StatisticRankedItem] {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM"
+        let counts = Dictionary(grouping: records, by: { formatter.string(from: $0.importedAt) }).mapValues(\.count)
+        let maximumCount = counts.values.max() ?? 0
+        return counts
+            .map { StatisticRankedItem(title: $0.key, count: $0.value, maximumCount: maximumCount) }
+            .sorted { $0.title < $1.title }
+            .suffix(8)
+            .map { $0 }
+    }
+
     /// Extracts normalized tag names for a single namespace.
     private static func tagNames(in tags: [EHTag], namespace: String) -> [String] {
         tags
@@ -1254,4 +1443,5 @@ private struct LocalStatisticsSnapshot {
 #Preview {
     SettingsView()
         .environmentObject(LibraryStore())
+        .environmentObject(SharedMediaStore.preview)
 }
