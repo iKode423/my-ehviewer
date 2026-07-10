@@ -384,3 +384,15 @@ xcodebuild test -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'p
 ```
 
 结果：通过。缓存管理页增加可清空的图库筛选框，按标题和备注过滤列表；图片收藏从书架移动到底部独立 Tab，支持右下角随机显示 10 张大图，随机模式下下拉刷新会恢复默认排序；图片收藏菜单增加“前往图库”；下载批量写入期间合并图库摘要刷新，减少每张图片保存都重建缓存列表造成的卡顿，同时普通缓存写入仍保持即时更新；定向回归和完整回归测试通过。
+
+## 2026-07-10
+
+### 永久图库存储与媒体布局回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:MyEHViewerTests/CachedGalleryStoreTests test
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath /tmp/MyEHViewerCachedGalleryFullDerived test
+```
+
+结果：通过。新增 `Documents/Cached Gallery` 永久图库目录和 `Application Support/CachedGalleryStaging` 暂存目录；覆盖成功迁移后删除重复缓存、失败时保留缓存、永久文件优先读取、直接下载不写临时缓存、重试清理垃圾文件和再次保存替换旧目录。模拟器使用本地封面、无法加载的远程封面以及 `1206×2622` 纵向 MP4 验证：缓存网格顶部无异常空白，远程封面失败时仍保持固定比例半宽卡片，视频严格保持全宽 16:9 单行。完整回归测试通过，仅有 Xcode AppIntents metadata 提取提示。

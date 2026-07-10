@@ -5,7 +5,7 @@ enum EHConstants {
     static let baseURL = URL(string: "https://e-hentai.org/")!
 }
 
-enum ContentSite: String, CaseIterable, Identifiable, Codable {
+enum ContentSite: String, CaseIterable, Identifiable, Codable, Sendable {
     case eHentai
     case hitomi
 
@@ -126,7 +126,7 @@ enum EHGalleryCategory: Int, CaseIterable, Identifiable, Codable {
 }
 
 /// Identifies a gallery by the numeric id and token used by the site URL.
-struct EHGalleryIdentifier: Hashable, Codable, Identifiable {
+struct EHGalleryIdentifier: Hashable, Codable, Identifiable, Sendable {
     let gid: Int
     let token: String
     var site: ContentSite

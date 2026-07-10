@@ -251,7 +251,7 @@ struct ImageCacheContext: Hashable {
 }
 
 /// Stores one cached reader page mapping.
-struct CachedImagePageRecord: Codable, Hashable, Identifiable {
+struct CachedImagePageRecord: Codable, Hashable, Identifiable, Sendable {
     let galleryIdentifier: EHGalleryIdentifier
     var galleryTitle: String
     var pageNumber: Int
@@ -262,12 +262,13 @@ struct CachedImagePageRecord: Codable, Hashable, Identifiable {
     var totalPageCount: Int?
     var thumbnailURL: URL?
     var updatedAt: Date
+    var localFileURL: URL? = nil
 
     var id: String { "\(galleryIdentifier.id)-\(pageNumber)" }
 }
 
 /// Summarizes cached pages for one gallery.
-struct CachedGallerySummary: Hashable, Identifiable {
+struct CachedGallerySummary: Hashable, Identifiable, Sendable {
     let galleryIdentifier: EHGalleryIdentifier
     let title: String
     let note: String?
@@ -339,9 +340,11 @@ final class ImageCacheStore: ObservableObject {
 
     @Published private(set) var snapshot: ImageCacheSnapshot = .empty
     @Published private(set) var gallerySummaries: [CachedGallerySummary] = []
+    @Published private(set) var persistenceProgress: CachedGalleryPersistenceProgress?
 
     private let directoryURL: URL
     private let fileManager: FileManager
+    private let persistentGalleryStore: CachedGalleryStore?
     private let indexFileName = "index.json"
     private var index = ImageCacheIndex()
     private var contentDigestByCacheKey: [String: String] = [:]
@@ -357,8 +360,13 @@ final class ImageCacheStore: ObservableObject {
     private var deferredGallerySummaryRefreshDepth = 0
 
     /// Creates a cache store rooted in the app caches directory by default.
-    init(directoryURL: URL? = nil, fileManager: FileManager = .default) {
+    init(
+        directoryURL: URL? = nil,
+        fileManager: FileManager = .default,
+        persistentGalleryStore: CachedGalleryStore? = nil
+    ) {
         self.fileManager = fileManager
+        self.persistentGalleryStore = persistentGalleryStore ?? (directoryURL == nil ? .shared : nil)
         if let directoryURL {
             self.directoryURL = directoryURL
         } else {
@@ -382,6 +390,9 @@ final class ImageCacheStore: ObservableObject {
 
     /// Returns the local cache file URL for a remote image URL when bytes exist.
     func cachedDataFileURL(for url: URL) -> URL? {
+        if let persistentFileURL = persistentGalleryStore?.fileURL(for: url) {
+            return persistentFileURL
+        }
         for candidateURL in HitomiImageURLMigration.equivalentURLs(for: url) {
             if let cacheKey = index.aliases[candidateURL.absoluteString] {
                 let fileURL = fileURL(forKey: cacheKey)
@@ -401,12 +412,14 @@ final class ImageCacheStore: ObservableObject {
 
     /// Returns a cached reader page for a specific reader URL.
     func pageRecord(for pageURL: URL) -> CachedImagePageRecord? {
-        index.pages.values.first { $0.pageURL == pageURL }
+        persistentGalleryStore?.pageRecord(for: pageURL)
+            ?? index.pages.values.first { $0.pageURL == pageURL }
     }
 
     /// Returns a cached reader page for a gallery page number.
     func pageRecord(for identifier: EHGalleryIdentifier, pageNumber: Int) -> CachedImagePageRecord? {
-        index.pages[pageKey(identifier: identifier, pageNumber: pageNumber)]
+        persistentGalleryStore?.pageRecord(for: identifier, pageNumber: pageNumber)
+            ?? index.pages[pageKey(identifier: identifier, pageNumber: pageNumber)]
     }
 
     /// Returns the cached image URL for a gallery page when the image bytes are available.
@@ -457,13 +470,15 @@ final class ImageCacheStore: ObservableObject {
             updatedAt: Date(),
             isDownloadUnavailable: false
         )
+        persistentGalleryStore?.updateMetadata(detail: detail, fallback: fallback)
         saveIndex()
         publishGallerySummaries()
     }
 
     /// Returns the custom cache note for a gallery.
     func note(for identifier: EHGalleryIdentifier) -> String? {
-        index.galleryMetadata[identifier.id]?.note
+        persistentGalleryStore?.note(for: identifier)
+            ?? index.galleryMetadata[identifier.id]?.note
     }
 
     /// Updates the user-defined note for a cached gallery.
@@ -471,18 +486,121 @@ final class ImageCacheStore: ObservableObject {
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let existing = index.galleryMetadata[identifier.id]
         let records = index.pages.values.filter { $0.galleryIdentifier == identifier }
-        guard existing != nil || !records.isEmpty else { return }
+        let storedNote = persistentGalleryStore?.note(for: identifier)
+        guard existing != nil || !records.isEmpty || storedNote != nil || gallerySummary(for: identifier) != nil else { return }
 
-        index.galleryMetadata[identifier.id] = CachedGalleryMetadata(
-            identifier: identifier,
-            title: existing?.title ?? records.first?.galleryTitle ?? "图库 \(identifier.gid)",
-            note: trimmedNote.isEmpty ? nil : trimmedNote,
-            thumbnailURL: existing?.thumbnailURL ?? records.first?.thumbnailURL,
-            totalPageCount: existing?.totalPageCount ?? records.compactMap(\.totalPageCount).max(),
-            updatedAt: Date(),
-            isDownloadUnavailable: existing?.isDownloadUnavailable ?? false
-        )
+        persistentGalleryStore?.setNote(trimmedNote.isEmpty ? nil : trimmedNote, for: identifier)
+
+        if existing != nil || !records.isEmpty {
+            index.galleryMetadata[identifier.id] = CachedGalleryMetadata(
+                identifier: identifier,
+                title: existing?.title ?? records.first?.galleryTitle ?? "图库 \(identifier.gid)",
+                note: trimmedNote.isEmpty ? nil : trimmedNote,
+                thumbnailURL: existing?.thumbnailURL ?? records.first?.thumbnailURL,
+                totalPageCount: existing?.totalPageCount ?? records.compactMap(\.totalPageCount).max(),
+                updatedAt: Date(),
+                isDownloadUnavailable: existing?.isDownloadUnavailable ?? false
+            )
+        }
         saveIndex()
+        publishGallerySummaries()
+    }
+
+    /// Permanently saves every gallery that still owns image-cache files.
+    func persistAllCachedGalleries() async throws -> Int {
+        guard let persistentGalleryStore else { return 0 }
+        let cacheSummaries = makeCacheGallerySummaries().filter { !$0.pageRecords.isEmpty }
+        guard !cacheSummaries.isEmpty else { return 0 }
+
+        persistenceProgress = CachedGalleryPersistenceProgress(
+            completedGalleryCount: 0,
+            totalGalleryCount: cacheSummaries.count,
+            currentTitle: cacheSummaries[0].title
+        )
+        defer { persistenceProgress = nil }
+
+        var completedCount = 0
+        for summary in cacheSummaries {
+            let pageInputs = cachedPageInputs(for: summary)
+            guard !pageInputs.isEmpty else { continue }
+            persistenceProgress = CachedGalleryPersistenceProgress(
+                completedGalleryCount: completedCount,
+                totalGalleryCount: cacheSummaries.count,
+                currentTitle: summary.title
+            )
+            try await persistentGalleryStore.prepareGallery(summary: summary)
+            for pageInput in pageInputs {
+                try await persistentGalleryStore.importCachedPage(
+                    pageInput,
+                    identifier: summary.galleryIdentifier
+                )
+            }
+            try await persistentGalleryStore.finalizeGallery(summary.galleryIdentifier, requireComplete: false)
+            removeCachedGalleryData(summary.galleryIdentifier, removesMetadata: true)
+            completedCount += 1
+            persistenceProgress = CachedGalleryPersistenceProgress(
+                completedGalleryCount: completedCount,
+                totalGalleryCount: cacheSummaries.count,
+                currentTitle: summary.title
+            )
+        }
+        publishGallerySummaries()
+        return completedCount
+    }
+
+    /// Prepares durable staging before an explicit gallery download starts.
+    func preparePersistentDownload(detail: EHGalleryDetail, fallback: EHSearchResult?) async throws {
+        guard let persistentGalleryStore else { return }
+        let cacheSummary = makeCacheGallerySummaries().first { $0.galleryIdentifier == detail.identifier }
+        let summary = CachedGallerySummary(
+            galleryIdentifier: detail.identifier,
+            title: detail.title,
+            note: cacheSummary?.note ?? note(for: detail.identifier),
+            thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL ?? cacheSummary?.thumbnailURL,
+            cachedPageCount: cacheSummary?.cachedPageCount ?? 0,
+            totalPageCount: detail.pageCount ?? cacheSummary?.totalPageCount,
+            byteCount: cacheSummary?.byteCount ?? 0,
+            updatedAt: Date(),
+            pageRecords: cacheSummary?.pageRecords ?? [],
+            isDownloadUnavailable: false
+        )
+        let pageInputs = cachedPageInputs(for: summary)
+        try await persistentGalleryStore.prepareGallery(summary: summary)
+        for pageInput in pageInputs {
+            try await persistentGalleryStore.importCachedPage(pageInput, identifier: detail.identifier)
+        }
+        publishGallerySummaries()
+    }
+
+    /// Saves an explicit download into permanent staging instead of disposable cache storage.
+    func saveDownloadedPageAsync(
+        _ data: Data,
+        for requestedURL: URL,
+        responseURL: URL,
+        context: ImageCacheContext
+    ) async throws {
+        if let persistentGalleryStore {
+            try await persistentGalleryStore.saveDownloadedPage(
+                data,
+                requestedURL: requestedURL,
+                responseURL: responseURL,
+                context: context
+            )
+            if deferredGallerySummaryRefreshDepth > 0 {
+                scheduleGallerySummaryRefresh()
+            } else {
+                publishGallerySummaries()
+            }
+        } else {
+            await saveAsync(data, for: requestedURL, responseURL: responseURL, context: context)
+        }
+    }
+
+    /// Commits a complete explicit download and removes duplicate cache files.
+    func finalizePersistentDownload(_ identifier: EHGalleryIdentifier) async throws {
+        guard let persistentGalleryStore else { return }
+        try await persistentGalleryStore.finalizeGallery(identifier, requireComplete: true)
+        removeCachedGalleryData(identifier, removesMetadata: true)
         publishGallerySummaries()
     }
 
@@ -494,6 +612,12 @@ final class ImageCacheStore: ObservableObject {
         totalPageCount: Int? = nil
     ) {
         let existing = index.galleryMetadata[identifier.id]
+        persistentGalleryStore?.markDownloadUnavailable(
+            identifier,
+            title: title,
+            thumbnailURL: thumbnailURL,
+            totalPageCount: totalPageCount
+        )
         index.galleryMetadata[identifier.id] = CachedGalleryMetadata(
             identifier: identifier,
             title: title ?? existing?.title ?? "图库 \(identifier.gid)",
@@ -595,9 +719,13 @@ final class ImageCacheStore: ObservableObject {
             contentDigestByCacheKey = [:]
             cacheKeyByContentDigest = [:]
             cacheFileSizeByKey = [:]
-            snapshot = .empty
-            gallerySummaries = []
-            gallerySummaryByID = [:]
+            persistentGalleryStore?.refresh()
+            setGallerySummaries(makeGallerySummaries())
+            snapshot = ImageCacheSnapshot(
+                fileCount: 0,
+                byteCount: 0,
+                galleryCount: gallerySummaries.count
+            )
             lastDiskRefreshAt = Date()
         } catch {
             refresh()
@@ -606,12 +734,21 @@ final class ImageCacheStore: ObservableObject {
 
     /// Removes cached image files and page records for one gallery.
     func clearGallery(_ identifier: EHGalleryIdentifier) {
+        persistentGalleryStore?.deleteGallery(identifier)
+        removeCachedGalleryData(identifier, removesMetadata: true)
+        publishGallerySummaries()
+    }
+
+    /// Removes disposable cache files while optionally preserving indexed metadata.
+    private func removeCachedGalleryData(_ identifier: EHGalleryIdentifier, removesMetadata: Bool) {
         let removedRecords = index.pages.values.filter { $0.galleryIdentifier == identifier }
-        guard !removedRecords.isEmpty || index.galleryMetadata[identifier.id] != nil else { return }
+        guard !removedRecords.isEmpty || (removesMetadata && index.galleryMetadata[identifier.id] != nil) else { return }
 
         let removedCacheKeys = Set(removedRecords.map(\.cacheKey))
         index.pages = index.pages.filter { $0.value.galleryIdentifier != identifier }
-        index.galleryMetadata[identifier.id] = nil
+        if removesMetadata {
+            index.galleryMetadata[identifier.id] = nil
+        }
 
         let remainingCacheKeys = Set(index.pages.values.map(\.cacheKey))
         let removableCacheKeys = removedCacheKeys.subtracting(remainingCacheKeys)
@@ -656,6 +793,7 @@ final class ImageCacheStore: ObservableObject {
         pendingGallerySummaryRefreshTask?.cancel()
         pendingGallerySummaryRefreshTask = nil
         lastGallerySummaryRefreshAt = Date()
+        persistentGalleryStore?.refresh()
 
         guard let allFileURLs = try? fileManager.contentsOfDirectory(
             at: directoryURL,
@@ -665,9 +803,12 @@ final class ImageCacheStore: ObservableObject {
             contentDigestByCacheKey = [:]
             cacheKeyByContentDigest = [:]
             cacheFileSizeByKey = [:]
-            snapshot = .empty
-            gallerySummaries = []
-            gallerySummaryByID = [:]
+            setGallerySummaries(makeGallerySummaries())
+            snapshot = ImageCacheSnapshot(
+                fileCount: 0,
+                byteCount: 0,
+                galleryCount: gallerySummaries.count
+            )
             lastDiskRefreshAt = Date()
             return
         }
@@ -752,8 +893,8 @@ final class ImageCacheStore: ObservableObject {
         storeAliases(for: cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL), cacheKey: cacheKey)
     }
 
-    /// Builds gallery summaries from indexed cached page records.
-    private func makeGallerySummaries() -> [CachedGallerySummary] {
+    /// Builds summaries from disposable cache index records only.
+    private func makeCacheGallerySummaries() -> [CachedGallerySummary] {
         Dictionary(grouping: Array(index.pages.values), by: \.galleryIdentifier)
             .map { identifier, records in
                 let metadata = index.galleryMetadata[identifier.id]
@@ -776,6 +917,65 @@ final class ImageCacheStore: ObservableObject {
                 )
             }
             .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Merges permanent gallery files with any cache pages not migrated yet.
+    private func makeGallerySummaries() -> [CachedGallerySummary] {
+        var summariesByID = Dictionary(
+            uniqueKeysWithValues: makeCacheGallerySummaries().map { ($0.galleryIdentifier.id, $0) }
+        )
+        for storedSummary in persistentGalleryStore?.summaries ?? [] {
+            guard let cacheSummary = summariesByID[storedSummary.galleryIdentifier.id] else {
+                summariesByID[storedSummary.galleryIdentifier.id] = storedSummary
+                continue
+            }
+
+            var recordsByPage = Dictionary(
+                uniqueKeysWithValues: cacheSummary.pageRecords.map { ($0.pageNumber, $0) }
+            )
+            for record in storedSummary.pageRecords {
+                recordsByPage[record.pageNumber] = record
+            }
+            let records = recordsByPage.values.sorted { $0.pageNumber < $1.pageNumber }
+            var countedCacheKeys: Set<String> = []
+            let byteCount = records.reduce(Int64(0)) { total, record in
+                if record.localFileURL != nil {
+                    return total + record.byteCount
+                }
+                guard countedCacheKeys.insert(record.cacheKey).inserted else { return total }
+                return total + record.byteCount
+            }
+            summariesByID[storedSummary.galleryIdentifier.id] = CachedGallerySummary(
+                galleryIdentifier: storedSummary.galleryIdentifier,
+                title: storedSummary.title,
+                note: storedSummary.note ?? cacheSummary.note,
+                thumbnailURL: storedSummary.thumbnailURL ?? cacheSummary.thumbnailURL,
+                cachedPageCount: records.count,
+                totalPageCount: storedSummary.totalPageCount ?? cacheSummary.totalPageCount,
+                byteCount: byteCount,
+                updatedAt: max(storedSummary.updatedAt, cacheSummary.updatedAt),
+                pageRecords: records,
+                isDownloadUnavailable: storedSummary.isDownloadUnavailable || cacheSummary.isDownloadUnavailable
+            )
+        }
+        return summariesByID.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Resolves cache-backed source files for a permanent gallery operation.
+    private func cachedPageInputs(for summary: CachedGallerySummary) -> [CachedGalleryPageInput] {
+        summary.pageRecords.compactMap { record in
+            guard !record.cacheKey.hasPrefix("persistent:") else { return nil }
+            let sourceFileURL = fileURL(forKey: record.cacheKey)
+            guard fileManager.fileExists(atPath: sourceFileURL.path) else { return nil }
+            return CachedGalleryPageInput(
+                pageNumber: record.pageNumber,
+                pageURL: record.pageURL,
+                imageURL: record.imageURL,
+                thumbnailURL: record.thumbnailURL,
+                sourceFileURL: sourceFileURL,
+                updatedAt: record.updatedAt
+            )
+        }
     }
 
     /// Updates visible cache stats after saving one image without scanning every file.
@@ -1270,6 +1470,21 @@ final class GalleryDownloadManager: ObservableObject {
         defer {
             cacheStore.endDeferredGallerySummaryRefreshes()
         }
+
+        do {
+            try await cacheStore.preparePersistentDownload(detail: detail, fallback: fallback)
+            downloadedPageCount = cachedPageCount(for: detail.identifier)
+        } catch {
+            updateProgress(
+                detail: detail,
+                downloadedPageCount: downloadedPageCount,
+                totalPageCount: totalPageCount,
+                isRunning: false,
+                errorMessage: error.localizedDescription,
+                publishesImmediately: true
+            )
+            return
+        }
         updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil, publishesImmediately: true)
 
         let missingPageLinks = detail.pageLinks
@@ -1282,7 +1497,12 @@ final class GalleryDownloadManager: ObservableObject {
             }
 
         if missingPageLinks.isEmpty {
-            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: nil, publishesImmediately: true)
+            do {
+                try await cacheStore.finalizePersistentDownload(detail.identifier)
+            } catch {
+                lastErrorMessage = error.localizedDescription
+            }
+            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage, publishesImmediately: true)
             return
         }
 
@@ -1315,7 +1535,15 @@ final class GalleryDownloadManager: ObservableObject {
             return
         }
 
-        updateProgress(detail: detail, downloadedPageCount: cachedPageCount(for: detail.identifier), totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage, publishesImmediately: true)
+        downloadedPageCount = cachedPageCount(for: detail.identifier)
+        if lastErrorMessage == nil, downloadedPageCount >= totalPageCount {
+            do {
+                try await cacheStore.finalizePersistentDownload(detail.identifier)
+            } catch {
+                lastErrorMessage = error.localizedDescription
+            }
+        }
+        updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage, publishesImmediately: true)
     }
 
     /// Updates observable progress for a gallery.
@@ -1660,7 +1888,12 @@ final class GalleryDownloadManager: ObservableObject {
             totalPageCount: totalPageCount,
             thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL
         )
-        await cacheStore.saveAsync(dataResponse.data, for: imagePage.imageURL, responseURL: dataResponse.url, context: context)
+        try await cacheStore.saveDownloadedPageAsync(
+            dataResponse.data,
+            for: imagePage.imageURL,
+            responseURL: dataResponse.url,
+            context: context
+        )
         return Int64(dataResponse.data.count)
     }
 

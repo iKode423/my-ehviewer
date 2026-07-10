@@ -434,6 +434,7 @@ private struct ImageCacheManagementView: View {
     @AppStorage(ContentSite.storageKey) private var contentSiteRaw = ContentSite.eHentai.rawValue
     @AppStorage("CacheManagement.layoutMode") private var layoutModeRaw = CollectionLayoutMode.list.rawValue
     @State private var galleryFilterText = ""
+    @State private var persistenceAlert: CachePersistenceAlert?
 
     var body: some View {
         Group {
@@ -443,52 +444,22 @@ private struct ImageCacheManagementView: View {
                     systemImage: "externaldrive",
                     description: Text(AppCopy.cacheManagementEmptyMessage)
                 )
+            } else if layoutMode == .grid {
+                cacheGridContent
             } else {
-                List {
-                    Section {
-                        ClearableSearchTextField(
-                            title: AppCopy.cacheManagementFilterPlaceholder,
-                            text: $galleryFilterText,
-                            submitLabel: .done
-                        )
-                    }
-
-                    cacheDownloadControls
-
-                    if filteredGallerySummaries.isEmpty {
-                        ContentUnavailableView.search(text: galleryFilterText)
-                            .frame(maxWidth: .infinity, minHeight: 220)
-                            .listRowSeparator(.hidden)
-                    } else if layoutMode == .list {
-                        ForEach(filteredGallerySummaries) { summary in
-                            cachedGalleryLink(summary) {
-                                cachedGalleryRow(summary)
-                            }
-                        }
-                        .onDelete(perform: deleteCachedGalleries)
-                    } else {
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 148), spacing: 12)],
-                            alignment: .leading,
-                            spacing: 12
-                        ) {
-                            ForEach(filteredGallerySummaries) { summary in
-                                cachedGalleryLink(summary) {
-                                    cachedGalleryGridCard(summary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
-                        .listRowSeparator(.hidden)
-                    }
-                }
+                cacheListContent
             }
         }
         .navigationTitle(AppCopy.cacheManagementTitle)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button { persistCachedGalleries() } label: {
+                    Image(systemName: "externaldrive.badge.plus")
+                }
+                .disabled(imageCacheStore.persistenceProgress != nil)
+                .accessibilityLabel(AppCopy.cacheManagementPersistAll)
+
                 Picker(AppCopy.cacheManagementLayoutTitle, selection: layoutModeBinding) {
                     Image(systemName: "list.bullet").tag(CollectionLayoutMode.list)
                     Image(systemName: "square.grid.2x2").tag(CollectionLayoutMode.grid)
@@ -497,55 +468,154 @@ private struct ImageCacheManagementView: View {
                 .frame(width: 88)
             }
         }
+        .overlay {
+            if let progress = imageCacheStore.persistenceProgress {
+                VStack(spacing: 10) {
+                    ProgressView(value: progress.fraction)
+                        .frame(width: 180)
+                    Text(AppCopy.cacheManagementPersistProgress)
+                        .font(.headline)
+                    Text(progress.currentTitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(18)
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .shadow(radius: 10)
+            }
+        }
+        .alert(item: $persistenceAlert) { alert in
+            Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text(AppCopy.commonOK)))
+        }
         .onAppear {
             imageCacheStore.refreshIfNeeded()
         }
+    }
+
+    /// Shows cached galleries in the compact list layout.
+    private var cacheListContent: some View {
+        List {
+            Section { cacheFilterField }
+            cacheDownloadControls
+
+            if filteredGallerySummaries.isEmpty {
+                ContentUnavailableView.search(text: galleryFilterText)
+                    .frame(maxWidth: .infinity, minHeight: 220)
+                    .listRowSeparator(.hidden)
+            } else {
+                ForEach(filteredGallerySummaries) { summary in
+                    cachedGalleryLink(summary) {
+                        cachedGalleryRow(summary)
+                    }
+                }
+                .onDelete(perform: deleteCachedGalleries)
+            }
+        }
+    }
+
+    /// Shows cached galleries in an independent grid without List row sizing.
+    private var cacheGridContent: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 12) {
+                cacheFilterField
+                cacheDownloadPanel
+
+                if filteredGallerySummaries.isEmpty {
+                    ContentUnavailableView.search(text: galleryFilterText)
+                        .frame(maxWidth: .infinity, minHeight: 220)
+                } else {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 148), spacing: 12)],
+                        alignment: .leading,
+                        spacing: 12
+                    ) {
+                        ForEach(filteredGallerySummaries) { summary in
+                            cachedGalleryLink(summary) {
+                                cachedGalleryGridCard(summary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding(12)
+        }
+    }
+
+    /// Provides the shared clearable gallery filter field.
+    private var cacheFilterField: some View {
+        ClearableSearchTextField(
+            title: AppCopy.cacheManagementFilterPlaceholder,
+            text: $galleryFilterText,
+            submitLabel: .done
+        )
     }
 
     /// Shows the bulk download action and current aggregate download status.
     @ViewBuilder
     private var cacheDownloadControls: some View {
         if downloadManager.aggregateProgress != nil || !unfinishedSummaries.isEmpty {
-            Section {
-                Button {
-                    if downloadManager.aggregateProgress == nil {
-                        downloadManager.startUnfinishedDownloads(from: currentSiteGallerySummaries)
-                    } else {
-                        downloadManager.pauseAllDownloads()
-                    }
-                } label: {
-                    Label(cacheDownloadButtonTitle, systemImage: cacheDownloadButtonSystemImage)
-                        .frame(minHeight: 44, alignment: .leading)
-                }
+            Section { cacheDownloadControlsContent }
+        }
+    }
 
-                if let aggregateProgress = downloadManager.aggregateProgress {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label(AppCopy.cacheManagementProgressTitle, systemImage: "speedometer")
-                            .font(.headline)
-
-                        ProgressView(value: aggregateProgress.progressFraction)
-                            .tint(.accentColor)
-
-                        HStack {
-                            Text(aggregateProgress.progressText)
-                            Spacer()
-                            Text(aggregateProgress.speedText)
-                                .monospacedDigit()
-                        }
-                        .font(.subheadline)
-
-                        HStack(spacing: 12) {
-                            Label(aggregateProgress.activeDownloadText, systemImage: "arrow.down")
-                            if aggregateProgress.queuedDownloadCount > 0 {
-                                Label(aggregateProgress.queuedDownloadText, systemImage: "clock")
-                            }
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 6)
-                }
+    /// Shows download controls without List section spacing in grid mode.
+    @ViewBuilder
+    private var cacheDownloadPanel: some View {
+        if downloadManager.aggregateProgress != nil || !unfinishedSummaries.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                cacheDownloadControlsContent
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+    }
+
+    /// Builds the shared download button and aggregate status content.
+    @ViewBuilder
+    private var cacheDownloadControlsContent: some View {
+        Button {
+            if downloadManager.aggregateProgress == nil {
+                downloadManager.startUnfinishedDownloads(from: currentSiteGallerySummaries)
+            } else {
+                downloadManager.pauseAllDownloads()
+            }
+        } label: {
+            Label(cacheDownloadButtonTitle, systemImage: cacheDownloadButtonSystemImage)
+                .frame(minHeight: 44, alignment: .leading)
+        }
+
+        if let aggregateProgress = downloadManager.aggregateProgress {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(AppCopy.cacheManagementProgressTitle, systemImage: "speedometer")
+                    .font(.headline)
+
+                ProgressView(value: aggregateProgress.progressFraction)
+                    .tint(.accentColor)
+
+                HStack {
+                    Text(aggregateProgress.progressText)
+                    Spacer()
+                    Text(aggregateProgress.speedText)
+                        .monospacedDigit()
+                }
+                .font(.subheadline)
+
+                HStack(spacing: 12) {
+                    Label(aggregateProgress.activeDownloadText, systemImage: "arrow.down")
+                    if aggregateProgress.queuedDownloadCount > 0 {
+                        Label(aggregateProgress.queuedDownloadText, systemImage: "clock")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 6)
         }
     }
 
@@ -602,7 +672,12 @@ private struct ImageCacheManagementView: View {
             Button(role: .destructive) {
                 imageCacheStore.clearGallery(summary.galleryIdentifier)
             } label: {
-                Label(AppCopy.cacheManagementDeleteGallery, systemImage: "trash")
+                Label(
+                    summary.pageRecords.contains { $0.localFileURL != nil }
+                        ? AppCopy.cacheManagementDeleteLocalGallery
+                        : AppCopy.cacheManagementDeleteGallery,
+                    systemImage: "trash"
+                )
             }
         }
     }
@@ -610,20 +685,23 @@ private struct ImageCacheManagementView: View {
     /// Renders a cover-forward cached gallery card for grid mode.
     private func cachedGalleryGridCard(_ summary: CachedGallerySummary) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            CachedRemoteImageView(
-                url: summary.thumbnailURL,
-                contentMode: .fill,
-                animationMode: .staticPreview,
-                decodeMaxPixelSize: 420
-            ) {
-                ProgressView()
-            } failure: {
-                Image(systemName: "photo")
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity)
+            Color.secondary.opacity(0.1)
             .aspectRatio(0.72, contentMode: .fill)
-            .background(Color.secondary.opacity(0.1))
+            .overlay {
+                CachedRemoteImageView(
+                    url: cachedGalleryPreviewURL(for: summary),
+                    contentMode: .fill,
+                    animationMode: .staticPreview,
+                    decodeMaxPixelSize: 420
+                ) {
+                    ProgressView()
+                } failure: {
+                    Image(systemName: "photo")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+            }
             .clipShape(RoundedRectangle(cornerRadius: 6))
 
             GalleryTitleText(
@@ -646,6 +724,33 @@ private struct ImageCacheManagementView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    /// Uses a local gallery page as the cover before falling back to a remote thumbnail.
+    private func cachedGalleryPreviewURL(for summary: CachedGallerySummary) -> URL? {
+        summary.pageRecords.first { imageCacheStore.containsData(for: $0.imageURL) }?.imageURL
+            ?? summary.thumbnailURL
+    }
+
+    /// Starts permanent migration and reports the final gallery count.
+    private func persistCachedGalleries() {
+        Task {
+            do {
+                let count = try await imageCacheStore.persistAllCachedGalleries()
+                let message = count > 0
+                    ? String(format: AppCopy.cacheManagementPersistSuccessFormat, String(count))
+                    : AppCopy.cacheManagementPersistEmptyMessage
+                persistenceAlert = CachePersistenceAlert(
+                    title: AppCopy.cacheManagementPersistSuccessTitle,
+                    message: message
+                )
+            } catch {
+                persistenceAlert = CachePersistenceAlert(
+                    title: AppCopy.cacheManagementPersistFailureTitle,
+                    message: error.localizedDescription
+                )
             }
         }
     }
@@ -696,6 +801,12 @@ private struct ImageCacheManagementView: View {
     private var currentSiteGallerySummaries: [CachedGallerySummary] {
         imageCacheStore.gallerySummaries.filter { $0.galleryIdentifier.site == currentSite }
     }
+}
+
+private struct CachePersistenceAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
 }
 
 private struct CachedGalleryNoteField: View {

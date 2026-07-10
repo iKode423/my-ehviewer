@@ -472,10 +472,14 @@ private struct SharedMediaVideoRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SharedMediaThumbnail(record: record)
-                .frame(maxWidth: .infinity)
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+            GeometryReader { proxy in
+                SharedMediaThumbnail(record: record)
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .clipped()
+            }
+            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .background(Color.secondary.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
 
             SharedMediaCardDetails(record: record)
                 .frame(maxWidth: .infinity, alignment: .leading)

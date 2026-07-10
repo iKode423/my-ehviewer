@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D1D1D1D1D1D1D1D1D1D1D1D1 /* CachedGalleryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2D2D2D2D2D2D2D2D2D2D2D2 /* CachedGalleryStoreTests.swift */; };
+		C4C4C4C4C4C4C4C4C4C4C4C4 /* CachedGalleryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C5C5C5C5C5C5C5C5C5C5C5 /* CachedGalleryStore.swift */; };
 		09D0335A6BCAFCBBD8192695 /* SharedVideoPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9763D28858FCB3055A91A81 /* SharedVideoPlayerView.swift */; };
 		0A0000010000000000000001 /* MyEHViewerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000020000000000000001 /* MyEHViewerApp.swift */; };
 		0A0000010000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000020000000000000002 /* ContentView.swift */; };
@@ -83,6 +85,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		D2D2D2D2D2D2D2D2D2D2D2D2 /* CachedGalleryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedGalleryStoreTests.swift; sourceTree = "<group>"; };
+		C5C5C5C5C5C5C5C5C5C5C5C5 /* CachedGalleryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedGalleryStore.swift; sourceTree = "<group>"; };
 		0A0000020000000000000001 /* MyEHViewerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyEHViewerApp.swift; sourceTree = "<group>"; };
 		0A0000020000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		0A0000020000000000000003 /* AppCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCopy.swift; sourceTree = "<group>"; };
@@ -344,6 +348,7 @@
 		0A1400040000000000000001 /* Persistence */ = {
 			isa = PBXGroup;
 			children = (
+				C5C5C5C5C5C5C5C5C5C5C5C5 /* CachedGalleryStore.swift */,
 				0A1400020000000000000002 /* LibraryStore.swift */,
 				0A1500020000000000000001 /* SiteCookieStore.swift */,
 				240CD499BF4C36B378643337 /* SharedMediaStore.swift */,
@@ -362,6 +367,7 @@
 		0A1400040000000000000003 /* Persistence */ = {
 			isa = PBXGroup;
 			children = (
+				D2D2D2D2D2D2D2D2D2D2D2D2 /* CachedGalleryStoreTests.swift */,
 				0A1400020000000000000003 /* LibraryStoreTests.swift */,
 				0A1500020000000000000002 /* SiteCookieStoreTests.swift */,
 				1F5E0C269F82C6C297B14FDB /* SharedMediaStoreTests.swift */,
@@ -559,6 +565,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C4C4C4C4C4C4C4C4C4C4C4C4 /* CachedGalleryStore.swift in Sources */,
 				0A0000010000000000000003 /* AppCopy.swift in Sources */,
 				0A0000010000000000000002 /* ContentView.swift in Sources */,
 				0A1000010000000000000006 /* EHGalleryPageParser.swift in Sources */,
@@ -594,6 +601,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D1D1D1D1D1D1D1D1D1D1D1D1 /* CachedGalleryStoreTests.swift in Sources */,
 				0A1000010000000000000008 /* EHParsingTests.swift in Sources */,
 				0A1200010000000000000004 /* GalleryDetailViewModelTests.swift in Sources */,
 				0A1400010000000000000003 /* LibraryStoreTests.swift in Sources */,
