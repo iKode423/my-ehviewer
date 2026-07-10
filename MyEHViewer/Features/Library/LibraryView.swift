@@ -394,8 +394,12 @@ struct FavoriteImagesView: View {
     }
 
     private var favoriteItems: [FavoriteImageDisplayItem] {
-        libraryStore.imageFavorites.map(FavoriteImageDisplayItem.gallery)
+        let availableItems = libraryStore.imageFavorites.map(FavoriteImageDisplayItem.gallery)
             + sharedMediaStore.favoriteImages.map(FavoriteImageDisplayItem.shared)
+        let itemsByID = Dictionary(uniqueKeysWithValues: availableItems.map { ($0.id, $0) })
+        return libraryStore
+            .orderedImageFavoriteIDs(availableIDs: availableItems.map(\.id))
+            .compactMap { itemsByID[$0] }
     }
 
     @ViewBuilder
@@ -404,18 +408,20 @@ struct FavoriteImagesView: View {
         rank: Int,
         usesLargeImage: Bool = false
     ) -> some View {
+        let orderedItemIDs = favoriteItems.map(\.id)
         switch item {
         case .gallery(let favorite):
             FavoriteImageCard(
                 favorite: favorite,
                 rank: rank,
-                totalCount: favoriteItems.count,
+                orderedItemIDs: orderedItemIDs,
                 usesLargeImage: usesLargeImage
             )
         case .shared(let record):
             SharedFavoriteImageCard(
                 record: record,
                 rank: rank,
+                orderedItemIDs: orderedItemIDs,
                 usesLargeImage: usesLargeImage
             )
         }
@@ -443,48 +449,90 @@ private enum FavoriteImageDisplayItem: Hashable, Identifiable {
 
 /// Displays one shared image inside the combined image favorites page.
 private struct SharedFavoriteImageCard: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var sharedMediaStore: SharedMediaStore
     let record: SharedMediaRecord
     let rank: Int
+    let orderedItemIDs: [String]
     var usesLargeImage = false
 
     var body: some View {
-        NavigationLink {
-            SharedImageReaderView(
-                records: sharedMediaStore.imageRecords,
-                initialRecordID: record.id
-            )
-        } label: {
-            VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
+            NavigationLink {
+                SharedImageReaderView(
+                    records: sharedMediaStore.imageRecords,
+                    initialRecordID: record.id
+                )
+            } label: {
                 SharedMediaThumbnail(record: record)
                     .frame(maxWidth: .infinity)
                     .frame(height: imageHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
 
-                Text(record.displayName)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(2)
+            Text(record.displayName)
+                .font(.caption.weight(.semibold))
+                .lineLimit(2)
 
-                Label(AppCopy.sharedMediaTitle, systemImage: "square.and.arrow.down")
-                    .font(.caption2)
+            Label(AppCopy.sharedMediaTitle, systemImage: "square.and.arrow.down")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Text("#\(rank + 1)")
+                    .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Menu {
+                    Button {
+                        libraryStore.moveCombinedImageFavoriteToFront(
+                            id: combinedItemID,
+                            availableIDs: orderedItemIDs
+                        )
+                    } label: {
+                        Label(AppCopy.libraryMoveImageFavoriteToFront, systemImage: "arrow.up.to.line")
+                    }
+                    .disabled(rank == 0)
+
+                    Button {
+                        libraryStore.moveCombinedImageFavorite(
+                            id: combinedItemID,
+                            direction: -1,
+                            availableIDs: orderedItemIDs
+                        )
+                    } label: {
+                        Label(AppCopy.libraryMoveImageFavoriteUp, systemImage: "arrow.up")
+                    }
+                    .disabled(rank == 0)
+
+                    Button {
+                        libraryStore.moveCombinedImageFavorite(
+                            id: combinedItemID,
+                            direction: 1,
+                            availableIDs: orderedItemIDs
+                        )
+                    } label: {
+                        Label(AppCopy.libraryMoveImageFavoriteDown, systemImage: "arrow.down")
+                    }
+                    .disabled(rank >= orderedItemIDs.count - 1)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.title3)
+                        .frame(width: 32, height: 28)
+                }
+                .accessibilityLabel(AppCopy.libraryImageFavoriteActions)
             }
         }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button { sharedMediaStore.moveFavoriteToFront(record) } label: {
-                Label(AppCopy.libraryMoveImageFavoriteToFront, systemImage: "arrow.up.to.line")
-            }
-            Button { sharedMediaStore.moveFavorite(record, direction: -1) } label: {
-                Label(AppCopy.libraryMoveImageFavoriteUp, systemImage: "arrow.up")
-            }
-            Button { sharedMediaStore.moveFavorite(record, direction: 1) } label: {
-                Label(AppCopy.libraryMoveImageFavoriteDown, systemImage: "arrow.down")
-            }
-            Button(role: .destructive) { sharedMediaStore.toggleFavorite(record) } label: {
-                Label(AppCopy.libraryUnfavoriteAction, systemImage: "heart.slash")
-            }
-        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var combinedItemID: String {
+        "shared-\(record.id.uuidString)"
     }
 
     private var imageHeight: CGFloat {
@@ -495,7 +543,7 @@ private struct SharedFavoriteImageCard: View {
 private struct FavoriteImageCard: View {
     let favorite: FavoriteImageRecord
     let rank: Int
-    let totalCount: Int
+    let orderedItemIDs: [String]
     var usesLargeImage = false
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var appNavigationStore: AppNavigationStore
@@ -562,25 +610,36 @@ private struct FavoriteImageCard: View {
                     }
 
                     Button {
-                        libraryStore.moveImageFavoriteToFront(favorite)
+                        libraryStore.moveCombinedImageFavoriteToFront(
+                            id: combinedItemID,
+                            availableIDs: orderedItemIDs
+                        )
                     } label: {
                         Label(AppCopy.libraryMoveImageFavoriteToFront, systemImage: "arrow.up.to.line")
                     }
                     .disabled(rank == 0)
 
                     Button {
-                        libraryStore.moveImageFavorite(favorite, direction: -1)
+                        libraryStore.moveCombinedImageFavorite(
+                            id: combinedItemID,
+                            direction: -1,
+                            availableIDs: orderedItemIDs
+                        )
                     } label: {
                         Label(AppCopy.libraryMoveImageFavoriteUp, systemImage: "arrow.up")
                     }
                     .disabled(rank == 0)
 
                     Button {
-                        libraryStore.moveImageFavorite(favorite, direction: 1)
+                        libraryStore.moveCombinedImageFavorite(
+                            id: combinedItemID,
+                            direction: 1,
+                            availableIDs: orderedItemIDs
+                        )
                     } label: {
                         Label(AppCopy.libraryMoveImageFavoriteDown, systemImage: "arrow.down")
                     }
-                    .disabled(rank >= totalCount - 1)
+                    .disabled(rank >= orderedItemIDs.count - 1)
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.title3)
@@ -592,6 +651,10 @@ private struct FavoriteImageCard: View {
         .padding(8)
         .background(Color.secondary.opacity(0.07))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var combinedItemID: String {
+        "gallery-\(favorite.id)"
     }
 
     private var galleryResult: EHSearchResult {

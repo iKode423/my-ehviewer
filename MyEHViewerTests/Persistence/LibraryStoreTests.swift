@@ -124,6 +124,18 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(restoredStore.imageFavorites.map(\.pageNumber), [2])
     }
 
+    /// Confirms gallery and shared image favorites can move in one combined order.
+    func testCombinedImageFavoriteOrderMovesSharedItems() {
+        let store = LibraryStore(userDefaults: makeUserDefaults(), storageKey: "combined-image-order")
+        let availableIDs = ["gallery-one", "shared-two", "gallery-three"]
+
+        store.moveCombinedImageFavoriteToFront(id: "shared-two", availableIDs: availableIDs)
+        XCTAssertEqual(store.orderedImageFavoriteIDs(availableIDs: availableIDs), ["shared-two", "gallery-one", "gallery-three"])
+
+        store.moveCombinedImageFavorite(id: "shared-two", direction: 1, availableIDs: availableIDs)
+        XCTAssertEqual(store.orderedImageFavoriteIDs(availableIDs: availableIDs), ["gallery-one", "shared-two", "gallery-three"])
+    }
+
     /// Confirms local state can be fully removed from persistence.
     func testRemoveAllClearsPersistedState() {
         let userDefaults = makeUserDefaults()

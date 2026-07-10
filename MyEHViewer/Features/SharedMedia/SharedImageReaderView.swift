@@ -49,6 +49,7 @@ struct SharedImageReaderView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(!showsChrome)
         .sheet(isPresented: $showsPageGrid) { pageGrid }
         .onChange(of: currentIndex) { _, _ in resetZoom() }
@@ -206,9 +207,7 @@ private struct SharedLocalImageView: View {
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
+                AnimatedImageDataView(image: image, contentMode: .scaleAspectFit)
             } else {
                 ProgressView()
             }

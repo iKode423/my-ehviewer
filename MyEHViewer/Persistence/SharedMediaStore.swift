@@ -394,10 +394,12 @@ final class SharedMediaStore: ObservableObject {
 
     /// Applies a complete favorite order and persists it once.
     private func applyFavoriteOrder(_ orderedRecords: [SharedMediaRecord]) {
+        var updatedRecords = records
         for (order, record) in orderedRecords.enumerated() {
-            guard let index = records.firstIndex(where: { $0.id == record.id }) else { continue }
-            records[index].favoriteOrder = order
+            guard let index = updatedRecords.firstIndex(where: { $0.id == record.id }) else { continue }
+            updatedRecords[index].favoriteOrder = order
         }
+        records = updatedRecords
         saveIndex()
     }
 

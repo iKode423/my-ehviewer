@@ -22,6 +22,7 @@ struct SharedVideoPlayerView: View {
         .background(Color.black)
         .navigationTitle(record?.displayName ?? AppCopy.sharedMediaVideoTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             if let record {
                 ToolbarItem(placement: .topBarTrailing) {

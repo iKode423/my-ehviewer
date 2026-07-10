@@ -7,6 +7,7 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var records: [LibraryGalleryRecord] = []
     @Published private(set) var favoriteIDs: Set<String> = []
     @Published private(set) var imageFavorites: [FavoriteImageRecord] = []
+    @Published private(set) var combinedImageFavoriteOrder: [String] = []
 
     private let userDefaults: UserDefaults
     private let storageKey: String
@@ -140,12 +141,43 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Resolves one stable order across gallery and shared image favorites.
+    func orderedImageFavoriteIDs(availableIDs: [String]) -> [String] {
+        let availableSet = Set(availableIDs)
+        let stored = combinedImageFavoriteOrder.filter { availableSet.contains($0) }
+        let missing = availableIDs.filter { !stored.contains($0) }
+        return stored + missing
+    }
+
+    /// Moves one combined image favorite by a relative position.
+    func moveCombinedImageFavorite(id: String, direction: Int, availableIDs: [String]) {
+        guard direction != 0 else { return }
+        var order = orderedImageFavoriteIDs(availableIDs: availableIDs)
+        guard let index = order.firstIndex(of: id) else { return }
+        let target = max(0, min(order.count - 1, index + direction))
+        guard target != index else { return }
+        order.swapAt(index, target)
+        combinedImageFavoriteOrder = order
+        save()
+    }
+
+    /// Moves one combined image favorite to the first visible position.
+    func moveCombinedImageFavoriteToFront(id: String, availableIDs: [String]) {
+        var order = orderedImageFavoriteIDs(availableIDs: availableIDs)
+        guard let index = order.firstIndex(of: id), index > 0 else { return }
+        let movedID = order.remove(at: index)
+        order.insert(movedID, at: 0)
+        combinedImageFavoriteOrder = order
+        save()
+    }
+
     /// Encodes history and favorites into a portable JSON backup.
     func exportData() throws -> Data {
         let state = LibraryState(
             records: records,
             favoriteIDs: Array(favoriteIDs),
-            imageFavorites: imageFavorites
+            imageFavorites: imageFavorites,
+            combinedImageFavoriteOrder: combinedImageFavoriteOrder
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -158,6 +190,7 @@ final class LibraryStore: ObservableObject {
         records = state.records
         favoriteIDs = Set(state.favoriteIDs)
         imageFavorites = state.imageFavorites
+        combinedImageFavoriteOrder = state.combinedImageFavoriteOrder
         save()
     }
 
@@ -166,6 +199,7 @@ final class LibraryStore: ObservableObject {
         records = []
         favoriteIDs = []
         imageFavorites = []
+        combinedImageFavoriteOrder = []
         save()
     }
 
@@ -212,11 +246,17 @@ final class LibraryStore: ObservableObject {
         records = state.records
         favoriteIDs = Set(state.favoriteIDs)
         imageFavorites = state.imageFavorites
+        combinedImageFavoriteOrder = state.combinedImageFavoriteOrder
     }
 
     /// Saves JSON state to UserDefaults.
     private func save() {
-        let state = LibraryState(records: records, favoriteIDs: Array(favoriteIDs), imageFavorites: imageFavorites)
+        let state = LibraryState(
+            records: records,
+            favoriteIDs: Array(favoriteIDs),
+            imageFavorites: imageFavorites,
+            combinedImageFavoriteOrder: combinedImageFavoriteOrder
+        )
         guard let data = try? JSONEncoder().encode(state) else { return }
         userDefaults.set(data, forKey: storageKey)
     }
@@ -363,19 +403,27 @@ private struct LibraryState: Codable {
     let records: [LibraryGalleryRecord]
     let favoriteIDs: [String]
     let imageFavorites: [FavoriteImageRecord]
+    let combinedImageFavoriteOrder: [String]
 
-    /// Creates persisted library state with optional image favorites.
-    init(records: [LibraryGalleryRecord], favoriteIDs: [String], imageFavorites: [FavoriteImageRecord] = []) {
+    /// Creates persisted library state with optional image favorites and combined ordering.
+    init(
+        records: [LibraryGalleryRecord],
+        favoriteIDs: [String],
+        imageFavorites: [FavoriteImageRecord] = [],
+        combinedImageFavoriteOrder: [String] = []
+    ) {
         self.records = records
         self.favoriteIDs = favoriteIDs
         self.imageFavorites = imageFavorites
+        self.combinedImageFavoriteOrder = combinedImageFavoriteOrder
     }
 
-    /// Decodes older library state that did not contain image favorites.
+    /// Decodes older library state that did not contain image favorites or combined ordering.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         records = try container.decode([LibraryGalleryRecord].self, forKey: .records)
         favoriteIDs = try container.decode([String].self, forKey: .favoriteIDs)
         imageFavorites = try container.decodeIfPresent([FavoriteImageRecord].self, forKey: .imageFavorites) ?? []
+        combinedImageFavoriteOrder = try container.decodeIfPresent([String].self, forKey: .combinedImageFavoriteOrder) ?? []
     }
 }
