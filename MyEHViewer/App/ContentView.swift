@@ -132,11 +132,19 @@ struct ReaderRoute: Identifiable, Equatable {
     let totalPageCount: Int?
 }
 
+/// Describes a search that should be opened from another screen.
+struct AppSearchRequest: Identifiable, Equatable {
+    let id = UUID()
+    let query: String
+    let site: ContentSite
+}
+
 /// Coordinates top-level tab selection and reader sessions.
 @MainActor
 final class AppNavigationStore: ObservableObject {
     @Published var selectedTab = ContentTab.search
     @Published private(set) var readerRoute: ReaderRoute?
+    @Published private(set) var searchRequest: AppSearchRequest?
 
     /// Opens a full-screen reader with the requested image page.
     func openReader(initialPageURL: URL, pageLinks: [EHGalleryPageLink] = [], totalPageCount: Int? = nil) {
@@ -146,6 +154,18 @@ final class AppNavigationStore: ObservableObject {
     /// Closes the active reader session and returns to the previous tab.
     func closeReader() {
         readerRoute = nil
+    }
+
+    /// Switches to the search tab and requests a search for the supplied name.
+    func openSearch(query: String, site: ContentSite) {
+        searchRequest = AppSearchRequest(query: query, site: site)
+        selectedTab = .search
+    }
+
+    /// Clears a search request after the main search screen handles it.
+    func consumeSearchRequest(id: UUID) {
+        guard searchRequest?.id == id else { return }
+        searchRequest = nil
     }
 }
 

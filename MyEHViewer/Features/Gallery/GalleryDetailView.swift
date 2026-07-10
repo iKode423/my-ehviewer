@@ -4,6 +4,7 @@ import UIKit
 /// Displays a gallery detail page loaded from a search result.
 struct GalleryDetailView: View {
     let result: EHSearchResult
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var appNavigationStore: AppNavigationStore
     @StateObject private var siteCookieStore = SiteCookieStore.shared
@@ -160,6 +161,11 @@ struct GalleryDetailView: View {
             .font(.subheadline)
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                dismiss()
+                appNavigationStore.openSearch(query: uploader, site: result.identifier.site)
+            }
             .contextMenu {
                 Button {
                     UIPasteboard.general.string = uploader

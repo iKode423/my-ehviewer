@@ -35,6 +35,30 @@ private struct HitomiGalleryInfo: Decodable {
         case characters
         case tags
     }
+
+    /// Decodes older gallery records whose numeric id was not serialized as a string.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let stringID = try? container.decode(String.self, forKey: .id) {
+            id = stringID
+        } else {
+            id = String(try container.decode(Int.self, forKey: .id))
+        }
+        title = try container.decode(String.self, forKey: .title)
+        japaneseTitle = try container.decodeIfPresent(String.self, forKey: .japaneseTitle)
+        type = try container.decodeIfPresent(String.self, forKey: .type)
+        language = try container.decodeIfPresent(String.self, forKey: .language)
+        languageLocalName = try container.decodeIfPresent(String.self, forKey: .languageLocalName)
+        date = try container.decodeIfPresent(String.self, forKey: .date)
+        galleryURL = try container.decodeIfPresent(String.self, forKey: .galleryURL)
+        related = try container.decodeIfPresent([Int].self, forKey: .related)
+        files = try container.decode([HitomiFile].self, forKey: .files)
+        artists = try container.decodeIfPresent([HitomiNamedItem].self, forKey: .artists)
+        groups = try container.decodeIfPresent([HitomiNamedItem].self, forKey: .groups)
+        parodys = try container.decodeIfPresent([HitomiNamedItem].self, forKey: .parodys)
+        characters = try container.decodeIfPresent([HitomiNamedItem].self, forKey: .characters)
+        tags = try container.decodeIfPresent([HitomiTag].self, forKey: .tags)
+    }
 }
 
 private struct HitomiFile: Decodable {
@@ -64,8 +88,40 @@ private struct HitomiNamedItem: Decodable {
 
 private struct HitomiTag: Decodable {
     let tag: String
-    let male: String?
-    let female: String?
+    let male: Bool
+    let female: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case tag
+        case male
+        case female
+    }
+
+    /// Decodes gender flags emitted as strings, integers, or booleans.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tag = try container.decode(String.self, forKey: .tag)
+        male = Self.decodeFlag(from: container, forKey: .male)
+        female = Self.decodeFlag(from: container, forKey: .female)
+    }
+
+    /// Converts legacy flag representations into one boolean value.
+    private static func decodeFlag(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> Bool {
+        if let value = try? container.decodeIfPresent(Bool.self, forKey: key) {
+            return value ?? false
+        }
+        if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+            return (value ?? 0) != 0
+        }
+        if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+            let normalized = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return !normalized.isEmpty && normalized != "0" && normalized != "false"
+        }
+        return false
+    }
 }
 
 private struct HitomiSearchIDPage {
@@ -501,9 +557,9 @@ final class HitomiDataSource {
     private func tags(from info: HitomiGalleryInfo) -> [EHTag] {
         let baseTags: [EHTag] = info.tags?.map { tag in
             let namespace: String
-            if tag.female?.isEmpty == false {
+            if tag.female {
                 namespace = "female"
-            } else if tag.male?.isEmpty == false {
+            } else if tag.male {
                 namespace = "male"
             } else {
                 namespace = "tag"

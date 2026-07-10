@@ -1,8 +1,10 @@
+@preconcurrency import AVFoundation
 import SwiftUI
 import UIKit
 
 /// Displays the live search entry point and result list.
 struct SearchView: View {
+    @EnvironmentObject private var appNavigationStore: AppNavigationStore
     @StateObject private var viewModel: SearchViewModel
     @AppStorage(ContentSite.storageKey) private var contentSiteRaw = ContentSite.eHentai.rawValue
     private let embedsInNavigationStack: Bool
@@ -12,6 +14,9 @@ struct SearchView: View {
     private let followsAppContentSite: Bool
     @State private var pageJumpText = ""
     @State private var scrollToTopRequest = 0
+    @State private var showsQRCodeScanner = false
+    @State private var scannedGalleryResult: EHSearchResult?
+    @State private var scannerAlert: SearchScannerAlert?
 
     /// Creates a search view with an injectable view model for previews and tests.
     init(
@@ -43,10 +48,28 @@ struct SearchView: View {
     /// Adds a navigation title only when this search owns the navigation context.
     @ViewBuilder
     private var titledSearchContent: some View {
-        if let navigationTitle {
-            searchContent.navigationTitle(navigationTitle)
-        } else {
-            searchContent
+        Group {
+            if let navigationTitle {
+                searchContent.navigationTitle(navigationTitle)
+            } else {
+                searchContent
+            }
+        }
+        .navigationDestination(item: $scannedGalleryResult) { result in
+            GalleryDetailView(result: result)
+        }
+        .sheet(isPresented: $showsQRCodeScanner) {
+            QRCodeScannerSheet { content in
+                showsQRCodeScanner = false
+                handleScannedContent(content)
+            }
+        }
+        .alert(item: $scannerAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text(AppCopy.commonOK))
+            )
         }
     }
 
@@ -79,6 +102,10 @@ struct SearchView: View {
                     await viewModel.searchIfNeeded()
                     syncPageJumpText()
                 }
+                await handlePendingSearchRequest()
+            }
+            .onChange(of: appNavigationStore.searchRequest?.id) { _, _ in
+                Task { await handlePendingSearchRequest() }
             }
             .onChange(of: contentSiteRaw) { _, _ in
                 syncContentSiteIfNeeded()
@@ -146,6 +173,21 @@ struct SearchView: View {
             .disabled(viewModel.isLoading)
             .opacity(viewModel.isLoading ? 0.5 : 1)
             .accessibilityLabel(AppCopy.searchButtonTitle)
+
+            Button {
+                showsQRCodeScanner = true
+            } label: {
+                Image(systemName: "qrcode.viewfinder")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 32, height: 32)
+                    .foregroundStyle(Color.accentColor)
+                    .overlay {
+                        Circle()
+                            .stroke(Color.accentColor.opacity(0.5), lineWidth: 1)
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(AppCopy.searchScanQRCode)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -578,6 +620,48 @@ struct SearchView: View {
         syncPageJumpText()
     }
 
+    /// Applies one search request sent from another screen.
+    private func handlePendingSearchRequest() async {
+        guard embedsInNavigationStack, followsAppContentSite else { return }
+        guard let request = appNavigationStore.searchRequest else { return }
+
+        contentSiteRaw = request.site.rawValue
+        viewModel.setSite(request.site)
+        viewModel.source = .frontPage
+        viewModel.query = request.query
+        await viewModel.search()
+        syncPageJumpText()
+        requestScrollToTop()
+        appNavigationStore.consumeSearchRequest(id: request.id)
+    }
+
+    /// Opens supported gallery links and reports every other scanned value.
+    private func handleScannedContent(_ content: String) {
+        let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            let url = URL(string: trimmedContent),
+            let identifier = EHGalleryIdentifier(supportedGalleryURL: url)
+        else {
+            scannerAlert = SearchScannerAlert(
+                title: AppCopy.searchScannedContentTitle,
+                message: trimmedContent.isEmpty ? AppCopy.searchScannedContentEmpty : trimmedContent
+            )
+            return
+        }
+
+        scannedGalleryResult = EHSearchResult(
+            identifier: identifier,
+            title: String(format: AppCopy.searchScannedGalleryTitleFormat, String(identifier.gid)),
+            category: identifier.site.title,
+            pageURL: identifier.url(),
+            thumbnailURL: nil,
+            uploader: nil,
+            postedText: nil,
+            pageCountText: nil,
+            tags: []
+        )
+    }
+
     /// Keeps the jump field aligned with the last successfully loaded page.
     private func syncPageJumpText() {
         pageJumpText = String(viewModel.currentPageNumber)
@@ -715,6 +799,199 @@ struct ClearableSearchTextField: View {
     }
 }
 
+
+/// Stores one alert generated by QR code scanning.
+private struct SearchScannerAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
+}
+
+/// Presents the camera preview and scanner status inside a dismissible sheet.
+private struct QRCodeScannerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var errorMessage: String?
+    let onCode: (String) -> Void
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                if let errorMessage {
+                    ContentUnavailableView(
+                        AppCopy.searchScannerUnavailableTitle,
+                        systemImage: "camera.fill",
+                        description: Text(errorMessage)
+                    )
+                    .foregroundStyle(.white)
+                } else {
+                    QRCodeCameraView(
+                        onCode: { code in
+                            dismiss()
+                            onCode(code)
+                        },
+                        onError: { errorMessage = $0 }
+                    )
+                    .ignoresSafeArea()
+                }
+            }
+            .navigationTitle(AppCopy.searchScannerTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(AppCopy.commonClose) {
+                        dismiss()
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                Text(AppCopy.searchScannerHint)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(.regularMaterial)
+            }
+        }
+    }
+}
+
+/// Bridges the AVFoundation QR scanner into SwiftUI.
+private struct QRCodeCameraView: UIViewControllerRepresentable {
+    let onCode: (String) -> Void
+    let onError: (String) -> Void
+
+    /// Creates the camera-backed scanner controller.
+    func makeUIViewController(context: Context) -> QRCodeScannerViewController {
+        QRCodeScannerViewController(onCode: onCode, onError: onError)
+    }
+
+    /// Keeps the scanner controller alive without applying mutable configuration.
+    func updateUIViewController(_ uiViewController: QRCodeScannerViewController, context: Context) {}
+
+    /// Stops the camera when SwiftUI removes the scanner sheet.
+    static func dismantleUIViewController(_ uiViewController: QRCodeScannerViewController, coordinator: ()) {
+        uiViewController.stopScanning()
+    }
+}
+
+/// Captures QR metadata and returns the first decoded string.
+private final class QRCodeScannerViewController: UIViewController, @preconcurrency AVCaptureMetadataOutputObjectsDelegate {
+    private let captureSession = AVCaptureSession()
+    private let onCode: (String) -> Void
+    private let onError: (String) -> Void
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var didFinish = false
+
+    /// Creates a scanner controller with result and failure callbacks.
+    init(onCode: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
+        self.onCode = onCode
+        self.onError = onError
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Requests camera access and starts QR recognition when the view loads.
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        requestCameraAccess()
+    }
+
+    /// Keeps the camera preview aligned with rotation and sheet resizing.
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        previewLayer?.frame = view.bounds
+    }
+
+    /// Stops the camera session when scanning ends or the sheet closes.
+    func stopScanning() {
+        guard captureSession.isRunning else { return }
+        captureSession.stopRunning()
+    }
+
+    /// Handles the current video authorization state.
+    private func requestCameraAccess() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            configureCaptureSession()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] isGranted in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if isGranted {
+                        self.configureCaptureSession()
+                    } else {
+                        self.onError(AppCopy.searchScannerPermissionDenied)
+                    }
+                }
+            }
+        case .denied, .restricted:
+            onError(AppCopy.searchScannerPermissionDenied)
+        @unknown default:
+            onError(AppCopy.searchScannerUnavailableMessage)
+        }
+    }
+
+    /// Configures the rear camera and QR metadata output.
+    private func configureCaptureSession() {
+        guard let camera = AVCaptureDevice.default(for: .video) else {
+            onError(AppCopy.searchScannerUnavailableMessage)
+            return
+        }
+
+        do {
+            let input = try AVCaptureDeviceInput(device: camera)
+            let output = AVCaptureMetadataOutput()
+            guard captureSession.canAddInput(input), captureSession.canAddOutput(output) else {
+                onError(AppCopy.searchScannerUnavailableMessage)
+                return
+            }
+
+            captureSession.beginConfiguration()
+            captureSession.addInput(input)
+            captureSession.addOutput(output)
+            output.setMetadataObjectsDelegate(self, queue: .main)
+            output.metadataObjectTypes = [.qr]
+            captureSession.commitConfiguration()
+
+            let previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
+            previewLayer.videoGravity = .resizeAspectFill
+            previewLayer.frame = view.bounds
+            view.layer.addSublayer(previewLayer)
+            self.previewLayer = previewLayer
+            captureSession.startRunning()
+        } catch {
+            onError(error.localizedDescription)
+        }
+    }
+
+    /// Returns the first QR payload and stops additional callbacks.
+    func metadataOutput(
+        _ output: AVCaptureMetadataOutput,
+        didOutput metadataObjects: [AVMetadataObject],
+        from connection: AVCaptureConnection
+    ) {
+        guard !didFinish else { return }
+        guard
+            let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+            let content = metadataObject.stringValue
+        else {
+            return
+        }
+
+        didFinish = true
+        stopScanning()
+        onCode(content)
+    }
+}
+
 #Preview {
     SearchView()
+        .environmentObject(AppNavigationStore())
 }

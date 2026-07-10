@@ -54,6 +54,17 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(ContentSite.hitomi.supportedSearchSources, [.frontPage])
     }
 
+    /// Confirms QR navigation accepts only supported gallery detail hosts.
+    func testSupportedGalleryURLParsingRejectsUnrelatedHosts() throws {
+        let eHentaiURL = try XCTUnwrap(URL(string: "https://e-hentai.org/g/100/abcdef1234/"))
+        let hitomiURL = try XCTUnwrap(URL(string: "https://hitomi.la/manga/sample-200.html"))
+        let unrelatedURL = try XCTUnwrap(URL(string: "https://example.com/g/100/abcdef1234/"))
+
+        XCTAssertEqual(EHGalleryIdentifier(supportedGalleryURL: eHentaiURL), EHGalleryIdentifier(gid: 100, token: "abcdef1234"))
+        XCTAssertEqual(EHGalleryIdentifier(supportedGalleryURL: hitomiURL), EHGalleryIdentifier(gid: 200, token: "hitomi", site: .hitomi))
+        XCTAssertNil(EHGalleryIdentifier(supportedGalleryURL: unrelatedURL))
+    }
+
     /// Confirms Hitomi front page search reads one full nozomi page by byte range.
     @MainActor
     func testHitomiFrontPageSearchReadsNozomiPage() async throws {
@@ -215,6 +226,37 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(detail.relatedGalleries.map(\.identifier.gid), [relatedID])
         XCTAssertEqual(detail.relatedGalleries.first?.title, "Related Gallery")
         XCTAssertEqual(nextBatch.map(\.pageNumber), Array(21...40))
+    }
+
+    /// Confirms older Hitomi gallery JSON accepts numeric ids and numeric tag flags.
+    @MainActor
+    func testHitomiLegacyGalleryInfoDecodesNumericFields() async throws {
+        let galleryID = 895_262
+        let client = HitomiMockHTTPClient(
+            indexVersion: "1783485646",
+            galleryInfos: [
+                galleryID: """
+                {
+                  "id": 895262,
+                  "title": "Mahjong Tenshi Nodocchi Kanzen Kaikin",
+                  "type": "doujinshi",
+                  "language": "chinese",
+                  "galleryurl": "/doujinshi/mahjong-tenshi-nodocchi-kanzen-kaikin-中文-154628-895262.html",
+                  "files": [{"name":"000.jpg","hash":"68b8899b33ecc92786867dd2da8874effdf2767918199e0481dc9c8a0dbea8d7","hasavif":1}],
+                  "tags": [{"tag":"big breasts","female":1,"male":""}]
+                }
+                """
+            ]
+        )
+        let dataSource = HitomiDataSource(client: client) { _, _ in Data() }
+        let pageURL = try XCTUnwrap(URL(string: "https://hitomi.la/doujinshi/mahjong-tenshi-nodocchi-kanzen-kaikin-%E4%B8%AD%E6%96%87-154628-895262.html#1"))
+
+        let detail = try await dataSource.galleryDetail(from: pageURL)
+
+        XCTAssertEqual(detail.identifier.gid, galleryID)
+        XCTAssertEqual(detail.title, "Mahjong Tenshi Nodocchi Kanzen Kaikin")
+        XCTAssertTrue(detail.tags.contains(EHTag(namespace: "female", name: "big breasts")))
+        XCTAssertEqual(detail.pageCount, 1)
     }
 
 
@@ -501,6 +543,23 @@ final class MyEHViewerTests: XCTestCase {
         store.closeReader()
 
         XCTAssertNil(store.readerRoute)
+    }
+
+    /// Confirms cross-screen author searches select the search tab and can be consumed once.
+    @MainActor
+    func testAppNavigationStoreOpensAndConsumesSearchRequest() throws {
+        let store = AppNavigationStore()
+        store.selectedTab = .library
+
+        store.openSearch(query: "demo", site: .hitomi)
+
+        let request = try XCTUnwrap(store.searchRequest)
+        XCTAssertEqual(store.selectedTab, .search)
+        XCTAssertEqual(request.query, "demo")
+        XCTAssertEqual(request.site, .hitomi)
+
+        store.consumeSearchRequest(id: request.id)
+        XCTAssertNil(store.searchRequest)
     }
 
     /// Confirms reader zoom persistence resolves unknown values safely.

@@ -189,6 +189,15 @@ struct EHGalleryIdentifier: Hashable, Codable, Identifiable {
         return nil
     }
 
+    /// Accepts gallery URLs only from the supported e-hentai and Hitomi hosts.
+    init?(supportedGalleryURL: URL) {
+        guard let host = supportedGalleryURL.host?.lowercased() else { return nil }
+        let isEHentaiHost = host == "e-hentai.org" || host.hasSuffix(".e-hentai.org")
+        let isHitomiHost = host == "hitomi.la" || host.hasSuffix(".hitomi.la")
+        guard isEHentaiHost || isHitomiHost else { return nil }
+        self.init(galleryURL: supportedGalleryURL)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case gid
         case token
@@ -511,7 +520,7 @@ struct EHSearchRequest: Hashable, Codable {
         }
 
         if let pageIndex {
-            items.append(URLQueryItem(name: "jump", value: String(max(0, pageIndex))))
+            items.append(URLQueryItem(name: "range", value: String(max(0, pageIndex))))
         }
 
         if let cursor {

@@ -278,10 +278,10 @@ final class EHParsingTests: XCTestCase {
     /// Confirms alternate browse sources use the documented endpoint paths.
     func testSearchRequestBuildsSourceURLs() {
         XCTAssertEqual(EHSearchRequest(source: .frontPage).url().absoluteString, "https://e-hentai.org/")
-        XCTAssertEqual(EHSearchRequest(source: .frontPage, pageIndex: 0).url().absoluteString, "https://e-hentai.org/?jump=0")
+        XCTAssertEqual(EHSearchRequest(source: .frontPage, pageIndex: 0).url().absoluteString, "https://e-hentai.org/?range=0")
         XCTAssertEqual(EHSearchRequest(source: .popular).url().absoluteString, "https://e-hentai.org/popular")
         XCTAssertEqual(EHSearchRequest(source: .watched).url().absoluteString, "https://e-hentai.org/watched")
         XCTAssertEqual(EHSearchRequest(source: .favorites).url().absoluteString, "https://e-hentai.org/favorites.php?favcat=all")
-        XCTAssertEqual(EHSearchRequest(source: .favorites, pageIndex: 4).url().absoluteString, "https://e-hentai.org/favorites.php?favcat=all&jump=4")
+        XCTAssertEqual(EHSearchRequest(source: .favorites, pageIndex: 4).url().absoluteString, "https://e-hentai.org/favorites.php?favcat=all&range=4")
     }
 }

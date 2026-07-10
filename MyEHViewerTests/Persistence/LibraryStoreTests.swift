@@ -105,6 +105,25 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertTrue(restored.isImageFavorite(thirdPage))
     }
 
+    /// Confirms exported local data restores history, gallery favorites, and image favorites.
+    func testExportAndImportRestoresLocalLibraryData() throws {
+        let sourceStore = LibraryStore(userDefaults: makeUserDefaults(), storageKey: "library-export-source")
+        let detail = makeDetail()
+        let result = makeSearchResult()
+        let imagePage = makeImagePage(pageNumber: 2)
+
+        sourceStore.toggleFavorite(detail: detail, fallback: result)
+        sourceStore.toggleImageFavorite(imagePage: imagePage)
+        let backupData = try sourceStore.exportData()
+
+        let restoredStore = LibraryStore(userDefaults: makeUserDefaults(), storageKey: "library-export-restored")
+        try restoredStore.importData(backupData)
+
+        XCTAssertEqual(restoredStore.records.map(\.identifier), [detail.identifier])
+        XCTAssertTrue(restoredStore.isFavorite(detail.identifier))
+        XCTAssertEqual(restoredStore.imageFavorites.map(\.pageNumber), [2])
+    }
+
     /// Confirms local state can be fully removed from persistence.
     func testRemoveAllClearsPersistedState() {
         let userDefaults = makeUserDefaults()

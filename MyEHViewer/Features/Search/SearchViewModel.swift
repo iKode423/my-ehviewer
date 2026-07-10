@@ -241,27 +241,11 @@ final class SearchViewModel: ObservableObject {
             return true
         }
 
-        if !hasSearched || results.isEmpty || targetPageNumber == 1 {
-            guard await load(currentRequest().url(baseURL: site.baseURL)) else { return false }
-            currentPageNumber = 1
-            if targetPageNumber == 1 {
-                return true
-            }
-        }
-
-        while currentPageNumber < targetPageNumber {
-            guard let nextPageURL else { return false }
-            guard await load(nextPageURL) else { return false }
-            currentPageNumber += 1
-        }
-
-        while currentPageNumber > targetPageNumber {
-            guard let previousPageURL else { return false }
-            guard await load(previousPageURL) else { return false }
-            currentPageNumber = max(1, currentPageNumber - 1)
-        }
-
-        return currentPageNumber == targetPageNumber
+        let pageIndex = targetPageNumber - 1
+        let targetURL = currentRequest(pageIndex: pageIndex).url(baseURL: site.baseURL)
+        guard await load(targetURL) else { return false }
+        currentPageNumber = targetPageNumber
+        return true
     }
 
     /// Performs the request and replaces the current page with parsed results.

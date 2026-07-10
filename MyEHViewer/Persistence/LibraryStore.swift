@@ -140,6 +140,27 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Encodes history and favorites into a portable JSON backup.
+    func exportData() throws -> Data {
+        let state = LibraryState(
+            records: records,
+            favoriteIDs: Array(favoriteIDs),
+            imageFavorites: imageFavorites
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(state)
+    }
+
+    /// Replaces history and favorites with a decoded JSON backup.
+    func importData(_ data: Data) throws {
+        let state = try JSONDecoder().decode(LibraryState.self, from: data)
+        records = state.records
+        favoriteIDs = Set(state.favoriteIDs)
+        imageFavorites = state.imageFavorites
+        save()
+    }
+
     /// Removes all local library state.
     func removeAll() {
         records = []

@@ -1,5 +1,6 @@
 import Charts
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Shows local data controls and reader-related preferences.
 struct SettingsView: View {
@@ -17,6 +18,10 @@ struct SettingsView: View {
     @State private var showsCookieClearConfirmation = false
     @State private var showsImageCacheClearConfirmation = false
     @State private var showsNonGalleryImageCacheClearConfirmation = false
+    @State private var showsLocalDataExporter = false
+    @State private var showsLocalDataImporter = false
+    @State private var localDataDocument = LocalDataBackupDocument()
+    @State private var localDataTransferAlert: LocalDataTransferAlert?
     @State private var accentRefreshID = UUID()
 
     var body: some View {
@@ -41,6 +46,28 @@ struct SettingsView: View {
             .onChange(of: accentColorHex) { _, _ in
                 accentRefreshID = UUID()
             }
+        }
+        .fileExporter(
+            isPresented: $showsLocalDataExporter,
+            document: localDataDocument,
+            contentType: .json,
+            defaultFilename: localDataBackupFilename
+        ) { result in
+            handleLocalDataExportResult(result)
+        }
+        .fileImporter(
+            isPresented: $showsLocalDataImporter,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { result in
+            handleLocalDataImportResult(result)
+        }
+        .alert(item: $localDataTransferAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text(AppCopy.commonOK))
+            )
         }
     }
 
@@ -164,7 +191,7 @@ struct SettingsView: View {
 
     /// Shows local library counters and destructive cleanup controls.
     private var localDataSection: some View {
-        Section(AppCopy.settingsLocalDataTitle) {
+        Section {
             Label(String(format: AppCopy.settingsHistoryCount, String(libraryStore.history(for: currentSite).count)), systemImage: "clock")
             Label(String(format: AppCopy.settingsFavoritesCount, String(libraryStore.favorites(for: currentSite).count)), systemImage: "star")
 
@@ -173,6 +200,18 @@ struct SettingsView: View {
                     .environmentObject(libraryStore)
             } label: {
                 Label(AppCopy.settingsStatistics, systemImage: "chart.bar.xaxis")
+            }
+
+            Button {
+                prepareLocalDataExport()
+            } label: {
+                Label(AppCopy.settingsExportLocalData, systemImage: "square.and.arrow.up")
+            }
+
+            Button {
+                showsLocalDataImporter = true
+            } label: {
+                Label(AppCopy.settingsImportLocalData, systemImage: "square.and.arrow.down")
             }
 
             Button(role: .destructive) {
@@ -192,7 +231,73 @@ struct SettingsView: View {
             } message: {
                 Text(AppCopy.settingsClearConfirmationMessage)
             }
+        } header: {
+            Text(AppCopy.settingsLocalDataTitle)
+        } footer: {
+            Text(AppCopy.settingsLocalDataTransferNote)
         }
+    }
+
+    /// Builds the JSON document before presenting the system export sheet.
+    private func prepareLocalDataExport() {
+        do {
+            localDataDocument = LocalDataBackupDocument(data: try libraryStore.exportData())
+            showsLocalDataExporter = true
+        } catch {
+            localDataTransferAlert = LocalDataTransferAlert(
+                title: AppCopy.settingsLocalDataExportFailed,
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    /// Reports whether the system completed the local data export.
+    private func handleLocalDataExportResult(_ result: Result<URL, Error>) {
+        switch result {
+        case .success:
+            localDataTransferAlert = LocalDataTransferAlert(
+                title: AppCopy.settingsLocalDataExportSucceeded,
+                message: AppCopy.settingsLocalDataExportSucceededMessage
+            )
+        case .failure(let error):
+            localDataTransferAlert = LocalDataTransferAlert(
+                title: AppCopy.settingsLocalDataExportFailed,
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    /// Loads one selected JSON backup and replaces current library data.
+    private func handleLocalDataImportResult(_ result: Result<[URL], Error>) {
+        do {
+            let urls = try result.get()
+            guard let url = urls.first else { return }
+            let hasSecurityAccess = url.startAccessingSecurityScopedResource()
+            defer {
+                if hasSecurityAccess {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            let data = try Data(contentsOf: url)
+            try libraryStore.importData(data)
+            localDataTransferAlert = LocalDataTransferAlert(
+                title: AppCopy.settingsLocalDataImportSucceeded,
+                message: AppCopy.settingsLocalDataImportSucceededMessage
+            )
+        } catch {
+            localDataTransferAlert = LocalDataTransferAlert(
+                title: AppCopy.settingsLocalDataImportFailed,
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    /// Builds a readable timestamped filename for exported backups.
+    private var localDataBackupFilename: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return "my-ehviewer-local-data-\(formatter.string(from: Date()))"
     }
 
     /// Shows image cache usage and cleanup controls.
@@ -276,6 +381,38 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
         }
     }
+}
+
+
+/// Wraps exported local library JSON for the system document picker.
+private struct LocalDataBackupDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    var data: Data
+
+    /// Creates an empty or prepared backup document.
+    init(data: Data = Data()) {
+        self.data = data
+    }
+
+    /// Reads an existing JSON document selected by the user.
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        self.data = data
+    }
+
+    /// Writes the prepared JSON data into the exported file.
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
+
+/// Stores one local data transfer result for presentation.
+private struct LocalDataTransferAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
 }
 
 /// Lists cached galleries and opens their detail pages.
