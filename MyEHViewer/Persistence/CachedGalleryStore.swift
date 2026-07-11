@@ -434,7 +434,8 @@ final class CachedGalleryStore: ObservableObject {
                     byteCount: records.reduce(Int64(0)) { $0 + $1.byteCount },
                     updatedAt: entry.manifest.updatedAt,
                     pageRecords: records,
-                    isDownloadUnavailable: entry.manifest.isDownloadUnavailable
+                    isDownloadUnavailable: entry.manifest.isDownloadUnavailable,
+                    storageState: records.isEmpty ? .cacheOnly : .persistent
                 )
             )
         }

@@ -460,12 +460,12 @@ private struct ImageCacheManagementView: View {
                 .disabled(imageCacheStore.persistenceProgress != nil)
                 .accessibilityLabel(AppCopy.cacheManagementPersistAll)
 
-                Picker(AppCopy.cacheManagementLayoutTitle, selection: layoutModeBinding) {
-                    Image(systemName: "list.bullet").tag(CollectionLayoutMode.list)
-                    Image(systemName: "square.grid.2x2").tag(CollectionLayoutMode.grid)
+                Button {
+                    layoutModeRaw = (layoutMode == .list ? CollectionLayoutMode.grid : .list).rawValue
+                } label: {
+                    Image(systemName: layoutMode == .list ? "square.grid.2x2" : "list.bullet")
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 88)
+                .accessibilityLabel(AppCopy.cacheManagementLayoutTitle)
             }
         }
         .overlay {
@@ -757,14 +757,6 @@ private struct ImageCacheManagementView: View {
 
     private var layoutMode: CollectionLayoutMode {
         CollectionLayoutMode(rawValue: layoutModeRaw) ?? .list
-    }
-
-    private var layoutModeBinding: Binding<CollectionLayoutMode> {
-        Binding {
-            layoutMode
-        } set: { newValue in
-            layoutModeRaw = newValue.rawValue
-        }
     }
 
     /// Removes cached data for galleries selected from the management list.
@@ -1170,6 +1162,14 @@ private struct LocalStatisticsView: View {
                 }
 
                 Section(AppCopy.statisticsCacheTitle) {
+                    statisticsValueRow(
+                        title: AppCopy.statisticsPersistedGalleries,
+                        value: String(snapshot.persistedGalleryCount)
+                    )
+                    statisticsValueRow(
+                        title: AppCopy.statisticsUnpersistedGalleries,
+                        value: String(snapshot.unpersistedGalleryCount)
+                    )
                     statisticsValueRow(title: AppCopy.statisticsCachedBytes, value: snapshot.localizedCacheByteCount)
 
                     if snapshot.knownCachedPageTotal > 0 {
@@ -1386,6 +1386,8 @@ private struct LocalStatisticsSnapshot {
     let historyCount: Int
     let favoriteCount: Int
     let cachedGalleryCount: Int
+    let persistedGalleryCount: Int
+    let unpersistedGalleryCount: Int
     let cachedPageCount: Int
     let knownCachedPageTotal: Int
     let cacheByteCount: Int64
@@ -1414,6 +1416,8 @@ private struct LocalStatisticsSnapshot {
         historyCount = records.count
         self.favoriteCount = favoriteCount
         cachedGalleryCount = cacheSummaries.count
+        persistedGalleryCount = cacheSummaries.filter { $0.storageState == .persistent }.count
+        unpersistedGalleryCount = cacheSummaries.filter { $0.storageState == .cacheOnly }.count
         cachedPageCount = cacheSummaries.reduce(0) { $0 + $1.cachedPageCount }
         knownCachedPageTotal = cacheSummaries.reduce(0) { $0 + ($1.totalPageCount ?? $1.cachedPageCount) }
         cacheByteCount = cacheSummaries.reduce(Int64(0)) { $0 + $1.byteCount }

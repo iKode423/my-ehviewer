@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import MyEHViewer
 
@@ -218,13 +219,99 @@ final class ReaderViewModelTests: XCTestCase {
             client: recorder,
             cacheStore: cacheStore
         )
+        var loadingValues: [Bool] = []
+        let loadingCancellable = viewModel.$isLoading.sink { loadingValues.append($0) }
+        defer { loadingCancellable.cancel() }
 
         await viewModel.loadIfNeeded()
         await viewModel.loadNextPage()
 
         XCTAssertTrue(recorder.requestedURLs.isEmpty)
+        XCTAssertTrue(loadingValues.contains(true))
         XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
         XCTAssertEqual(viewModel.imagePage?.imageURL, secondImageURL)
+        XCTAssertFalse(viewModel.isCurrentImagePersistentlyStored)
+    }
+
+    /// Confirms durable local pages switch without publishing reader loading state.
+    func testPersistentPageNavigationDoesNotPublishLoading() async throws {
+        let baseURL = FileManager.default.temporaryDirectory.appending(
+            path: "ReaderPersistentTests-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: baseURL) }
+        try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+        let persistentStore = CachedGalleryStore(
+            rootURL: baseURL.appending(path: "Persistent", directoryHint: .isDirectory),
+            stagingRootURL: baseURL.appending(path: "Staging", directoryHint: .isDirectory)
+        )
+        let identifier = EHGalleryIdentifier(gid: 100, token: "abcdef1234")
+        let firstPageURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/100-1")!
+        let secondPageURL = URL(string: "https://e-hentai.org/s/ddddeeeeff/100-2")!
+        let firstImageURL = URL(string: "https://example.test/1.webp")!
+        let secondImageURL = URL(string: "https://example.test/2.webp")!
+        let firstSourceURL = baseURL.appending(path: "1.webp")
+        let secondSourceURL = baseURL.appending(path: "2.webp")
+        try Data([0x01]).write(to: firstSourceURL)
+        try Data([0x02]).write(to: secondSourceURL)
+        let summary = CachedGallerySummary(
+            galleryIdentifier: identifier,
+            title: "Sample Gallery",
+            thumbnailURL: firstImageURL,
+            cachedPageCount: 0,
+            totalPageCount: 2,
+            byteCount: 0,
+            updatedAt: Date(),
+            pageRecords: []
+        )
+        try await persistentStore.prepareGallery(summary: summary)
+        try await persistentStore.importCachedPage(
+            CachedGalleryPageInput(
+                pageNumber: 1,
+                pageURL: firstPageURL,
+                imageURL: firstImageURL,
+                thumbnailURL: firstImageURL,
+                sourceFileURL: firstSourceURL,
+                updatedAt: Date()
+            ),
+            identifier: identifier
+        )
+        try await persistentStore.importCachedPage(
+            CachedGalleryPageInput(
+                pageNumber: 2,
+                pageURL: secondPageURL,
+                imageURL: secondImageURL,
+                thumbnailURL: secondImageURL,
+                sourceFileURL: secondSourceURL,
+                updatedAt: Date()
+            ),
+            identifier: identifier
+        )
+        let cacheStore = ImageCacheStore(
+            directoryURL: baseURL.appending(path: "Cache", directoryHint: .isDirectory),
+            persistentGalleryStore: persistentStore
+        )
+        let recorder = ReaderRecordingHTTPClient()
+        let viewModel = ReaderViewModel(
+            initialPageURL: firstPageURL,
+            pageLinks: [
+                EHGalleryPageLink(pageNumber: 1, pageURL: firstPageURL),
+                EHGalleryPageLink(pageNumber: 2, pageURL: secondPageURL)
+            ],
+            client: recorder,
+            cacheStore: cacheStore
+        )
+        var loadingValues: [Bool] = []
+        let loadingCancellable = viewModel.$isLoading.sink { loadingValues.append($0) }
+        defer { loadingCancellable.cancel() }
+
+        await viewModel.loadIfNeeded()
+        await viewModel.loadNextPage()
+
+        XCTAssertTrue(recorder.requestedURLs.isEmpty)
+        XCTAssertFalse(loadingValues.contains(true))
+        XCTAssertEqual(viewModel.imagePage?.pageNumber, 2)
+        XCTAssertTrue(viewModel.isCurrentImagePersistentlyStored)
     }
 
     /// Confirms cached pages can navigate to an uncached next page through known gallery links.

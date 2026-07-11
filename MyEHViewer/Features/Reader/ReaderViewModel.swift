@@ -13,6 +13,7 @@ final class ReaderViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var imageReloadToken = 0
     @Published private(set) var totalPageCount: Int?
+    @Published private(set) var isCurrentImagePersistentlyStored = false
 
     private let client: EHHTTPClient
     private let parser: EHImagePageParser
@@ -220,8 +221,14 @@ final class ReaderViewModel: ObservableObject {
     /// Fetches, parses, and stores one reader page.
     private func load(_ url: URL) async {
         guard !isLoading else { return }
-        isLoading = true
         errorMessage = nil
+
+        if let cachedPage = cachedImagePage(for: url), cachedPage.isPersistentlyStored {
+            applyCachedPage(cachedPage)
+            return
+        }
+
+        isLoading = true
         defer { isLoading = false }
 
         if let cachedPage = cachedImagePage(for: url) {
@@ -233,11 +240,13 @@ final class ReaderViewModel: ObservableObject {
             if EHGalleryIdentifier(galleryURL: url)?.site == .hitomi || url.host?.contains("hitomi.la") == true {
                 imagePage = try await hitomiDataSource.imagePage(from: url)
                 totalPageCount = max(totalPageCount ?? 0, imagePage?.pageNumber ?? 0)
+                isCurrentImagePersistentlyStored = false
                 imageReloadToken += 1
                 currentPageURL = imagePage?.pageURL ?? url
             } else {
                 let response = try await client.get(url)
                 imagePage = try parser.parse(response.body, sourceURL: response.url)
+                isCurrentImagePersistentlyStored = false
                 imageReloadToken += 1
                 currentPageURL = response.url
             }
@@ -251,15 +260,16 @@ final class ReaderViewModel: ObservableObject {
     }
 
     /// Applies a cached page without touching the network.
-    private func applyCachedPage(_ cachedPage: EHImagePage) {
-        imagePage = cachedPage
+    private func applyCachedPage(_ cachedPage: CachedReaderPage) {
+        imagePage = cachedPage.imagePage
+        isCurrentImagePersistentlyStored = cachedPage.isPersistentlyStored
         imageReloadToken += 1
-        currentPageURL = cachedPage.pageURL
+        currentPageURL = cachedPage.imagePage.pageURL
         errorMessage = nil
     }
 
     /// Builds a reader page from the local image cache when network HTML is unavailable.
-    private func cachedImagePage(for url: URL) -> EHImagePage? {
+    private func cachedImagePage(for url: URL) -> CachedReaderPage? {
         guard
             let record = cacheStore.pageRecord(for: url),
             cacheStore.containsData(for: record.imageURL)
@@ -271,16 +281,19 @@ final class ReaderViewModel: ObservableObject {
             ?? cacheStore.pageRecord(for: record.galleryIdentifier, pageNumber: record.pageNumber - 1)?.pageURL
         let nextURL = pageLink(for: record.pageNumber + 1)?.pageURL
             ?? cacheStore.pageRecord(for: record.galleryIdentifier, pageNumber: record.pageNumber + 1)?.pageURL
-        return EHImagePage(
-            galleryID: record.galleryIdentifier.gid,
-            pageNumber: record.pageNumber,
-            pageURL: record.pageURL,
-            title: record.galleryTitle,
-            imageURL: record.imageURL,
-            previousPageURL: previousURL,
-            nextPageURL: nextURL,
-            galleryURL: record.galleryIdentifier.url(),
-            originalImageURL: nil
+        return CachedReaderPage(
+            imagePage: EHImagePage(
+                galleryID: record.galleryIdentifier.gid,
+                pageNumber: record.pageNumber,
+                pageURL: record.pageURL,
+                title: record.galleryTitle,
+                imageURL: record.imageURL,
+                previousPageURL: previousURL,
+                nextPageURL: nextURL,
+                galleryURL: record.galleryIdentifier.url(),
+                originalImageURL: nil
+            ),
+            isPersistentlyStored: record.isPersistentlyStored
         )
     }
 
@@ -293,4 +306,10 @@ final class ReaderViewModel: ObservableObject {
             .compactMap { cacheStore.pageRecord(for: $0.pageURL)?.galleryIdentifier }
             .first
     }
+}
+
+/// Carries a cache-derived reader page and its storage lifetime.
+private struct CachedReaderPage {
+    let imagePage: EHImagePage
+    let isPersistentlyStored: Bool
 }

@@ -287,6 +287,8 @@ enum AppCopy {
     static let statisticsHistoryGalleries = "历史图库"
     static let statisticsFavoriteGalleries = "本地收藏"
     static let statisticsCachedGalleries = "缓存图库"
+    static let statisticsPersistedGalleries = "已永久保存图库"
+    static let statisticsUnpersistedGalleries = "未保存图库"
     static let statisticsCachedPages = "缓存页"
     static let statisticsCachedBytes = "缓存占用"
     static let statisticsCacheCompletionFormat = "已缓存 %@/%@ 页"

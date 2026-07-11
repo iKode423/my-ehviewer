@@ -265,6 +265,17 @@ struct CachedImagePageRecord: Codable, Hashable, Identifiable, Sendable {
     var localFileURL: URL? = nil
 
     var id: String { "\(galleryIdentifier.id)-\(pageNumber)" }
+
+    /// Returns whether this page is backed by durable gallery storage.
+    var isPersistentlyStored: Bool {
+        localFileURL != nil
+    }
+}
+
+/// Describes whether a gallery only uses disposable cache files or durable storage.
+enum CachedGalleryStorageState: Hashable, Sendable {
+    case cacheOnly
+    case persistent
 }
 
 /// Summarizes cached pages for one gallery.
@@ -279,6 +290,7 @@ struct CachedGallerySummary: Hashable, Identifiable, Sendable {
     let updatedAt: Date
     let pageRecords: [CachedImagePageRecord]
     let isDownloadUnavailable: Bool
+    let storageState: CachedGalleryStorageState
 
     /// Creates a cache summary while keeping the 404 marker optional for older call sites.
     init(
@@ -291,7 +303,8 @@ struct CachedGallerySummary: Hashable, Identifiable, Sendable {
         byteCount: Int64,
         updatedAt: Date,
         pageRecords: [CachedImagePageRecord],
-        isDownloadUnavailable: Bool = false
+        isDownloadUnavailable: Bool = false,
+        storageState: CachedGalleryStorageState = .cacheOnly
     ) {
         self.galleryIdentifier = galleryIdentifier
         self.title = title
@@ -303,6 +316,7 @@ struct CachedGallerySummary: Hashable, Identifiable, Sendable {
         self.updatedAt = updatedAt
         self.pageRecords = pageRecords
         self.isDownloadUnavailable = isDownloadUnavailable
+        self.storageState = storageState
     }
 
     var id: String { galleryIdentifier.id }
@@ -913,7 +927,8 @@ final class ImageCacheStore: ObservableObject {
                     byteCount: byteCount,
                     updatedAt: records.map(\.updatedAt).max() ?? metadata?.updatedAt ?? .distantPast,
                     pageRecords: sortedRecords,
-                    isDownloadUnavailable: metadata?.isDownloadUnavailable ?? false
+                    isDownloadUnavailable: metadata?.isDownloadUnavailable ?? false,
+                    storageState: .cacheOnly
                 )
             }
             .sorted { $0.updatedAt > $1.updatedAt }
@@ -955,7 +970,8 @@ final class ImageCacheStore: ObservableObject {
                 byteCount: byteCount,
                 updatedAt: max(storedSummary.updatedAt, cacheSummary.updatedAt),
                 pageRecords: records,
-                isDownloadUnavailable: storedSummary.isDownloadUnavailable || cacheSummary.isDownloadUnavailable
+                isDownloadUnavailable: storedSummary.isDownloadUnavailable || cacheSummary.isDownloadUnavailable,
+                storageState: storedSummary.storageState == .persistent ? .persistent : cacheSummary.storageState
             )
         }
         return summariesByID.values.sorted { $0.updatedAt > $1.updatedAt }

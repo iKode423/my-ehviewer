@@ -26,6 +26,24 @@ final class CachedGalleryStoreTests: XCTestCase {
         )
         XCTAssertEqual(galleryFolders.count, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: galleryFolders[0].appending(path: "manifest.json").path))
+        XCTAssertEqual(store.summaries.first?.storageState, .persistent)
+    }
+
+    /// Confirms durable staging counts as persistent before the gallery is finalized.
+    func testStagedGallerySummaryIsPersistentAfterFirstPage() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let store = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+
+        try await store.prepareGallery(summary: fixture.summary)
+        XCTAssertEqual(store.summaries.first?.storageState, .cacheOnly)
+
+        try await store.importCachedPage(fixture.input, identifier: fixture.identifier)
+        XCTAssertEqual(store.summaries.first?.storageState, .persistent)
     }
 
     /// Confirms an invalid interrupted folder is removed before a retry starts.
@@ -112,6 +130,61 @@ final class CachedGalleryStoreTests: XCTestCase {
 
         let resolvedURL = try XCTUnwrap(cacheStore.cachedDataFileURL(for: fixture.imageURL))
         XCTAssertEqual(try Data(contentsOf: resolvedURL), fixture.data)
+        XCTAssertEqual(cacheStore.gallerySummaries.first?.storageState, .persistent)
+    }
+
+    /// Confirms disposable-only galleries remain distinct from durable summaries.
+    func testDisposableCacheSummaryIsCacheOnly() throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+        let cacheStore = ImageCacheStore(directoryURL: environment.cacheURL)
+
+        cacheStore.save(
+            fixture.data,
+            for: fixture.imageURL,
+            responseURL: fixture.imageURL,
+            context: fixture.context
+        )
+
+        XCTAssertEqual(cacheStore.gallerySummaries.first?.storageState, .cacheOnly)
+    }
+
+    /// Confirms one durable page makes a mixed gallery persistent after summary merging.
+    func testMixedGallerySummaryRemainsPersistent() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let persistentStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+        try await persistentStore.prepareGallery(summary: fixture.summary)
+        try await persistentStore.importCachedPage(fixture.input, identifier: fixture.identifier)
+
+        let cacheStore = ImageCacheStore(
+            directoryURL: environment.cacheURL,
+            persistentGalleryStore: persistentStore
+        )
+        let secondPageURL = URL(string: "https://e-hentai.org/s/page-token/42-2")!
+        let secondImageURL = URL(string: "https://example.com/image-2.webp")!
+        cacheStore.save(
+            Data("cache-only-page".utf8),
+            for: secondImageURL,
+            responseURL: secondImageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: fixture.identifier,
+                galleryTitle: "Test Gallery",
+                pageNumber: 2,
+                pageURL: secondPageURL,
+                totalPageCount: 2,
+                thumbnailURL: fixture.imageURL
+            )
+        )
+
+        let summary = try XCTUnwrap(cacheStore.gallerySummaries.first)
+        XCTAssertEqual(summary.cachedPageCount, 2)
+        XCTAssertEqual(summary.storageState, .persistent)
     }
 
     /// Confirms successful migration removes only the duplicate image-cache files.

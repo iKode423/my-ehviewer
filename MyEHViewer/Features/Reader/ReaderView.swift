@@ -35,6 +35,13 @@ struct ReaderView: View {
         VStack(spacing: 0) {
             content
         }
+        .overlay {
+            if let imagePage = viewModel.imagePage, showsReaderChrome {
+                readerChromeOverlay(for: imagePage)
+                    .transition(.opacity)
+            }
+        }
+        .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: showsReaderChrome)
         .background(readerBackgroundColor.ignoresSafeArea())
         .navigationTitle(AppCopy.readerTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -201,16 +208,9 @@ struct ReaderView: View {
     /// Shows the current image and page navigation controls.
     private func readerContent(for imagePage: EHImagePage) -> some View {
         GeometryReader { geometry in
-            ZStack {
-                readerImageStage(for: imagePage, geometry: geometry)
-
-                if showsReaderChrome {
-                    readerChromeOverlay(for: imagePage)
-                        .transition(.opacity)
-                }
-            }
-            .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: showsReaderChrome)
+            readerImageStage(for: imagePage, geometry: geometry)
         }
+        .ignoresSafeArea()
     }
 
     /// Shows the full-screen image surface with tap zones and pinch zoom.
@@ -231,7 +231,11 @@ struct ReaderView: View {
                 } failure: {
                     imageLoadFailureView
                 }
-                .id(viewModel.imageReloadToken)
+                .id(
+                    viewModel.isCurrentImagePersistentlyStored
+                        ? "persistent-reader-image"
+                        : "reader-image-\(viewModel.imageReloadToken)"
+                )
                 .frame(width: readerImageWidth(availableWidth: geometry.size.width))
                 .contentShape(Rectangle())
                 .highPriorityGesture(readerImageSaveLongPress(for: imagePage))
@@ -241,7 +245,11 @@ struct ReaderView: View {
                 Spacer(minLength: 0)
             }
             .padding(fitMode == .fitPage ? 16 : 0)
-            .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .center)
+            .frame(
+                minWidth: geometry.size.width,
+                minHeight: ReaderViewportLayout.fullScreenHeight,
+                alignment: .center
+            )
         }
         .background(readerBackgroundColor)
         .contentShape(Rectangle())
@@ -334,14 +342,16 @@ struct ReaderView: View {
 
     /// Shows a stable thumbnail frame for a known reader page.
     private func pageThumbnail(url: URL?, crop: EHImageCrop? = nil) -> some View {
-        CachedRemoteImageView(url: url, crop: crop, contentMode: .fill, animationMode: .staticPreview, decodeMaxPixelSize: 420) {
-            ProgressView()
-        } failure: {
-            Image(systemName: "photo")
-                .foregroundStyle(.secondary)
+        GeometryReader { proxy in
+            CachedRemoteImageView(url: url, crop: crop, contentMode: .fill, animationMode: .staticPreview, decodeMaxPixelSize: 420) {
+                ProgressView()
+            } failure: {
+                Image(systemName: "photo")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(0.72, contentMode: .fit)
+        .aspectRatio(ReaderPageGridLayout.thumbnailAspectRatio, contentMode: .fit)
         .background(Color.secondary.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         .clipped()
@@ -578,7 +588,7 @@ struct ReaderView: View {
     private var pageGridSheet: some View {
         NavigationStack {
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], alignment: .leading, spacing: 10) {
+                LazyVGrid(columns: ReaderPageGridLayout.columns, alignment: .leading, spacing: 10) {
                     ForEach(viewModel.sortedPageLinks) { pageLink in
                         Button {
                             loadPageFromGrid(pageLink)
@@ -659,6 +669,40 @@ struct ReaderView: View {
 
     /// Exposes reader display preferences from the reader toolbar.
     private var displayMenu: some View {
+        ReaderDisplayMenu(
+            fitModeRaw: $fitModeRaw,
+            zoomLevelRaw: $zoomLevelRaw,
+            backgroundModeRaw: $backgroundModeRaw,
+            canResetZoom: zoomLevel != .x1 || persistedPinchScale != 1.0,
+            resetZoom: resetReaderZoom
+        )
+    }
+
+}
+
+/// Defines the shared fixed geometry for gallery and shared-image page directories.
+enum ReaderPageGridLayout {
+    static let columns = Array(
+        repeating: GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 10),
+        count: 3
+    )
+    static let thumbnailAspectRatio = 0.72
+}
+
+/// Keeps reader images centered against the full screen while chrome changes safe areas.
+enum ReaderViewportLayout {
+    static var fullScreenHeight: CGFloat { UIScreen.main.bounds.height }
+}
+
+/// Exposes the shared reader display preferences from a toolbar menu.
+struct ReaderDisplayMenu: View {
+    @Binding var fitModeRaw: String
+    @Binding var zoomLevelRaw: Double
+    @Binding var backgroundModeRaw: String
+    let canResetZoom: Bool
+    let resetZoom: () -> Void
+
+    var body: some View {
         Menu {
             Picker(AppCopy.readerDisplayMode, selection: $fitModeRaw) {
                 ForEach(ReaderFitMode.allCases) { mode in
@@ -673,11 +717,11 @@ struct ReaderView: View {
             }
 
             Button {
-                resetReaderZoom()
+                resetZoom()
             } label: {
                 Label(AppCopy.readerZoomReset, systemImage: "arrow.counterclockwise")
             }
-            .disabled(zoomLevel == .x1 && persistedPinchScale == 1.0)
+            .disabled(!canResetZoom)
 
             Button {
                 ReaderOrientationController.toggleOrientation()
@@ -694,7 +738,6 @@ struct ReaderView: View {
             Label(AppCopy.readerDisplayMenu, systemImage: "textformat.size")
         }
     }
-
 }
 
 /// Carries one reader image save result alert.

@@ -323,25 +323,28 @@ struct FavoriteImagesView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var sharedMediaStore: SharedMediaStore
     @State private var randomFavorites: [FavoriteImageDisplayItem]?
+    private static let scrollTopID = "favorite-images-scroll-top"
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            favoriteImagesContent
+        ScrollViewReader { scrollProxy in
+            ZStack(alignment: .bottomTrailing) {
+                favoriteImagesContent
 
-            if !favoriteItems.isEmpty {
-                Button {
-                    showRandomFavorites()
-                } label: {
-                    Image(systemName: "shuffle")
-                        .font(.headline)
-                        .frame(width: 44, height: 44)
-                        .background(.regularMaterial)
-                        .clipShape(Circle())
-                        .shadow(radius: 4, y: 2)
+                if !favoriteItems.isEmpty {
+                    Button {
+                        showRandomFavorites(scrollProxy: scrollProxy)
+                    } label: {
+                        Image(systemName: "shuffle")
+                            .font(.headline)
+                            .frame(width: 44, height: 44)
+                            .background(.regularMaterial)
+                            .clipShape(Circle())
+                            .shadow(radius: 4, y: 2)
+                    }
+                    .accessibilityLabel(AppCopy.libraryRandomImageFavorites)
+                    .padding(.trailing, 18)
+                    .padding(.bottom, 18)
                 }
-                .accessibilityLabel(AppCopy.libraryRandomImageFavorites)
-                .padding(.trailing, 18)
-                .padding(.bottom, 18)
             }
         }
         .navigationTitle(AppCopy.libraryImageFavorites)
@@ -354,6 +357,10 @@ struct FavoriteImagesView: View {
     @ViewBuilder
     private var favoriteImagesContent: some View {
         ScrollView {
+            Color.clear
+                .frame(height: 0)
+                .id(Self.scrollTopID)
+
             if favoriteItems.isEmpty {
                 ContentUnavailableView(
                     AppCopy.libraryEmptyImageFavoritesTitle,
@@ -427,9 +434,13 @@ struct FavoriteImagesView: View {
         }
     }
 
-    /// Enters random mode without mutating either persisted favorite order.
-    private func showRandomFavorites() {
+    /// Enters random mode and scrolls after the updated content has been laid out.
+    private func showRandomFavorites(scrollProxy: ScrollViewProxy) {
         randomFavorites = Array(favoriteItems.shuffled().prefix(10))
+        Task { @MainActor in
+            await Task.yield()
+            scrollProxy.scrollTo(Self.scrollTopID, anchor: .top)
+        }
     }
 }
 
@@ -464,10 +475,12 @@ private struct SharedFavoriteImageCard: View {
                     initialRecordID: record.id
                 )
             } label: {
-                SharedMediaThumbnail(record: record)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: imageHeight)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                GeometryReader { proxy in
+                    SharedMediaThumbnail(record: record)
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .frame(height: imageHeight)
             }
             .buttonStyle(.plain)
 
@@ -527,6 +540,7 @@ private struct SharedFavoriteImageCard: View {
             }
         }
         .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.07))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
@@ -553,24 +567,26 @@ private struct FavoriteImageCard: View {
             Button {
                 appNavigationStore.openReader(initialPageURL: favorite.pageURL)
             } label: {
-                CachedRemoteImageView(
-                    url: favorite.imageURL,
-                    referer: favorite.pageURL,
-                    contentMode: .fill,
-                    animationMode: .staticPreview,
-                    decodeMaxPixelSize: decodeMaxPixelSize
-                ) {
-                    ProgressView()
-                } failure: {
-                    Image(systemName: "photo")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
+                GeometryReader { proxy in
+                    CachedRemoteImageView(
+                        url: favorite.imageURL,
+                        referer: favorite.pageURL,
+                        contentMode: .fill,
+                        animationMode: .staticPreview,
+                        decodeMaxPixelSize: decodeMaxPixelSize
+                    ) {
+                        ProgressView()
+                    } failure: {
+                        Image(systemName: "photo")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .background(Color.secondary.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .clipped()
                 }
-                .frame(maxWidth: .infinity)
                 .frame(height: imageHeight)
-                .background(Color.secondary.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .clipped()
             }
             .buttonStyle(.plain)
             .accessibilityLabel(AppCopy.libraryOpenFavoriteImage)
@@ -649,6 +665,7 @@ private struct FavoriteImageCard: View {
             }
         }
         .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.07))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }

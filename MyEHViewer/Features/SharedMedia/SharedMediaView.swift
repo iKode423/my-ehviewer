@@ -15,27 +15,32 @@ struct SharedMediaView: View {
     @State private var transferAlert: SharedMediaTransferAlert?
     @State private var editingRecord: SharedMediaRecord?
     @State private var noteText = ""
+    private static let scrollTopID = "shared-media-scroll-top"
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                filterControls
-                Divider()
-                mediaContent
-            }
-
-            if !filteredRecords.isEmpty {
-                Button { showRandomRecords() } label: {
-                    Image(systemName: "shuffle")
-                        .font(.headline)
-                        .frame(width: 44, height: 44)
-                        .background(.regularMaterial)
-                        .clipShape(Circle())
-                        .shadow(radius: 4, y: 2)
+        ScrollViewReader { scrollProxy in
+            ZStack(alignment: .bottomTrailing) {
+                VStack(spacing: 0) {
+                    filterControls
+                    Divider()
+                    mediaContent
                 }
-                .accessibilityLabel(AppCopy.sharedMediaRandomMedia)
-                .padding(.trailing, 18)
-                .padding(.bottom, 18)
+
+                if !filteredRecords.isEmpty {
+                    Button {
+                        showRandomRecords(scrollProxy: scrollProxy)
+                    } label: {
+                        Image(systemName: "shuffle")
+                            .font(.headline)
+                            .frame(width: 44, height: 44)
+                            .background(.regularMaterial)
+                            .clipShape(Circle())
+                            .shadow(radius: 4, y: 2)
+                    }
+                    .accessibilityLabel(AppCopy.sharedMediaRandomMedia)
+                    .padding(.trailing, 18)
+                    .padding(.bottom, 18)
+                }
             }
         }
         .navigationTitle(AppCopy.sharedMediaTitle)
@@ -93,6 +98,10 @@ struct SharedMediaView: View {
     private var gridContent: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
+                Color.clear
+                    .frame(height: 0)
+                    .id(Self.scrollTopID)
+
                 ForEach(layoutRows) { row in
                     switch row {
                     case .images(let records):
@@ -311,9 +320,13 @@ struct SharedMediaView: View {
         return rows
     }
 
-    /// Enters random mode with up to ten records from the active filter.
-    private func showRandomRecords() {
+    /// Enters random mode and scrolls after the grid replaces the current layout.
+    private func showRandomRecords(scrollProxy: ScrollViewProxy) {
         randomRecords = Array(filteredRecords.shuffled().prefix(10))
+        Task { @MainActor in
+            await Task.yield()
+            scrollProxy.scrollTo(Self.scrollTopID, anchor: .top)
+        }
     }
 
     /// Leaves random mode before synchronizing new shared files.

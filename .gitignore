@@ -13,6 +13,11 @@ Config/Local.xcconfig
 
 # Local agent state
 .serena/
+.trellis/
+.codex/
+.codegraph/
+.agents/
+/AGENTS.md
 
 # macOS
 .DS_Store
