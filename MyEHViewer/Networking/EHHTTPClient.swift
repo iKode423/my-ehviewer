@@ -290,6 +290,8 @@ struct CachedGallerySummary: Hashable, Identifiable, Sendable {
     let updatedAt: Date
     let pageRecords: [CachedImagePageRecord]
     let isDownloadUnavailable: Bool
+    let isStaged: Bool
+    let isStagedComplete: Bool
     let storageState: CachedGalleryStorageState
 
     /// Creates a cache summary while keeping the 404 marker optional for older call sites.
@@ -304,6 +306,8 @@ struct CachedGallerySummary: Hashable, Identifiable, Sendable {
         updatedAt: Date,
         pageRecords: [CachedImagePageRecord],
         isDownloadUnavailable: Bool = false,
+        isStaged: Bool = false,
+        isStagedComplete: Bool = false,
         storageState: CachedGalleryStorageState = .cacheOnly
     ) {
         self.galleryIdentifier = galleryIdentifier
@@ -316,6 +320,8 @@ struct CachedGallerySummary: Hashable, Identifiable, Sendable {
         self.updatedAt = updatedAt
         self.pageRecords = pageRecords
         self.isDownloadUnavailable = isDownloadUnavailable
+        self.isStaged = isStaged
+        self.isStagedComplete = isStagedComplete
         self.storageState = storageState
     }
 
@@ -330,6 +336,16 @@ struct CachedGallerySummary: Hashable, Identifiable, Sendable {
 
     var localizedByteCount: String {
         ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)
+    }
+
+    /// Returns whether missing pages or staged finalization still need background work.
+    var needsDownloadResume: Bool {
+        guard let totalPageCount else { return false }
+        if isStagedComplete {
+            return true
+        }
+        guard !isDownloadUnavailable else { return false }
+        return cachedPageCount < totalPageCount || isStaged
     }
 
     var searchResult: EHSearchResult {
@@ -359,6 +375,9 @@ final class ImageCacheStore: ObservableObject {
     private let directoryURL: URL
     private let fileManager: FileManager
     private let persistentGalleryStore: CachedGalleryStore?
+    private let afterCacheDataWriteEnqueued: @Sendable () async -> Void
+    private let afterCacheFileWrite: @Sendable () async -> Void
+    private let cacheWriteErrorHandler: (Error) -> Void
     private let indexFileName = "index.json"
     private var index = ImageCacheIndex()
     private var contentDigestByCacheKey: [String: String] = [:]
@@ -366,21 +385,43 @@ final class ImageCacheStore: ObservableObject {
     private var cacheFileSizeByKey: [String: Int64] = [:]
     private var gallerySummaryByID: [String: CachedGallerySummary] = [:]
     private var pendingIndexSaveTask: Task<Void, Never>?
+    private let diskWriter: ImageCacheDiskWriter
     private var pendingGallerySummaryRefreshTask: Task<Void, Never>?
+    private var pendingPersistentGalleryRefreshTask: Task<Void, Never>?
     private var lastGallerySummaryRefreshAt = Date.distantPast
     private var lastDiskRefreshAt = Date.distantPast
     private let gallerySummaryRefreshInterval: TimeInterval = 1.0
     private let indexSaveDelayNanoseconds: UInt64 = 1_000_000_000
     private var deferredGallerySummaryRefreshDepth = 0
+    private var cacheClearGeneration = 0
+    private var cacheScopeGeneration: [String: Int] = [:]
+    private var nextCacheWriteSequence: UInt64 = 0
+    private var latestCacheWriteSequenceByKey: [String: UInt64] = [:]
+    private var latestSuccessfulCacheWriteSequenceByKey: [String: UInt64] = [:]
+    private var pendingCacheWriteByID: [UUID: ImageCachePendingWrite] = [:]
 
     /// Creates a cache store rooted in the app caches directory by default.
     init(
         directoryURL: URL? = nil,
         fileManager: FileManager = .default,
-        persistentGalleryStore: CachedGalleryStore? = nil
+        persistentGalleryStore: CachedGalleryStore? = nil,
+        afterCacheDataWriteEnqueued: @escaping @Sendable () async -> Void = {},
+        afterCacheFileWrite: @escaping @Sendable () async -> Void = {},
+        beforeCacheDiskMutation: @escaping @Sendable () -> Void = {},
+        beforeCacheDataWrite: @escaping @Sendable () throws -> Void = {},
+        cacheWriteErrorHandler: @escaping (Error) -> Void = { error in
+            assertionFailure("Failed to save image cache: \(error.localizedDescription)")
+        }
     ) {
         self.fileManager = fileManager
         self.persistentGalleryStore = persistentGalleryStore ?? (directoryURL == nil ? .shared : nil)
+        self.afterCacheDataWriteEnqueued = afterCacheDataWriteEnqueued
+        self.afterCacheFileWrite = afterCacheFileWrite
+        self.cacheWriteErrorHandler = cacheWriteErrorHandler
+        diskWriter = ImageCacheDiskWriter(
+            beforeMutation: beforeCacheDiskMutation,
+            beforeDataWrite: beforeCacheDataWrite
+        )
         if let directoryURL {
             self.directoryURL = directoryURL
         } else {
@@ -452,12 +493,14 @@ final class ImageCacheStore: ObservableObject {
         deferredGallerySummaryRefreshDepth += 1
     }
 
-    /// Ends a deferred refresh batch and publishes the latest gallery summaries when all batches finish.
-    func endDeferredGallerySummaryRefreshes() {
+    /// Ends one gallery batch and publishes its summary before releasing the download task.
+    func endDeferredGallerySummaryRefreshes(for identifier: EHGalleryIdentifier) async {
         deferredGallerySummaryRefreshDepth = max(0, deferredGallerySummaryRefreshDepth - 1)
         if deferredGallerySummaryRefreshDepth == 0 {
-            flushPendingIndexSave()
+            await flushPendingIndexSaveAsync()
             publishGallerySummaries()
+        } else {
+            publishGallerySummary(for: identifier)
         }
     }
 
@@ -466,14 +509,39 @@ final class ImageCacheStore: ObservableObject {
         gallerySummaryByID[identifier.id]
     }
 
+    /// Returns whether durable staging already contains every expected page.
+    func hasCompletePersistentStaging(for identifier: EHGalleryIdentifier) -> Bool {
+        persistentGalleryStore?.hasCompleteStagedGallery(identifier) ?? false
+    }
+
     /// Skips the expensive disk scan when the cache was refreshed recently.
     func refreshIfNeeded(minimumInterval: TimeInterval = 300, compactsDuplicates: Bool = false) {
-        guard Date().timeIntervalSince(lastDiskRefreshAt) >= minimumInterval else { return }
+        guard deferredGallerySummaryRefreshDepth == 0,
+              Date().timeIntervalSince(lastDiskRefreshAt) >= minimumInterval
+        else {
+            return
+        }
         refresh(compactsDuplicates: compactsDuplicates)
     }
 
     /// Stores gallery metadata so cache management can list partially downloaded galleries.
     func saveGalleryMetadata(detail: EHGalleryDetail, fallback: EHSearchResult? = nil) {
+        applyGalleryMetadata(detail: detail, fallback: fallback)
+        saveIndex()
+        publishGallerySummaries()
+    }
+
+    /// Persists download metadata without waiting on index I/O from MainActor.
+    func saveGalleryMetadataForDownload(detail: EHGalleryDetail, fallback: EHSearchResult? = nil) async {
+        applyGalleryMetadata(detail: detail, fallback: fallback)
+        if deferredGallerySummaryRefreshDepth == 0 {
+            publishGallerySummaries()
+        }
+        await saveIndexAsync()
+    }
+
+    /// Applies one gallery metadata change to the cache projection.
+    private func applyGalleryMetadata(detail: EHGalleryDetail, fallback: EHSearchResult?) {
         let existing = index.galleryMetadata[detail.identifier.id]
         index.galleryMetadata[detail.identifier.id] = CachedGalleryMetadata(
             identifier: detail.identifier,
@@ -485,8 +553,6 @@ final class ImageCacheStore: ObservableObject {
             isDownloadUnavailable: false
         )
         persistentGalleryStore?.updateMetadata(detail: detail, fallback: fallback)
-        saveIndex()
-        publishGallerySummaries()
     }
 
     /// Returns the custom cache note for a gallery.
@@ -543,14 +609,12 @@ final class ImageCacheStore: ObservableObject {
                 currentTitle: summary.title
             )
             try await persistentGalleryStore.prepareGallery(summary: summary)
-            for pageInput in pageInputs {
-                try await persistentGalleryStore.importCachedPage(
-                    pageInput,
-                    identifier: summary.galleryIdentifier
-                )
-            }
+            try await persistentGalleryStore.importCachedPages(
+                pageInputs,
+                identifier: summary.galleryIdentifier
+            )
             try await persistentGalleryStore.finalizeGallery(summary.galleryIdentifier, requireComplete: false)
-            removeCachedGalleryData(summary.galleryIdentifier, removesMetadata: true)
+            await removeCachedGalleryDataAsync(summary.galleryIdentifier, removesMetadata: true)
             completedCount += 1
             persistenceProgress = CachedGalleryPersistenceProgress(
                 completedGalleryCount: completedCount,
@@ -580,10 +644,10 @@ final class ImageCacheStore: ObservableObject {
         )
         let pageInputs = cachedPageInputs(for: summary)
         try await persistentGalleryStore.prepareGallery(summary: summary)
-        for pageInput in pageInputs {
-            try await persistentGalleryStore.importCachedPage(pageInput, identifier: detail.identifier)
+        try await persistentGalleryStore.importCachedPages(pageInputs, identifier: detail.identifier)
+        if deferredGallerySummaryRefreshDepth == 0 {
+            publishGallerySummaries()
         }
-        publishGallerySummaries()
     }
 
     /// Saves an explicit download into permanent staging instead of disposable cache storage.
@@ -600,9 +664,7 @@ final class ImageCacheStore: ObservableObject {
                 responseURL: responseURL,
                 context: context
             )
-            if deferredGallerySummaryRefreshDepth > 0 {
-                scheduleGallerySummaryRefresh()
-            } else {
+            if deferredGallerySummaryRefreshDepth == 0 {
                 publishGallerySummaries()
             }
         } else {
@@ -614,8 +676,10 @@ final class ImageCacheStore: ObservableObject {
     func finalizePersistentDownload(_ identifier: EHGalleryIdentifier) async throws {
         guard let persistentGalleryStore else { return }
         try await persistentGalleryStore.finalizeGallery(identifier, requireComplete: true)
-        removeCachedGalleryData(identifier, removesMetadata: true)
-        publishGallerySummaries()
+        await removeCachedGalleryDataAsync(identifier, removesMetadata: true)
+        if deferredGallerySummaryRefreshDepth == 0 {
+            publishGallerySummaries()
+        }
     }
 
     /// Marks a cached gallery as unavailable for future bulk download resumes.
@@ -624,7 +688,7 @@ final class ImageCacheStore: ObservableObject {
         title: String? = nil,
         thumbnailURL: URL? = nil,
         totalPageCount: Int? = nil
-    ) {
+    ) async {
         let existing = index.galleryMetadata[identifier.id]
         persistentGalleryStore?.markDownloadUnavailable(
             identifier,
@@ -641,8 +705,10 @@ final class ImageCacheStore: ObservableObject {
             updatedAt: Date(),
             isDownloadUnavailable: true
         )
-        saveIndex()
-        publishGallerySummaries()
+        await saveIndexAsync()
+        if deferredGallerySummaryRefreshDepth == 0 {
+            publishGallerySummaries()
+        }
     }
 
     /// Saves image data and refreshes cache usage stats.
@@ -652,57 +718,124 @@ final class ImageCacheStore: ObservableObject {
 
     /// Saves image data with aliases and optional gallery page metadata.
     func save(_ data: Data, for requestedURL: URL, responseURL: URL, context: ImageCacheContext?) {
-        do {
-            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-            let dataDigest = contentDigest(for: data)
-            var cacheKey = cacheKeyForSave(requestedURL: requestedURL, responseURL: responseURL)
-            var destinationURL = fileURL(forKey: cacheKey)
-            if !fileManager.fileExists(atPath: destinationURL.path),
-               let existingCacheKey = cacheKeyForExistingContent(matchingDigest: dataDigest) {
-                cacheKey = existingCacheKey
-                destinationURL = fileURL(forKey: existingCacheKey)
-            }
-            if !fileManager.fileExists(atPath: destinationURL.path) {
-                try data.write(to: destinationURL, options: [.atomic])
-            }
-            let storedByteCount = fileSize(forKey: cacheKey) ?? Int64(data.count)
+        let mutationToken = beginCacheWrite(context: context)
+        defer { endCacheWrite(mutationToken) }
 
-            contentDigestByCacheKey[cacheKey] = dataDigest
-            cacheKeyByContentDigest[dataDigest] = cacheKey
+        do {
+            let dataDigest = contentDigest(for: data)
+            let cacheKey = cacheKeyForAsyncSave(
+                requestedURL: requestedURL,
+                responseURL: responseURL,
+                matchingDigest: dataDigest
+            )
+            guard let replacesExisting = claimCacheWriteOwnership(
+                mutationToken,
+                cacheKey: cacheKey,
+                dataDigest: dataDigest
+            ) else {
+                return
+            }
+            let storedByteCount = try diskWriter.writeDataSynchronously(
+                data,
+                to: fileURL(forKey: cacheKey),
+                replacesExisting: replacesExisting
+            )
+            recordSuccessfulCacheWrite(mutationToken, cacheKey: cacheKey)
+            guard isLatestSuccessfulCacheWrite(mutationToken, cacheKey: cacheKey) else {
+                removeUnreferencedCacheFileIfNeeded(
+                    at: fileURL(forKey: cacheKey),
+                    cacheKey: cacheKey,
+                    excluding: mutationToken.id
+                )
+                return
+            }
+
+            storeContentDigest(dataDigest, cacheKey: cacheKey)
             storeAliases(for: cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL), cacheKey: cacheKey)
             upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: storedByteCount)
             saveIndexAfterCacheMutation()
             refreshAfterSaving(cacheKey: cacheKey, byteCount: storedByteCount, context: context)
         } catch {
-            assertionFailure("Failed to save image cache: \(error.localizedDescription)")
+            releaseFailedCacheWriteClaim(mutationToken)
+            cacheWriteErrorHandler(error)
         }
     }
 
     /// Saves image data while moving disk writes off the main actor for async callers.
     func saveAsync(_ data: Data, for requestedURL: URL, responseURL: URL, context: ImageCacheContext?) async {
-        do {
-            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-            let dataDigest = await Self.contentDigestAsync(for: data)
-            var cacheKey = cacheKeyForSave(requestedURL: requestedURL, responseURL: responseURL)
-            var destinationURL = fileURL(forKey: cacheKey)
-            if !fileManager.fileExists(atPath: destinationURL.path),
-               let existingCacheKey = cacheKeyForExistingContent(matchingDigest: dataDigest) {
-                cacheKey = existingCacheKey
-                destinationURL = fileURL(forKey: existingCacheKey)
-            }
-            if !fileManager.fileExists(atPath: destinationURL.path) {
-                try await Self.writeData(data, to: destinationURL)
-            }
-            let storedByteCount = fileSize(forKey: cacheKey) ?? Int64(data.count)
+        let mutationToken = beginCacheWrite(context: context)
+        defer { endCacheWrite(mutationToken) }
+        var claimedCacheKey: String?
 
-            contentDigestByCacheKey[cacheKey] = dataDigest
-            cacheKeyByContentDigest[dataDigest] = cacheKey
+        do {
+            let dataDigest = await Self.contentDigestAsync(for: data)
+            guard isCurrentCacheWrite(mutationToken) else { return }
+            let cacheKey = cacheKeyForAsyncSave(
+                requestedURL: requestedURL,
+                responseURL: responseURL,
+                matchingDigest: dataDigest
+            )
+            guard let replacesExisting = claimCacheWriteOwnership(
+                mutationToken,
+                cacheKey: cacheKey,
+                dataDigest: dataDigest
+            ) else {
+                return
+            }
+            claimedCacheKey = cacheKey
+
+            let destinationURL = fileURL(forKey: cacheKey)
+            let pendingWrite = diskWriter.enqueueDataWrite(
+                data,
+                to: destinationURL,
+                replacesExisting: replacesExisting
+            )
+            await afterCacheDataWriteEnqueued()
+            let storedByteCount = try await pendingWrite.value
+            guard mutationToken.clearGeneration == cacheClearGeneration else { return }
+            recordSuccessfulCacheWrite(mutationToken, cacheKey: cacheKey)
+            guard mutationToken.scopeGeneration == cacheScopeGeneration[mutationToken.scopeID, default: 0] else {
+                reconcileStaleSuccessfulCacheWrite(
+                    mutationToken,
+                    dataDigest: dataDigest,
+                    storedByteCount: storedByteCount,
+                    cacheKey: cacheKey,
+                    fileURL: destinationURL
+                )
+                return
+            }
+            await afterCacheFileWrite()
+            guard mutationToken.clearGeneration == cacheClearGeneration else { return }
+            guard mutationToken.scopeGeneration == cacheScopeGeneration[mutationToken.scopeID, default: 0] else {
+                reconcileStaleSuccessfulCacheWrite(
+                    mutationToken,
+                    dataDigest: dataDigest,
+                    storedByteCount: storedByteCount,
+                    cacheKey: cacheKey,
+                    fileURL: destinationURL
+                )
+                return
+            }
+            guard isLatestSuccessfulCacheWrite(mutationToken, cacheKey: cacheKey) else {
+                removeUnreferencedCacheFileIfNeeded(
+                    at: destinationURL,
+                    cacheKey: cacheKey,
+                    excluding: mutationToken.id
+                )
+                return
+            }
+
+            storeContentDigest(dataDigest, cacheKey: cacheKey)
             storeAliases(for: cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL), cacheKey: cacheKey)
             upsertPageRecord(context: context, requestedURL: requestedURL, responseURL: responseURL, cacheKey: cacheKey, byteCount: storedByteCount)
             saveIndexAfterCacheMutation()
             refreshAfterSaving(cacheKey: cacheKey, byteCount: storedByteCount, context: context)
         } catch {
-            assertionFailure("Failed to save image cache: \(error.localizedDescription)")
+            if claimedCacheKey != nil {
+                releaseFailedCacheWriteClaim(mutationToken)
+            }
+            guard isCurrentCacheWrite(mutationToken) else { return }
+            cacheWriteErrorHandler(error)
         }
     }
 
@@ -723,31 +856,34 @@ final class ImageCacheStore: ObservableObject {
 
     /// Removes all cached image files from disk.
     func clear() {
-        do {
-            pendingIndexSaveTask?.cancel()
-            pendingIndexSaveTask = nil
-            if fileManager.fileExists(atPath: directoryURL.path) {
-                try fileManager.removeItem(at: directoryURL)
-            }
-            index = ImageCacheIndex()
-            contentDigestByCacheKey = [:]
-            cacheKeyByContentDigest = [:]
-            cacheFileSizeByKey = [:]
-            persistentGalleryStore?.refresh()
-            setGallerySummaries(makeGallerySummaries())
-            snapshot = ImageCacheSnapshot(
-                fileCount: 0,
-                byteCount: 0,
-                galleryCount: gallerySummaries.count
-            )
-            lastDiskRefreshAt = Date()
-        } catch {
-            refresh()
+        cacheClearGeneration += 1
+        cacheScopeGeneration.removeAll()
+        pendingIndexSaveTask?.cancel()
+        pendingIndexSaveTask = nil
+        if fileManager.fileExists(atPath: directoryURL.path) {
+            diskWriter.removeDirectorySynchronously(directoryURL)
         }
+        index = ImageCacheIndex()
+        contentDigestByCacheKey = [:]
+        cacheKeyByContentDigest = [:]
+        cacheFileSizeByKey = [:]
+        latestCacheWriteSequenceByKey = [:]
+        latestSuccessfulCacheWriteSequenceByKey = [:]
+        pendingCacheWriteByID = [:]
+        schedulePersistentGalleryRefresh()
+        setGallerySummaries(makeGallerySummaries())
+        snapshot = ImageCacheSnapshot(
+            fileCount: 0,
+            byteCount: 0,
+            galleryCount: gallerySummaries.count
+        )
+        lastDiskRefreshAt = Date()
+        saveIndex()
     }
 
     /// Removes cached image files and page records for one gallery.
     func clearGallery(_ identifier: EHGalleryIdentifier) {
+        advanceCacheScopeGeneration(for: identifier)
         persistentGalleryStore?.deleteGallery(identifier)
         removeCachedGalleryData(identifier, removesMetadata: true)
         publishGallerySummaries()
@@ -755,8 +891,44 @@ final class ImageCacheStore: ObservableObject {
 
     /// Removes disposable cache files while optionally preserving indexed metadata.
     private func removeCachedGalleryData(_ identifier: EHGalleryIdentifier, removesMetadata: Bool) {
+        let removal = removeCachedGalleryProjection(identifier, removesMetadata: removesMetadata)
+        guard removal.didChange else { return }
+        diskWriter.writeSynchronously(
+            index,
+            to: indexURL,
+            directoryURL: directoryURL,
+            removing: removal.removableCacheKeys.map(fileURL(forKey:))
+        )
+    }
+
+    /// Removes disposable gallery data without blocking MainActor on file or index I/O.
+    private func removeCachedGalleryDataAsync(
+        _ identifier: EHGalleryIdentifier,
+        removesMetadata: Bool
+    ) async {
+        advanceCacheScopeGeneration(for: identifier)
+        let removal = removeCachedGalleryProjection(identifier, removesMetadata: removesMetadata)
+        guard removal.didChange else { return }
+
+        let pendingWrite = diskWriter.enqueueWrite(
+            index,
+            to: indexURL,
+            directoryURL: directoryURL,
+            removing: removal.removableCacheKeys.map(fileURL(forKey:))
+        )
+        await pendingWrite.value
+    }
+
+    /// Applies one gallery removal to the in-memory cache projection and usage snapshot.
+    private func removeCachedGalleryProjection(
+        _ identifier: EHGalleryIdentifier,
+        removesMetadata: Bool
+    ) -> ImageCacheGalleryRemoval {
         let removedRecords = index.pages.values.filter { $0.galleryIdentifier == identifier }
-        guard !removedRecords.isEmpty || (removesMetadata && index.galleryMetadata[identifier.id] != nil) else { return }
+        let removesStoredMetadata = removesMetadata && index.galleryMetadata[identifier.id] != nil
+        guard !removedRecords.isEmpty || removesStoredMetadata else {
+            return ImageCacheGalleryRemoval(removableCacheKeys: [], didChange: false)
+        }
 
         let removedCacheKeys = Set(removedRecords.map(\.cacheKey))
         index.pages = index.pages.filter { $0.value.galleryIdentifier != identifier }
@@ -765,18 +937,27 @@ final class ImageCacheStore: ObservableObject {
         }
 
         let remainingCacheKeys = Set(index.pages.values.map(\.cacheKey))
+            .union(currentPendingCacheKeys())
         let removableCacheKeys = removedCacheKeys.subtracting(remainingCacheKeys)
         index.aliases = index.aliases.filter { !removableCacheKeys.contains($0.value) }
+        let removedByteCount = removableCacheKeys.reduce(Int64(0)) { total, cacheKey in
+            total + (cacheFileSizeByKey[cacheKey] ?? 0)
+        }
         for cacheKey in removableCacheKeys {
-            try? fileManager.removeItem(at: fileURL(forKey: cacheKey))
             if let digest = contentDigestByCacheKey.removeValue(forKey: cacheKey) {
                 cacheKeyByContentDigest[digest] = nil
             }
             cacheFileSizeByKey[cacheKey] = nil
         }
-
-        saveIndex()
-        refresh(compactsDuplicates: false)
+        snapshot = ImageCacheSnapshot(
+            fileCount: max(0, snapshot.fileCount - removableCacheKeys.count),
+            byteCount: max(0, snapshot.byteCount - removedByteCount),
+            galleryCount: gallerySummaries.count
+        )
+        return ImageCacheGalleryRemoval(
+            removableCacheKeys: removableCacheKeys,
+            didChange: true
+        )
     }
 
     /// Returns true when cached image files are not tied to gallery reader pages.
@@ -786,20 +967,32 @@ final class ImageCacheStore: ObservableObject {
 
     /// Removes search thumbnails, covers, and other image files not indexed as gallery pages.
     func clearNonGalleryImages() {
+        cacheScopeGeneration[Self.nonGalleryCacheScopeID, default: 0] += 1
         let removableCacheKeys = nonGalleryCacheKeys()
         guard !removableCacheKeys.isEmpty else { return }
 
         index.aliases = index.aliases.filter { !removableCacheKeys.contains($0.value) }
+        let removedByteCount = removableCacheKeys.reduce(Int64(0)) { total, cacheKey in
+            total + (cacheFileSizeByKey[cacheKey] ?? 0)
+        }
         for cacheKey in removableCacheKeys {
-            try? fileManager.removeItem(at: fileURL(forKey: cacheKey))
             if let digest = contentDigestByCacheKey.removeValue(forKey: cacheKey) {
                 cacheKeyByContentDigest[digest] = nil
             }
             cacheFileSizeByKey[cacheKey] = nil
         }
 
-        saveIndex()
-        refresh(compactsDuplicates: false)
+        snapshot = ImageCacheSnapshot(
+            fileCount: max(0, snapshot.fileCount - removableCacheKeys.count),
+            byteCount: max(0, snapshot.byteCount - removedByteCount),
+            galleryCount: gallerySummaries.count
+        )
+        diskWriter.writeSynchronously(
+            index,
+            to: indexURL,
+            directoryURL: directoryURL,
+            removing: removableCacheKeys.map(fileURL(forKey:))
+        )
     }
 
     /// Recomputes cache usage stats from disk.
@@ -807,7 +1000,7 @@ final class ImageCacheStore: ObservableObject {
         pendingGallerySummaryRefreshTask?.cancel()
         pendingGallerySummaryRefreshTask = nil
         lastGallerySummaryRefreshAt = Date()
-        persistentGalleryStore?.refresh()
+        schedulePersistentGalleryRefresh()
 
         guard let allFileURLs = try? fileManager.contentsOfDirectory(
             at: directoryURL,
@@ -910,28 +1103,37 @@ final class ImageCacheStore: ObservableObject {
     /// Builds summaries from disposable cache index records only.
     private func makeCacheGallerySummaries() -> [CachedGallerySummary] {
         Dictionary(grouping: Array(index.pages.values), by: \.galleryIdentifier)
-            .map { identifier, records in
-                let metadata = index.galleryMetadata[identifier.id]
-                let sortedRecords = records.sorted { $0.pageNumber < $1.pageNumber }
-                let uniqueCacheKeys = Set(records.map(\.cacheKey))
-                let byteCount = uniqueCacheKeys.reduce(Int64(0)) { total, cacheKey in
-                    total + (cacheFileSizeByKey[cacheKey] ?? 0)
-                }
-                return CachedGallerySummary(
-                    galleryIdentifier: identifier,
-                    title: metadata?.title ?? records.first?.galleryTitle ?? "图库 \(identifier.gid)",
-                    note: metadata?.note,
-                    thumbnailURL: metadata?.thumbnailURL ?? records.first?.thumbnailURL,
-                    cachedPageCount: Set(records.map(\.pageNumber)).count,
-                    totalPageCount: metadata?.totalPageCount ?? records.compactMap(\.totalPageCount).max(),
-                    byteCount: byteCount,
-                    updatedAt: records.map(\.updatedAt).max() ?? metadata?.updatedAt ?? .distantPast,
-                    pageRecords: sortedRecords,
-                    isDownloadUnavailable: metadata?.isDownloadUnavailable ?? false,
-                    storageState: .cacheOnly
-                )
+            .compactMap { identifier, records in
+                makeCacheGallerySummary(for: identifier, records: records)
             }
             .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Builds one disposable cache summary without rebuilding unrelated galleries.
+    private func makeCacheGallerySummary(
+        for identifier: EHGalleryIdentifier,
+        records: [CachedImagePageRecord]
+    ) -> CachedGallerySummary? {
+        guard !records.isEmpty else { return nil }
+        let metadata = index.galleryMetadata[identifier.id]
+        let sortedRecords = records.sorted { $0.pageNumber < $1.pageNumber }
+        let uniqueCacheKeys = Set(records.map(\.cacheKey))
+        let byteCount = uniqueCacheKeys.reduce(Int64(0)) { total, cacheKey in
+            total + (cacheFileSizeByKey[cacheKey] ?? 0)
+        }
+        return CachedGallerySummary(
+            galleryIdentifier: identifier,
+            title: metadata?.title ?? records.first?.galleryTitle ?? "图库 \(identifier.gid)",
+            note: metadata?.note,
+            thumbnailURL: metadata?.thumbnailURL ?? records.first?.thumbnailURL,
+            cachedPageCount: Set(records.map(\.pageNumber)).count,
+            totalPageCount: metadata?.totalPageCount ?? records.compactMap(\.totalPageCount).max(),
+            byteCount: byteCount,
+            updatedAt: records.map(\.updatedAt).max() ?? metadata?.updatedAt ?? .distantPast,
+            pageRecords: sortedRecords,
+            isDownloadUnavailable: metadata?.isDownloadUnavailable ?? false,
+            storageState: .cacheOnly
+        )
     }
 
     /// Merges permanent gallery files with any cache pages not migrated yet.
@@ -940,41 +1142,62 @@ final class ImageCacheStore: ObservableObject {
             uniqueKeysWithValues: makeCacheGallerySummaries().map { ($0.galleryIdentifier.id, $0) }
         )
         for storedSummary in persistentGalleryStore?.summaries ?? [] {
-            guard let cacheSummary = summariesByID[storedSummary.galleryIdentifier.id] else {
-                summariesByID[storedSummary.galleryIdentifier.id] = storedSummary
-                continue
-            }
-
-            var recordsByPage = Dictionary(
-                uniqueKeysWithValues: cacheSummary.pageRecords.map { ($0.pageNumber, $0) }
-            )
-            for record in storedSummary.pageRecords {
-                recordsByPage[record.pageNumber] = record
-            }
-            let records = recordsByPage.values.sorted { $0.pageNumber < $1.pageNumber }
-            var countedCacheKeys: Set<String> = []
-            let byteCount = records.reduce(Int64(0)) { total, record in
-                if record.localFileURL != nil {
-                    return total + record.byteCount
-                }
-                guard countedCacheKeys.insert(record.cacheKey).inserted else { return total }
-                return total + record.byteCount
-            }
-            summariesByID[storedSummary.galleryIdentifier.id] = CachedGallerySummary(
-                galleryIdentifier: storedSummary.galleryIdentifier,
-                title: storedSummary.title,
-                note: storedSummary.note ?? cacheSummary.note,
-                thumbnailURL: storedSummary.thumbnailURL ?? cacheSummary.thumbnailURL,
-                cachedPageCount: records.count,
-                totalPageCount: storedSummary.totalPageCount ?? cacheSummary.totalPageCount,
-                byteCount: byteCount,
-                updatedAt: max(storedSummary.updatedAt, cacheSummary.updatedAt),
-                pageRecords: records,
-                isDownloadUnavailable: storedSummary.isDownloadUnavailable || cacheSummary.isDownloadUnavailable,
-                storageState: storedSummary.storageState == .persistent ? .persistent : cacheSummary.storageState
+            summariesByID[storedSummary.galleryIdentifier.id] = mergeGallerySummary(
+                cacheSummary: summariesByID[storedSummary.galleryIdentifier.id],
+                storedSummary: storedSummary
             )
         }
         return summariesByID.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Builds one merged cache and permanent summary for a gallery boundary publication.
+    private func makeGallerySummary(for identifier: EHGalleryIdentifier) -> CachedGallerySummary? {
+        let cacheRecords = index.pages.values.filter { $0.galleryIdentifier == identifier }
+        let cacheSummary = makeCacheGallerySummary(for: identifier, records: cacheRecords)
+        let storedSummary = persistentGalleryStore?.summaries.first {
+            $0.galleryIdentifier == identifier
+        }
+        return mergeGallerySummary(cacheSummary: cacheSummary, storedSummary: storedSummary)
+    }
+
+    /// Merges one permanent summary over any disposable cache pages for the same gallery.
+    private func mergeGallerySummary(
+        cacheSummary: CachedGallerySummary?,
+        storedSummary: CachedGallerySummary?
+    ) -> CachedGallerySummary? {
+        guard let storedSummary else { return cacheSummary }
+        guard let cacheSummary else { return storedSummary }
+
+        var recordsByPage = Dictionary(
+            uniqueKeysWithValues: cacheSummary.pageRecords.map { ($0.pageNumber, $0) }
+        )
+        for record in storedSummary.pageRecords {
+            recordsByPage[record.pageNumber] = record
+        }
+        let records = recordsByPage.values.sorted { $0.pageNumber < $1.pageNumber }
+        var countedCacheKeys: Set<String> = []
+        let byteCount = records.reduce(Int64(0)) { total, record in
+            if record.localFileURL != nil {
+                return total + record.byteCount
+            }
+            guard countedCacheKeys.insert(record.cacheKey).inserted else { return total }
+            return total + record.byteCount
+        }
+        return CachedGallerySummary(
+            galleryIdentifier: storedSummary.galleryIdentifier,
+            title: storedSummary.title,
+            note: storedSummary.note ?? cacheSummary.note,
+            thumbnailURL: storedSummary.thumbnailURL ?? cacheSummary.thumbnailURL,
+            cachedPageCount: records.count,
+            totalPageCount: storedSummary.totalPageCount ?? cacheSummary.totalPageCount,
+            byteCount: byteCount,
+            updatedAt: max(storedSummary.updatedAt, cacheSummary.updatedAt),
+            pageRecords: records,
+            isDownloadUnavailable: storedSummary.isDownloadUnavailable || cacheSummary.isDownloadUnavailable,
+            isStaged: storedSummary.isStaged,
+            isStagedComplete: storedSummary.isStagedComplete,
+            storageState: storedSummary.storageState == .persistent ? .persistent : cacheSummary.storageState
+        )
     }
 
     /// Resolves cache-backed source files for a permanent gallery operation.
@@ -1007,12 +1230,8 @@ final class ImageCacheStore: ObservableObject {
             galleryCount: gallerySummaries.count
         )
 
-        if context?.galleryIdentifier != nil {
-            if deferredGallerySummaryRefreshDepth > 0 {
-                scheduleGallerySummaryRefresh()
-            } else {
-                publishGallerySummaries()
-            }
+        if context?.galleryIdentifier != nil, deferredGallerySummaryRefreshDepth == 0 {
+            publishGallerySummaries()
         }
     }
 
@@ -1048,6 +1267,36 @@ final class ImageCacheStore: ObservableObject {
         )
     }
 
+    /// Replaces one published gallery summary while preserving unrelated entries.
+    private func publishGallerySummary(for identifier: EHGalleryIdentifier) {
+        pendingGallerySummaryRefreshTask?.cancel()
+        pendingGallerySummaryRefreshTask = nil
+        var summaries = gallerySummaries.filter { $0.galleryIdentifier != identifier }
+        if let summary = makeGallerySummary(for: identifier) {
+            summaries.append(summary)
+        }
+        setGallerySummaries(summaries.sorted { $0.updatedAt > $1.updatedAt })
+        lastGallerySummaryRefreshAt = Date()
+        snapshot = ImageCacheSnapshot(
+            fileCount: snapshot.fileCount,
+            byteCount: snapshot.byteCount,
+            galleryCount: gallerySummaries.count
+        )
+    }
+
+    /// Coalesces actor-serialized permanent gallery scans and republishes after they finish.
+    private func schedulePersistentGalleryRefresh() {
+        guard pendingPersistentGalleryRefreshTask == nil, let persistentGalleryStore else { return }
+        pendingPersistentGalleryRefreshTask = Task { @MainActor [weak self] in
+            await persistentGalleryStore.refresh()
+            guard let self, !Task.isCancelled else { return }
+            self.pendingPersistentGalleryRefreshTask = nil
+            if self.deferredGallerySummaryRefreshDepth == 0 {
+                self.publishGallerySummaries()
+            }
+        }
+    }
+
     /// Updates the published array and fast lookup table together.
     private func setGallerySummaries(_ summaries: [CachedGallerySummary]) {
         gallerySummaries = summaries
@@ -1070,13 +1319,189 @@ final class ImageCacheStore: ObservableObject {
     private func saveIndex() {
         pendingIndexSaveTask?.cancel()
         pendingIndexSaveTask = nil
-        writeIndex()
+        diskWriter.writeSynchronously(index, to: indexURL, directoryURL: directoryURL)
     }
 
-    /// Saves immediately only when a delayed index write is waiting.
-    private func flushPendingIndexSave() {
-        guard pendingIndexSaveTask != nil else { return }
-        saveIndex()
+    /// Saves an immutable index snapshot after cancelling any delayed save.
+    private func saveIndexAsync() async {
+        pendingIndexSaveTask?.cancel()
+        pendingIndexSaveTask = nil
+        await writeIndexSnapshotAsync()
+    }
+
+    /// Enqueues the current index immediately and awaits its ordered disk write.
+    private func writeIndexSnapshotAsync() async {
+        let pendingWrite = diskWriter.enqueueWrite(index, to: indexURL, directoryURL: directoryURL)
+        await pendingWrite.value
+    }
+
+    /// Captures the clear generations that must still match when an async write commits.
+    private func beginCacheWrite(context: ImageCacheContext?) -> ImageCacheMutationToken {
+        let scopeID = context?.galleryIdentifier?.id ?? Self.nonGalleryCacheScopeID
+        nextCacheWriteSequence += 1
+        return ImageCacheMutationToken(
+            id: UUID(),
+            sequence: nextCacheWriteSequence,
+            clearGeneration: cacheClearGeneration,
+            scopeID: scopeID,
+            scopeGeneration: cacheScopeGeneration[scopeID, default: 0]
+        )
+    }
+
+    /// Releases pending-key ownership after one async save finishes or becomes stale.
+    private func endCacheWrite(_ token: ImageCacheMutationToken) {
+        pendingCacheWriteByID[token.id] = nil
+    }
+
+    /// Rejects a suspended save when a full-cache or matching gallery clear happened meanwhile.
+    private func isCurrentCacheWrite(_ token: ImageCacheMutationToken) -> Bool {
+        guard token.clearGeneration == cacheClearGeneration else { return false }
+        return token.scopeGeneration == cacheScopeGeneration[token.scopeID, default: 0]
+    }
+
+    /// Advances one cache scope so older suspended writes cannot restore removed data.
+    private func advanceCacheScopeGeneration(for identifier: EHGalleryIdentifier) {
+        cacheScopeGeneration[identifier.id, default: 0] += 1
+    }
+
+    /// Claims one cache key in invocation order and decides whether newer bytes must replace older work.
+    private func claimCacheWriteOwnership(
+        _ token: ImageCacheMutationToken,
+        cacheKey: String,
+        dataDigest: String
+    ) -> Bool? {
+        if let latestSequence = latestCacheWriteSequenceByKey[cacheKey], latestSequence > token.sequence {
+            return nil
+        }
+
+        let hasPendingOwner = pendingCacheWriteByID.contains { id, pendingWrite in
+            id != token.id && pendingWrite.cacheKey == cacheKey
+        }
+        let hasDifferentCommittedDigest = contentDigestByCacheKey[cacheKey] != dataDigest
+        latestCacheWriteSequenceByKey[cacheKey] = token.sequence
+        pendingCacheWriteByID[token.id] = ImageCachePendingWrite(token: token, cacheKey: cacheKey)
+        return hasPendingOwner || hasDifferentCommittedDigest
+    }
+
+    /// Records the newest invocation whose data transaction completed successfully.
+    private func recordSuccessfulCacheWrite(_ token: ImageCacheMutationToken, cacheKey: String) {
+        let latestSequence = latestSuccessfulCacheWriteSequenceByKey[cacheKey, default: 0]
+        latestSuccessfulCacheWriteSequenceByKey[cacheKey] = max(latestSequence, token.sequence)
+    }
+
+    /// Returns true only while no newer data transaction succeeded for this cache key.
+    private func isLatestSuccessfulCacheWrite(
+        _ token: ImageCacheMutationToken,
+        cacheKey: String
+    ) -> Bool {
+        latestSuccessfulCacheWriteSequenceByKey[cacheKey] == token.sequence
+    }
+
+    /// Rolls back a failed claim and removes any earlier stale bytes left without an owner.
+    private func releaseFailedCacheWriteClaim(_ token: ImageCacheMutationToken) {
+        guard let pendingWrite = pendingCacheWriteByID[token.id] else { return }
+        let cacheKey = pendingWrite.cacheKey
+        guard latestCacheWriteSequenceByKey[cacheKey] == token.sequence else { return }
+        latestCacheWriteSequenceByKey[cacheKey] = latestSuccessfulCacheWriteSequenceByKey[cacheKey]
+        removeUnreferencedCacheFileIfNeeded(
+            at: fileURL(forKey: cacheKey),
+            cacheKey: cacheKey,
+            excluding: token.id
+        )
+    }
+
+    /// Reconciles shared references with the newest bytes when their page context became stale.
+    private func reconcileStaleSuccessfulCacheWrite(
+        _ token: ImageCacheMutationToken,
+        dataDigest: String,
+        storedByteCount: Int64,
+        cacheKey: String,
+        fileURL: URL
+    ) {
+        guard isLatestSuccessfulCacheWrite(token, cacheKey: cacheKey) else {
+            removeUnreferencedCacheFileIfNeeded(
+                at: fileURL,
+                cacheKey: cacheKey,
+                excluding: token.id
+            )
+            return
+        }
+
+        let referencedPageKeys = index.pages.compactMap { pageKey, record in
+            record.cacheKey == cacheKey ? pageKey : nil
+        }
+        let hasExistingAlias = index.aliases.values.contains(cacheKey)
+        guard !referencedPageKeys.isEmpty || hasExistingAlias else {
+            guard !hasCurrentPendingCacheWrite(cacheKey: cacheKey, excluding: token.id) else { return }
+            index.aliases = index.aliases.filter { $0.value != cacheKey }
+            contentDigestByCacheKey[cacheKey] = nil
+            cacheKeyByContentDigest = cacheKeyByContentDigest.filter { $0.value != cacheKey }
+            let removedByteCount = cacheFileSizeByKey.removeValue(forKey: cacheKey)
+            diskWriter.removeFileSynchronously(fileURL)
+            snapshot = ImageCacheSnapshot(
+                fileCount: max(0, snapshot.fileCount - (removedByteCount == nil ? 0 : 1)),
+                byteCount: max(0, snapshot.byteCount - (removedByteCount ?? 0)),
+                galleryCount: gallerySummaries.count
+            )
+            saveIndexAfterCacheMutation()
+            return
+        }
+
+        let previousByteCount = cacheFileSizeByKey[cacheKey]
+        storeContentDigest(dataDigest, cacheKey: cacheKey)
+        cacheFileSizeByKey[cacheKey] = storedByteCount
+        for pageKey in referencedPageKeys {
+            guard var record = index.pages[pageKey] else { continue }
+            record.byteCount = storedByteCount
+            index.pages[pageKey] = record
+        }
+        snapshot = ImageCacheSnapshot(
+            fileCount: snapshot.fileCount + (previousByteCount == nil ? 1 : 0),
+            byteCount: max(0, snapshot.byteCount - (previousByteCount ?? 0) + storedByteCount),
+            galleryCount: gallerySummaries.count
+        )
+        saveIndexAfterCacheMutation()
+        if deferredGallerySummaryRefreshDepth == 0 {
+            publishGallerySummaries()
+        }
+    }
+
+    /// Returns whether another valid save still owns the same cache key.
+    private func hasCurrentPendingCacheWrite(cacheKey: String, excluding mutationID: UUID) -> Bool {
+        pendingCacheWriteByID.contains { id, pendingWrite in
+            id != mutationID
+                && pendingWrite.cacheKey == cacheKey
+                && isCurrentCacheWrite(pendingWrite.token)
+        }
+    }
+
+    /// Removes stale bytes only when no live index entry or concurrent save still owns them.
+    private func removeUnreferencedCacheFileIfNeeded(
+        at fileURL: URL,
+        cacheKey: String,
+        excluding mutationID: UUID
+    ) {
+        guard !index.aliases.values.contains(cacheKey), !index.pages.values.contains(where: { $0.cacheKey == cacheKey }) else {
+            return
+        }
+        guard !hasCurrentPendingCacheWrite(cacheKey: cacheKey, excluding: mutationID) else { return }
+        diskWriter.removeFileSynchronously(fileURL)
+    }
+
+    /// Returns cache keys owned by writes that remain valid after the latest clear.
+    private func currentPendingCacheKeys() -> Set<String> {
+        Set(pendingCacheWriteByID.values.compactMap { pendingWrite in
+            isCurrentCacheWrite(pendingWrite.token) ? pendingWrite.cacheKey : nil
+        })
+    }
+
+    /// Replaces a delayed or in-flight write with the latest index snapshot.
+    private func flushPendingIndexSaveAsync() async {
+        guard let pendingTask = pendingIndexSaveTask else { return }
+        pendingTask.cancel()
+        pendingIndexSaveTask = nil
+        await pendingTask.value
+        await writeIndexSnapshotAsync()
     }
 
     /// Coalesces repeated image cache writes during bulk downloads.
@@ -1098,19 +1523,9 @@ final class ImageCacheStore: ObservableObject {
                 return
             }
             guard let self, !Task.isCancelled else { return }
+            await self.writeIndexSnapshotAsync()
+            guard !Task.isCancelled else { return }
             self.pendingIndexSaveTask = nil
-            self.writeIndex()
-        }
-    }
-
-    /// Encodes and writes the cache index JSON.
-    private func writeIndex() {
-        do {
-            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(index)
-            try data.write(to: indexURL, options: [.atomic])
-        } catch {
-            assertionFailure("Failed to save image cache index: \(error.localizedDescription)")
         }
     }
 
@@ -1126,6 +1541,24 @@ final class ImageCacheStore: ObservableObject {
             if fileManager.fileExists(atPath: legacyFileURL(for: aliasURL).path) {
                 return cacheKey(for: aliasURL)
             }
+        }
+        return cacheKey(for: HitomiImageURLMigration.currentURL(for: responseURL))
+    }
+
+    /// Picks an async storage key from ordered in-memory state without racing queued removals.
+    private func cacheKeyForAsyncSave(
+        requestedURL: URL,
+        responseURL: URL,
+        matchingDigest digest: String
+    ) -> String {
+        let aliasURLs = cacheAliasURLs(requestedURL: requestedURL, responseURL: responseURL)
+        for aliasURL in aliasURLs {
+            if let key = index.aliases[aliasURL.absoluteString] {
+                return key
+            }
+        }
+        if let existingCacheKey = cacheKeyByContentDigest[digest] {
+            return existingCacheKey
         }
         return cacheKey(for: HitomiImageURLMigration.currentURL(for: responseURL))
     }
@@ -1146,6 +1579,17 @@ final class ImageCacheStore: ObservableObject {
         for url in urls {
             index.aliases[url.absoluteString] = cacheKey
         }
+    }
+
+    /// Replaces both digest lookups without leaving the previous digest mapped to newer bytes.
+    private func storeContentDigest(_ digest: String, cacheKey: String) {
+        if let previousDigest = contentDigestByCacheKey[cacheKey],
+           previousDigest != digest,
+           cacheKeyByContentDigest[previousDigest] == cacheKey {
+            cacheKeyByContentDigest[previousDigest] = nil
+        }
+        contentDigestByCacheKey[cacheKey] = digest
+        cacheKeyByContentDigest[digest] = cacheKey
     }
 
     /// Reuses an existing cache file when another URL has already stored identical bytes.
@@ -1191,7 +1635,9 @@ final class ImageCacheStore: ObservableObject {
 
     /// Finds cache files that are not referenced by gallery page records.
     private func nonGalleryCacheKeys() -> Set<String> {
-        diskCacheKeys().subtracting(Set(index.pages.values.map(\.cacheKey)))
+        diskCacheKeys()
+            .subtracting(Set(index.pages.values.map(\.cacheKey)))
+            .subtracting(currentPendingCacheKeys())
     }
 
     /// Reads cache file names from disk while ignoring the JSON index.
@@ -1207,22 +1653,13 @@ final class ImageCacheStore: ObservableObject {
         return Set(fileURLs.map(\.lastPathComponent).filter { $0 != indexFileName })
     }
 
-    /// Builds a stable cache file URL for a cache key.
-
     /// Returns the byte size for one cached image file.
-
-    /// Writes image bytes off the main actor to keep scrolling responsive.
-    nonisolated private static func writeData(_ data: Data, to destinationURL: URL) async throws {
-        try await Task.detached(priority: .utility) {
-            try data.write(to: destinationURL, options: [.atomic])
-        }.value
-    }
-
     private func fileSize(forKey key: String) -> Int64? {
         let values = try? fileURL(forKey: key).resourceValues(forKeys: [.fileSizeKey])
         return values?.fileSize.map(Int64.init)
     }
 
+    /// Builds a stable cache file URL for a cache key.
     private func fileURL(forKey key: String) -> URL {
         directoryURL.appending(path: key, directoryHint: .notDirectory)
     }
@@ -1236,6 +1673,8 @@ final class ImageCacheStore: ObservableObject {
         directoryURL.appending(path: indexFileName, directoryHint: .notDirectory)
     }
 
+    private static let nonGalleryCacheScopeID = "__non_gallery_cache__"
+
     /// Builds a stable page index key.
     private func pageKey(identifier: EHGalleryIdentifier, pageNumber: Int) -> String {
         "\(identifier.id)-\(pageNumber)"
@@ -1247,8 +1686,6 @@ final class ImageCacheStore: ObservableObject {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Hashes file content so duplicate cache files count once in storage stats.
-
     /// Calculates a content digest away from the main actor for async save paths.
     nonisolated private static func contentDigestAsync(for data: Data) async -> String {
         await Task.detached(priority: .utility) {
@@ -1257,6 +1694,7 @@ final class ImageCacheStore: ObservableObject {
         }.value
     }
 
+    /// Hashes file content so duplicate cache files count once in storage stats.
     private func contentDigest(for fileURL: URL) -> String? {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
         return contentDigest(for: data)
@@ -1317,6 +1755,64 @@ struct GalleryDownloadAggregateProgress: Equatable {
         String(format: AppCopy.cacheManagementQueuedDownloadsFormat, String(queuedDownloadCount))
     }
 }
+/// Limits complete page pipelines across all active gallery jobs.
+private actor GalleryDownloadPageLimiter {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
+    private let capacity: Int
+    private var availablePermits: Int
+    private var waiters: [Waiter] = []
+
+    init(capacity: Int) {
+        self.capacity = max(1, capacity)
+        availablePermits = max(1, capacity)
+    }
+
+    /// Suspends until a page pipeline permit is available.
+    func acquire() async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation { continuation in
+                if availablePermits > 0 {
+                    availablePermits -= 1
+                    continuation.resume()
+                } else {
+                    waiters.append(Waiter(id: waiterID, continuation: continuation))
+                }
+            }
+        } onCancel: {
+            Task {
+                await self.cancelWaiter(waiterID)
+            }
+        }
+    }
+
+    /// Returns one permit to the oldest pending page pipeline.
+    func release() {
+        if waiters.isEmpty {
+            availablePermits = min(capacity, availablePermits + 1)
+            return
+        }
+        let waiter = waiters.removeFirst()
+        waiter.continuation.resume()
+    }
+
+    private func cancelWaiter(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: index)
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+}
+
+/// Carries fetched image data into the non-retryable persistence stage.
+private struct DownloadedGalleryPage {
+    let imagePage: EHImagePage
+    let dataResponse: EHDataResponse
+}
 
 /// Downloads every reader image for a gallery into the shared cache.
 @MainActor
@@ -1339,7 +1835,8 @@ final class GalleryDownloadManager: ObservableObject {
     private let maxConcurrentPagesPerGallery: Int
     private let maxPageDownloadRetryCount: Int
     private let retryDelayRange: ClosedRange<Double>
-    private var runningTasks: [String: Task<Void, Never>] = [:]
+    private let pageLimiter: GalleryDownloadPageLimiter
+    private var runningTasks: [String: RunningGalleryDownload] = [:]
     private var queuedJobs: [String: GalleryDownloadJob] = [:]
     private var queuedJobIDs: [String] = []
     private var activeRunStartedAt: Date?
@@ -1354,6 +1851,7 @@ final class GalleryDownloadManager: ObservableObject {
         hitomiDataSource: HitomiDataSource = HitomiDataSource(),
         maxConcurrentDownloads: Int = 5,
         maxConcurrentPagesPerGallery: Int = 3,
+        maxConcurrentPageOperations: Int = 4,
         maxPageDownloadRetryCount: Int = 2,
         retryDelayRange: ClosedRange<Double> = 0.35...1.25
     ) {
@@ -1364,6 +1862,7 @@ final class GalleryDownloadManager: ObservableObject {
         self.hitomiDataSource = hitomiDataSource
         self.maxConcurrentDownloads = max(1, maxConcurrentDownloads)
         self.maxConcurrentPagesPerGallery = max(1, maxConcurrentPagesPerGallery)
+        pageLimiter = GalleryDownloadPageLimiter(capacity: maxConcurrentPageOperations)
         self.maxPageDownloadRetryCount = max(0, maxPageDownloadRetryCount)
         self.retryDelayRange = retryDelayRange
     }
@@ -1375,7 +1874,10 @@ final class GalleryDownloadManager: ObservableObject {
         }
 
         let cachedProgress = cachedProgress(for: identifier)
-        let downloadedPageCount = cachedProgress?.downloadedPageCount ?? storedProgress.downloadedPageCount
+        let usesLocalPageCount = storedProgress.isRunning || hasPendingOrRunningJob(for: identifier)
+        let downloadedPageCount = usesLocalPageCount
+            ? max(storedProgress.downloadedPageCount, cachedProgress?.downloadedPageCount ?? 0)
+            : (cachedProgress?.downloadedPageCount ?? 0)
         let totalPageCount = max(storedProgress.totalPageCount, cachedProgress?.totalPageCount ?? 0)
         return GalleryDownloadProgress(
             galleryID: storedProgress.galleryID,
@@ -1390,8 +1892,8 @@ final class GalleryDownloadManager: ObservableObject {
     /// Starts a non-blocking download for all currently known gallery page links.
     func startDownload(detail: EHGalleryDetail, fallback: EHSearchResult? = nil) {
         guard !hasPendingOrRunningJob(for: detail.identifier) else { return }
-        cacheStore.saveGalleryMetadata(detail: detail, fallback: fallback)
         let totalPageCount = detail.pageCount ?? detail.pageLinks.count
+        guard !hasCompletedDownload(for: detail.identifier, totalPageCount: totalPageCount) else { return }
         setProgress(
             GalleryDownloadProgress(
                 galleryID: detail.identifier.id,
@@ -1414,12 +1916,9 @@ final class GalleryDownloadManager: ObservableObject {
         )
     }
 
-    /// Starts queued downloads for every cached gallery whose cache is incomplete.
+    /// Starts queued downloads for galleries with missing pages or staged finalization.
     func startUnfinishedDownloads(from summaries: [CachedGallerySummary]) {
-        let unfinishedSummaries = summaries.filter { summary in
-            guard let totalPageCount = summary.totalPageCount else { return false }
-            return !summary.isDownloadUnavailable && summary.cachedPageCount < totalPageCount
-        }
+        let unfinishedSummaries = summaries.filter(\.needsDownloadResume)
 
         for summary in unfinishedSummaries where !hasPendingOrRunningJob(for: summary.galleryIdentifier) {
             let totalPageCount = summary.totalPageCount ?? summary.cachedPageCount
@@ -1450,8 +1949,8 @@ final class GalleryDownloadManager: ObservableObject {
     /// Pauses every queued or running gallery download.
     func pauseAllDownloads() {
         let affectedIDs = Set(queuedJobs.keys).union(runningTasks.keys)
-        for task in runningTasks.values {
-            task.cancel()
+        for runningDownload in runningTasks.values {
+            runningDownload.task.cancel()
         }
         queuedJobs.removeAll()
         queuedJobIDs.removeAll()
@@ -1478,88 +1977,184 @@ final class GalleryDownloadManager: ObservableObject {
     }
 
     /// Downloads reader images one page at a time.
-    private func download(detail: EHGalleryDetail, fallback: EHSearchResult?) async {
+    private func download(
+        detail: EHGalleryDetail,
+        fallback: EHSearchResult?,
+        executionID: UUID
+    ) async {
         let totalPageCount = detail.pageCount ?? detail.pageLinks.count
-        var downloadedPageCount = cachedPageCount(for: detail.identifier)
+        var downloadedPageNumbers = cachedPageNumbers(in: detail)
         var lastErrorMessage: String?
-        cacheStore.beginDeferredGallerySummaryRefreshes()
-        defer {
-            cacheStore.endDeferredGallerySummaryRefreshes()
-        }
 
         do {
             try await cacheStore.preparePersistentDownload(detail: detail, fallback: fallback)
-            downloadedPageCount = cachedPageCount(for: detail.identifier)
+            try Task.checkCancellation()
+            downloadedPageNumbers = cachedPageNumbers(in: detail)
+        } catch is CancellationError {
+            updateProgress(
+                detail: detail,
+                downloadedPageCount: downloadedPageNumbers.count,
+                totalPageCount: totalPageCount,
+                isRunning: false,
+                errorMessage: nil,
+                publishesImmediately: true,
+                executionID: executionID
+            )
+            return
         } catch {
             updateProgress(
                 detail: detail,
-                downloadedPageCount: downloadedPageCount,
+                downloadedPageCount: downloadedPageNumbers.count,
                 totalPageCount: totalPageCount,
                 isRunning: false,
                 errorMessage: error.localizedDescription,
-                publishesImmediately: true
+                publishesImmediately: true,
+                executionID: executionID
             )
             return
         }
-        updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil, publishesImmediately: true)
+        updateProgress(
+            detail: detail,
+            downloadedPageCount: downloadedPageNumbers.count,
+            totalPageCount: totalPageCount,
+            isRunning: true,
+            errorMessage: nil,
+            publishesImmediately: true,
+            executionID: executionID
+        )
 
         let missingPageLinks = detail.pageLinks
             .sorted { $0.pageNumber < $1.pageNumber }
-            .filter { pageLink in
-                guard let record = cacheStore.pageRecord(for: detail.identifier, pageNumber: pageLink.pageNumber) else {
-                    return true
-                }
-                return !cacheStore.containsData(for: record.imageURL)
-            }
+            .filter { !downloadedPageNumbers.contains($0.pageNumber) }
 
         if missingPageLinks.isEmpty {
             do {
+                try Task.checkCancellation()
                 try await cacheStore.finalizePersistentDownload(detail.identifier)
+            } catch is CancellationError {
+                updateProgress(
+                    detail: detail,
+                    downloadedPageCount: downloadedPageNumbers.count,
+                    totalPageCount: totalPageCount,
+                    isRunning: false,
+                    errorMessage: nil,
+                    publishesImmediately: true,
+                    executionID: executionID
+                )
+                return
             } catch {
                 lastErrorMessage = error.localizedDescription
             }
-            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage, publishesImmediately: true)
+            updateProgress(
+                detail: detail,
+                downloadedPageCount: downloadedPageNumbers.count,
+                totalPageCount: totalPageCount,
+                isRunning: false,
+                errorMessage: lastErrorMessage,
+                publishesImmediately: true,
+                executionID: executionID
+            )
             return
         }
 
         do {
-            try await downloadMissingPages(missingPageLinks, detail: detail, fallback: fallback, totalPageCount: totalPageCount) { result in
+            try await downloadMissingPages(
+                missingPageLinks,
+                detail: detail,
+                fallback: fallback,
+                totalPageCount: totalPageCount
+            ) { result in
                 switch result.outcome {
                 case .success(let byteCount):
-                    recordDownloadedBytes(byteCount)
-                    downloadedPageCount = cachedPageCount(for: detail.identifier)
-                    updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: nil)
+                    if downloadedPageNumbers.insert(result.pageNumber).inserted {
+                        recordDownloadedBytes(byteCount)
+                    }
+                    updateProgress(
+                        detail: detail,
+                        downloadedPageCount: downloadedPageNumbers.count,
+                        totalPageCount: totalPageCount,
+                        isRunning: true,
+                        errorMessage: nil,
+                        executionID: executionID
+                    )
                 case .failure(let error):
                     if error.isHTTPNotFound {
-                        cacheStore.markGalleryDownloadUnavailable(
+                        await cacheStore.markGalleryDownloadUnavailable(
                             detail.identifier,
                             title: detail.title,
                             thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL,
                             totalPageCount: totalPageCount
                         )
                     }
-                    lastErrorMessage = String(format: AppCopy.galleryDownloadPageFailedFormat, String(result.pageNumber), error.localizedDescription)
-                    updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: true, errorMessage: lastErrorMessage)
+                    lastErrorMessage = String(
+                        format: AppCopy.galleryDownloadPageFailedFormat,
+                        String(result.pageNumber),
+                        error.localizedDescription
+                    )
+                    updateProgress(
+                        detail: detail,
+                        downloadedPageCount: downloadedPageNumbers.count,
+                        totalPageCount: totalPageCount,
+                        isRunning: true,
+                        errorMessage: lastErrorMessage,
+                        executionID: executionID
+                    )
                 }
             }
         } catch is CancellationError {
-            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage, publishesImmediately: true)
+            updateProgress(
+                detail: detail,
+                downloadedPageCount: downloadedPageNumbers.count,
+                totalPageCount: totalPageCount,
+                isRunning: false,
+                errorMessage: lastErrorMessage,
+                publishesImmediately: true,
+                executionID: executionID
+            )
             return
         } catch {
             lastErrorMessage = error.localizedDescription
-            updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage, publishesImmediately: true)
+            updateProgress(
+                detail: detail,
+                downloadedPageCount: downloadedPageNumbers.count,
+                totalPageCount: totalPageCount,
+                isRunning: false,
+                errorMessage: lastErrorMessage,
+                publishesImmediately: true,
+                executionID: executionID
+            )
             return
         }
 
-        downloadedPageCount = cachedPageCount(for: detail.identifier)
-        if lastErrorMessage == nil, downloadedPageCount >= totalPageCount {
+        if lastErrorMessage == nil,
+           containsEveryExpectedPage(downloadedPageNumbers, totalPageCount: totalPageCount) {
             do {
+                try Task.checkCancellation()
                 try await cacheStore.finalizePersistentDownload(detail.identifier)
+            } catch is CancellationError {
+                updateProgress(
+                    detail: detail,
+                    downloadedPageCount: downloadedPageNumbers.count,
+                    totalPageCount: totalPageCount,
+                    isRunning: false,
+                    errorMessage: nil,
+                    publishesImmediately: true,
+                    executionID: executionID
+                )
+                return
             } catch {
                 lastErrorMessage = error.localizedDescription
             }
         }
-        updateProgress(detail: detail, downloadedPageCount: downloadedPageCount, totalPageCount: totalPageCount, isRunning: false, errorMessage: lastErrorMessage, publishesImmediately: true)
+        updateProgress(
+            detail: detail,
+            downloadedPageCount: downloadedPageNumbers.count,
+            totalPageCount: totalPageCount,
+            isRunning: false,
+            errorMessage: lastErrorMessage,
+            publishesImmediately: true,
+            executionID: executionID
+        )
     }
 
     /// Updates observable progress for a gallery.
@@ -1569,8 +2164,10 @@ final class GalleryDownloadManager: ObservableObject {
         totalPageCount: Int,
         isRunning: Bool,
         errorMessage: String?,
-        publishesImmediately: Bool = false
+        publishesImmediately: Bool = false,
+        executionID: UUID
     ) {
+        guard runningTasks[detail.identifier.id]?.executionID == executionID else { return }
         setProgress(
             GalleryDownloadProgress(
                 galleryID: detail.identifier.id,
@@ -1614,6 +2211,7 @@ final class GalleryDownloadManager: ObservableObject {
 
     /// Assigns published progress properties without touching pending timers.
     private func publishDownloadProgressNow() {
+        recalculateAggregateProgress()
         progressByGalleryID = latestProgressByGalleryID
         aggregateProgress = latestAggregateProgress
     }
@@ -1636,9 +2234,63 @@ final class GalleryDownloadManager: ObservableObject {
         cacheStore.gallerySummary(for: identifier)?.cachedPageCount ?? 0
     }
 
+
+    /// Reads available page numbers from direct cache lookups instead of throttled summaries.
+    private func cachedPageNumbers(in detail: EHGalleryDetail) -> Set<Int> {
+        Set(detail.pageLinks.compactMap { pageLink in
+            guard
+                let record = cacheStore.pageRecord(
+                    for: detail.identifier,
+                    pageNumber: pageLink.pageNumber
+                ),
+                cacheStore.containsData(for: record.imageURL)
+            else {
+                return nil
+            }
+            return pageLink.pageNumber
+        })
+    }
+
+    /// Returns whether every page number from one through the total is available.
+    private func containsEveryExpectedPage(
+        _ pageNumbers: Set<Int>,
+        totalPageCount: Int
+    ) -> Bool {
+        guard totalPageCount > 0 else { return false }
+        return Set(1...totalPageCount).isSubset(of: pageNumbers)
+    }
+
     /// Returns true when a gallery is already queued or actively downloading.
     private func hasPendingOrRunningJob(for identifier: EHGalleryIdentifier) -> Bool {
         runningTasks[identifier.id] != nil || queuedJobs[identifier.id] != nil
+    }
+
+    /// Returns true only when every expected page is already in finalized durable storage.
+    private func hasCompletedDownload(
+        for identifier: EHGalleryIdentifier,
+        totalPageCount: Int
+    ) -> Bool {
+        guard
+            totalPageCount > 0,
+            let summary = cacheStore.gallerySummary(for: identifier),
+            summary.storageState == .persistent,
+            !summary.isStaged
+        else {
+            return false
+        }
+        let persistentPageNumbers: Set<Int> = Set(summary.pageRecords.compactMap { record -> Int? in
+            guard
+                let localFileURL = record.localFileURL,
+                FileManager.default.fileExists(atPath: localFileURL.path)
+            else {
+                return nil
+            }
+            return record.pageNumber
+        })
+        return containsEveryExpectedPage(
+            persistentPageNumbers,
+            totalPageCount: totalPageCount
+        )
     }
 
     /// Adds one gallery job to the queue and starts work when capacity is available.
@@ -1654,53 +2306,111 @@ final class GalleryDownloadManager: ObservableObject {
         while runningTasks.count < maxConcurrentDownloads, let nextID = queuedJobIDs.first {
             queuedJobIDs.removeFirst()
             guard let job = queuedJobs.removeValue(forKey: nextID) else { continue }
-            runningTasks[nextID] = Task { [weak self] in
-                await self?.run(job)
+            let executionID = UUID()
+            let task = Task { [weak self] in
+                guard let self else { return }
+                await self.run(job, executionID: executionID)
             }
+            runningTasks[nextID] = RunningGalleryDownload(executionID: executionID, task: task)
         }
         updateAggregateProgress()
     }
 
     /// Runs one queued job and schedules the next job after it finishes.
-    private func run(_ job: GalleryDownloadJob) async {
+    private func run(_ job: GalleryDownloadJob, executionID: UUID) async {
+        cacheStore.beginDeferredGallerySummaryRefreshes()
         defer {
-            runningTasks[job.identifier.id] = nil
-            scheduleDownloads()
+            if runningTasks[job.identifier.id]?.executionID == executionID {
+                runningTasks[job.identifier.id] = nil
+                scheduleDownloads()
+            }
         }
 
         do {
-            let (detail, fallback) = try await resolvedDetailAndFallback(for: job)
-            cacheStore.saveGalleryMetadata(detail: detail, fallback: fallback)
-            await download(detail: detail, fallback: fallback)
-        } catch is CancellationError {
-            markJobPaused(job)
-        } catch {
-            if error.isHTTPNotFound {
-                cacheStore.markGalleryDownloadUnavailable(job.identifier, title: job.title, totalPageCount: job.totalPageCount)
+            if try await finalizeCompleteStagingIfNeeded(job, executionID: executionID) {
+                setProgress(
+                    GalleryDownloadProgress(
+                        galleryID: job.identifier.id,
+                        title: job.title,
+                        downloadedPageCount: job.totalPageCount,
+                        totalPageCount: job.totalPageCount,
+                        isRunning: false,
+                        errorMessage: nil
+                    ),
+                    publishesImmediately: true
+                )
+            } else {
+                let (detail, fallback) = try await resolvedDetailAndFallback(for: job)
+                try Task.checkCancellation()
+                guard runningTasks[job.identifier.id]?.executionID == executionID else {
+                    throw CancellationError()
+                }
+                await cacheStore.saveGalleryMetadataForDownload(detail: detail, fallback: fallback)
+                try Task.checkCancellation()
+                guard runningTasks[job.identifier.id]?.executionID == executionID else {
+                    throw CancellationError()
+                }
+                await download(detail: detail, fallback: fallback, executionID: executionID)
             }
-            let downloadedPageCount = cachedPageCount(for: job.identifier)
-            setProgress(
-                GalleryDownloadProgress(
-                    galleryID: job.identifier.id,
-                    title: job.title,
-                    downloadedPageCount: downloadedPageCount,
-                    totalPageCount: job.totalPageCount,
-                    isRunning: false,
-                    errorMessage: error.localizedDescription
-                ),
-                publishesImmediately: true
-            )
+        } catch is CancellationError {
+            markJobPaused(job, executionID: executionID)
+        } catch {
+            if runningTasks[job.identifier.id]?.executionID == executionID {
+                if error.isHTTPNotFound {
+                    await cacheStore.markGalleryDownloadUnavailable(
+                        job.identifier,
+                        title: job.title,
+                        totalPageCount: job.totalPageCount
+                    )
+                }
+                let downloadedPageCount = cachedPageCount(for: job.identifier)
+                setProgress(
+                    GalleryDownloadProgress(
+                        galleryID: job.identifier.id,
+                        title: job.title,
+                        downloadedPageCount: downloadedPageCount,
+                        totalPageCount: job.totalPageCount,
+                        isRunning: false,
+                        errorMessage: error.localizedDescription
+                    ),
+                    publishesImmediately: true
+                )
+            }
         }
+        await cacheStore.endDeferredGallerySummaryRefreshes(for: job.identifier)
+    }
+
+    /// Finalizes a complete staged bulk job without requiring remote gallery metadata.
+    private func finalizeCompleteStagingIfNeeded(
+        _ job: GalleryDownloadJob,
+        executionID: UUID
+    ) async throws -> Bool {
+        guard case .cachedSummary = job.source,
+              cacheStore.hasCompletePersistentStaging(for: job.identifier)
+        else {
+            return false
+        }
+        try Task.checkCancellation()
+        guard runningTasks[job.identifier.id]?.executionID == executionID else {
+            throw CancellationError()
+        }
+        try await cacheStore.finalizePersistentDownload(job.identifier)
+        try Task.checkCancellation()
+        guard runningTasks[job.identifier.id]?.executionID == executionID else {
+            throw CancellationError()
+        }
+        return true
     }
 
     /// Marks a cancelled job as paused instead of failed.
-    private func markJobPaused(_ job: GalleryDownloadJob) {
+    private func markJobPaused(_ job: GalleryDownloadJob, executionID: UUID) {
+        guard runningTasks[job.identifier.id]?.executionID == executionID else { return }
         let progress = latestProgressByGalleryID[job.identifier.id] ?? progressByGalleryID[job.identifier.id]
         setProgress(
             GalleryDownloadProgress(
                 galleryID: job.identifier.id,
                 title: progress?.title ?? job.title,
-                downloadedPageCount: cachedPageCount(for: job.identifier),
+                downloadedPageCount: progress?.downloadedPageCount ?? cachedPageCount(for: job.identifier),
                 totalPageCount: progress?.totalPageCount ?? job.totalPageCount,
                 isRunning: false,
                 errorMessage: progress?.errorMessage
@@ -1805,7 +2515,7 @@ final class GalleryDownloadManager: ObservableObject {
         detail: EHGalleryDetail,
         fallback: EHSearchResult?,
         totalPageCount: Int,
-        onResult: @MainActor (GalleryPageDownloadResult) -> Void
+        onResult: @MainActor (GalleryPageDownloadResult) async -> Void
     ) async throws {
         var nextPageIndex = 0
 
@@ -1831,7 +2541,7 @@ final class GalleryDownloadManager: ObservableObject {
 
             while let result = try await group.next() {
                 try Task.checkCancellation()
-                onResult(result)
+                await onResult(result)
                 enqueueNextPageIfNeeded()
             }
         }
@@ -1845,45 +2555,82 @@ final class GalleryDownloadManager: ObservableObject {
         totalPageCount: Int
     ) async -> GalleryPageDownloadResult {
         do {
-            let byteCount = try await downloadPage(pageLink, detail: detail, fallback: fallback, totalPageCount: totalPageCount)
-            return GalleryPageDownloadResult(pageNumber: pageLink.pageNumber, outcome: .success(byteCount))
+            try await pageLimiter.acquire()
+            do {
+                try Task.checkCancellation()
+                let byteCount = try await downloadPage(
+                    pageLink,
+                    detail: detail,
+                    fallback: fallback,
+                    totalPageCount: totalPageCount
+                )
+                await pageLimiter.release()
+                return GalleryPageDownloadResult(pageNumber: pageLink.pageNumber, outcome: .success(byteCount))
+            } catch {
+                await pageLimiter.release()
+                throw error
+            }
         } catch {
             return GalleryPageDownloadResult(pageNumber: pageLink.pageNumber, outcome: .failure(error))
         }
     }
 
+    /// Retries the network stage, then persists successful bytes exactly once.
     private func downloadPage(
         _ pageLink: EHGalleryPageLink,
         detail: EHGalleryDetail,
         fallback: EHSearchResult?,
         totalPageCount: Int
     ) async throws -> Int64 {
+        var downloadedPage: DownloadedGalleryPage?
         var lastError: Error?
+
         for attempt in 0...maxPageDownloadRetryCount {
             do {
                 try Task.checkCancellation()
-                return try await downloadPageOnce(pageLink, detail: detail, fallback: fallback, totalPageCount: totalPageCount)
+                downloadedPage = try await fetchPageOnce(pageLink, detail: detail)
+                break
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 lastError = error
-                if error.isHTTPNotFound {
+                guard
+                    attempt < maxPageDownloadRetryCount,
+                    shouldRetryPageFetch(after: error)
+                else {
                     break
                 }
-                guard attempt < maxPageDownloadRetryCount else { break }
                 try await waitBeforeRetry()
             }
         }
-        throw lastError ?? EHNetworkError.invalidResponse
+
+        guard let downloadedPage else {
+            throw lastError ?? EHNetworkError.invalidResponse
+        }
+
+        let context = ImageCacheContext(
+            galleryIdentifier: detail.identifier,
+            galleryTitle: detail.title,
+            pageNumber: downloadedPage.imagePage.pageNumber,
+            pageURL: downloadedPage.imagePage.pageURL,
+            totalPageCount: totalPageCount,
+            thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL
+        )
+        try Task.checkCancellation()
+        try await cacheStore.saveDownloadedPageAsync(
+            downloadedPage.dataResponse.data,
+            for: downloadedPage.imagePage.imageURL,
+            responseURL: downloadedPage.dataResponse.url,
+            context: context
+        )
+        return Int64(downloadedPage.dataResponse.data.count)
     }
 
     /// Performs a single reader page and image download attempt.
-    private func downloadPageOnce(
+    private func fetchPageOnce(
         _ pageLink: EHGalleryPageLink,
-        detail: EHGalleryDetail,
-        fallback: EHSearchResult?,
-        totalPageCount: Int
-    ) async throws -> Int64 {
+        detail: EHGalleryDetail
+    ) async throws -> DownloadedGalleryPage {
         try Task.checkCancellation()
         let imagePage: EHImagePage
         if detail.identifier.site == .hitomi {
@@ -1893,24 +2640,12 @@ final class GalleryDownloadManager: ObservableObject {
             try Task.checkCancellation()
             imagePage = try parser.parse(pageResponse.body, sourceURL: pageResponse.url)
         }
-        let imageReferer = detail.identifier.site == .hitomi ? (imagePage.galleryURL ?? imagePage.pageURL) : imagePage.pageURL
+        let imageReferer = detail.identifier.site == .hitomi
+            ? (imagePage.galleryURL ?? imagePage.pageURL)
+            : imagePage.pageURL
         let dataResponse = try await client.data(imagePage.imageURL, referer: imageReferer)
         try Task.checkCancellation()
-        let context = ImageCacheContext(
-            galleryIdentifier: detail.identifier,
-            galleryTitle: detail.title,
-            pageNumber: imagePage.pageNumber,
-            pageURL: imagePage.pageURL,
-            totalPageCount: totalPageCount,
-            thumbnailURL: detail.coverURL ?? fallback?.thumbnailURL
-        )
-        try await cacheStore.saveDownloadedPageAsync(
-            dataResponse.data,
-            for: imagePage.imageURL,
-            responseURL: dataResponse.url,
-            context: context
-        )
-        return Int64(dataResponse.data.count)
+        return DownloadedGalleryPage(imagePage: imagePage, dataResponse: dataResponse)
     }
 
     /// Waits for a short randomized retry delay to avoid hammering the image host.
@@ -1921,27 +2656,70 @@ final class GalleryDownloadManager: ObservableObject {
         try await Task.sleep(nanoseconds: nanoseconds)
     }
 
+
+    /// Retries only transport and server failures that can succeed without changing input.
+    private func shouldRetryPageFetch(after error: Error) -> Bool {
+        if error.isHTTPNotFound || error is CancellationError {
+            return false
+        }
+        if let networkError = error as? EHNetworkError {
+            switch networkError {
+            case .invalidResponse:
+                return true
+            case .unacceptableStatusCode(let statusCode):
+                return statusCode == 408
+                    || statusCode == 425
+                    || statusCode == 429
+                    || (500...599).contains(statusCode)
+            case .undecodableBody:
+                return false
+            }
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut,
+                 .cannotFindHost,
+                 .cannotConnectToHost,
+                 .networkConnectionLost,
+                 .dnsLookupFailed,
+                 .resourceUnavailable,
+                 .notConnectedToInternet,
+                 .secureConnectionFailed,
+                 .cannotLoadFromNetwork,
+                 .backgroundSessionWasDisconnected:
+                return true
+            default:
+                return false
+            }
+        }
+        return false
+    }
+
     /// Records bytes downloaded during the current active run.
     private func recordDownloadedBytes(_ byteCount: Int64) {
         if activeRunStartedAt == nil {
             activeRunStartedAt = Date()
         }
         activeRunDownloadedByteCount += byteCount
-        updateAggregateProgress()
     }
 
     /// Publishes aggregate progress while at least one gallery download is active.
     private func updateAggregateProgress(publishesImmediately: Bool = false) {
+        if publishesImmediately {
+            publishDownloadProgress()
+        } else {
+            scheduleProgressPublish()
+        }
+    }
+
+
+    /// Rebuilds aggregate values only when observable progress is published.
+    private func recalculateAggregateProgress() {
         let activeDownloadCount = runningTasks.count
         guard activeDownloadCount > 0 else {
             latestAggregateProgress = nil
             activeRunStartedAt = nil
             activeRunDownloadedByteCount = 0
-            if publishesImmediately {
-                publishDownloadProgress()
-            } else {
-                scheduleProgressPublish()
-            }
             return
         }
 
@@ -1950,7 +2728,7 @@ final class GalleryDownloadManager: ObservableObject {
             activeRunDownloadedByteCount = 0
         }
 
-        let runningProgresses = latestProgressByGalleryID.values.filter(\.isRunning)
+        let runningProgresses = latestProgressByGalleryID.values.filter { $0.isRunning }
         let downloadedPageCount = runningProgresses.reduce(0) { $0 + $1.downloadedPageCount }
         let totalPageCount = runningProgresses.reduce(0) { $0 + $1.totalPageCount }
         let elapsed = max(Date().timeIntervalSince(activeRunStartedAt ?? Date()), 0.1)
@@ -1963,16 +2741,8 @@ final class GalleryDownloadManager: ObservableObject {
             totalPageCount: totalPageCount,
             bytesPerSecond: bytesPerSecond
         )
-
-        if publishesImmediately {
-            publishDownloadProgress()
-        } else {
-            scheduleProgressPublish()
-        }
     }
 }
-
-/// Stores a queued gallery download request.
 
 /// Stores the result for one downloaded gallery page.
 private struct GalleryPageDownloadResult {
@@ -1980,11 +2750,18 @@ private struct GalleryPageDownloadResult {
     let outcome: Result<Int64, Error>
 }
 
+/// Stores a queued gallery download request.
 private struct GalleryDownloadJob {
     let identifier: EHGalleryIdentifier
     let title: String
     let totalPageCount: Int
     let source: GalleryDownloadJobSource
+}
+
+/// Associates one tracked task with the execution that owns its gallery slot.
+private struct RunningGalleryDownload {
+    let executionID: UUID
+    let task: Task<Void, Never>
 }
 
 /// Describes how a queued download should resolve its page links.
@@ -1994,14 +2771,239 @@ private enum GalleryDownloadJobSource {
 }
 
 /// Stores cache aliases and reader page mappings.
-private struct ImageCacheIndex: Codable {
+private struct ImageCacheIndex: Codable, Sendable {
     var aliases: [String: String] = [:]
     var pages: [String: CachedImagePageRecord] = [:]
     var galleryMetadata: [String: CachedGalleryMetadata] = [:]
 }
 
+/// Describes one incremental disposable-cache removal.
+private struct ImageCacheGalleryRemoval {
+    let removableCacheKeys: Set<String>
+    let didChange: Bool
+}
+
+/// Identifies one async cache save across suspension points and user clears.
+private struct ImageCacheMutationToken {
+    let id: UUID
+    let sequence: UInt64
+    let clearGeneration: Int
+    let scopeID: String
+    let scopeGeneration: Int
+}
+
+/// Associates one in-flight save token with the cache key it currently owns.
+private struct ImageCachePendingWrite {
+    let token: ImageCacheMutationToken
+    let cacheKey: String
+}
+
+/// Serializes cache file removals and immutable index snapshots outside MainActor.
+private final class ImageCacheDiskWriter: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.ikode.MyEHViewer.image-cache-writer", qos: .utility)
+    private let beforeMutation: @Sendable () -> Void
+    private let beforeDataWrite: @Sendable () throws -> Void
+
+    /// Creates one FIFO writer with an optional deterministic test boundary.
+    init(
+        beforeMutation: @escaping @Sendable () -> Void = {},
+        beforeDataWrite: @escaping @Sendable () throws -> Void = {}
+    ) {
+        self.beforeMutation = beforeMutation
+        self.beforeDataWrite = beforeDataWrite
+    }
+
+    /// Preserves immediate cleanup semantics for explicit user commands.
+    func writeSynchronously(
+        _ index: ImageCacheIndex,
+        to indexURL: URL,
+        directoryURL: URL,
+        removing fileURLs: [URL] = []
+    ) {
+        queue.sync {
+            beforeMutation()
+            Self.write(index, to: indexURL, directoryURL: directoryURL, removing: fileURLs)
+        }
+    }
+
+    /// Enqueues a download-driven mutation immediately and returns a durability task.
+    func enqueueWrite(
+        _ index: ImageCacheIndex,
+        to indexURL: URL,
+        directoryURL: URL,
+        removing fileURLs: [URL] = []
+    ) -> Task<Void, Never> {
+        let completion = ImageCacheWriteCompletion()
+        queue.async {
+            self.beforeMutation()
+            Self.write(index, to: indexURL, directoryURL: directoryURL, removing: fileURLs)
+            completion.finish()
+        }
+        return Task {
+            await withCheckedContinuation { continuation in
+                completion.whenFinished(continuation)
+            }
+        }
+    }
+
+    /// Checks file existence and conditionally writes bytes in one FIFO transaction.
+    func enqueueDataWrite(
+        _ data: Data,
+        to destinationURL: URL,
+        replacesExisting: Bool
+    ) -> Task<Int64, Error> {
+        let completion = ImageCacheDataWriteCompletion()
+        queue.async {
+            self.beforeMutation()
+            do {
+                try self.beforeDataWrite()
+                try FileManager.default.createDirectory(
+                    at: destinationURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                if replacesExisting || !FileManager.default.fileExists(atPath: destinationURL.path) {
+                    try data.write(to: destinationURL, options: [.atomic])
+                }
+                let values = try? destinationURL.resourceValues(forKeys: [.fileSizeKey])
+                let byteCount = Int64(values?.fileSize ?? data.count)
+                completion.finish(.success(byteCount))
+            } catch {
+                completion.finish(.failure(error))
+            }
+        }
+        return Task {
+            let result = await withCheckedContinuation { continuation in
+                completion.whenFinished(continuation)
+            }
+            return try result.get()
+        }
+    }
+
+    /// Performs one ordered data transaction for synchronous cache callers.
+    func writeDataSynchronously(
+        _ data: Data,
+        to destinationURL: URL,
+        replacesExisting: Bool
+    ) throws -> Int64 {
+        try queue.sync {
+            beforeMutation()
+            try beforeDataWrite()
+            try FileManager.default.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if replacesExisting || !FileManager.default.fileExists(atPath: destinationURL.path) {
+                try data.write(to: destinationURL, options: [.atomic])
+            }
+            let values = try? destinationURL.resourceValues(forKeys: [.fileSizeKey])
+            return Int64(values?.fileSize ?? data.count)
+        }
+    }
+
+    /// Removes the whole cache directory after every earlier queued mutation finishes.
+    func removeDirectorySynchronously(_ directoryURL: URL) {
+        queue.sync {
+            beforeMutation()
+            try? FileManager.default.removeItem(at: directoryURL)
+        }
+    }
+
+    /// Removes one cache file after every earlier FIFO mutation finishes.
+    func removeFileSynchronously(_ fileURL: URL) {
+        queue.sync {
+            beforeMutation()
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
+    /// Applies file removals before atomically replacing the index snapshot.
+    private static func write(
+        _ index: ImageCacheIndex,
+        to indexURL: URL,
+        directoryURL: URL,
+        removing fileURLs: [URL]
+    ) {
+        do {
+            for fileURL in fileURLs {
+                try? FileManager.default.removeItem(at: fileURL)
+            }
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(index)
+            try data.write(to: indexURL, options: [.atomic])
+        } catch {
+            assertionFailure("Failed to save image cache index: \(error.localizedDescription)")
+        }
+    }
+}
+
+/// Bridges one serial queue write back into async code without delaying its enqueue.
+private final class ImageCacheWriteCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isFinished = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    /// Resumes immediately when work is done or stores the waiter for later completion.
+    func whenFinished(_ continuation: CheckedContinuation<Void, Never>) {
+        lock.lock()
+        if isFinished {
+            lock.unlock()
+            continuation.resume()
+            return
+        }
+        continuations.append(continuation)
+        lock.unlock()
+    }
+
+    /// Completes every registered waiter after the serial disk operation exits.
+    func finish() {
+        lock.lock()
+        isFinished = true
+        let pendingContinuations = continuations
+        continuations.removeAll()
+        lock.unlock()
+        for continuation in pendingContinuations {
+            continuation.resume()
+        }
+    }
+}
+
+/// Bridges a fallible serial image write back into async cache code.
+private final class ImageCacheDataWriteCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<Int64, Error>?
+    private var continuations: [CheckedContinuation<Result<Int64, Error>, Never>] = []
+
+    /// Resumes immediately when work is done or stores the waiter for later completion.
+    func whenFinished(_ continuation: CheckedContinuation<Result<Int64, Error>, Never>) {
+        lock.lock()
+        if let result {
+            lock.unlock()
+            continuation.resume(returning: result)
+            return
+        }
+        continuations.append(continuation)
+        lock.unlock()
+    }
+
+    /// Completes every registered waiter with the data write result.
+    func finish(_ result: Result<Int64, Error>) {
+        lock.lock()
+        guard self.result == nil else {
+            lock.unlock()
+            return
+        }
+        self.result = result
+        let pendingContinuations = continuations
+        continuations.removeAll()
+        lock.unlock()
+        for continuation in pendingContinuations {
+            continuation.resume(returning: result)
+        }
+    }
+}
+
 /// Stores gallery-level metadata for partially indexed caches.
-private struct CachedGalleryMetadata: Codable, Hashable {
+private struct CachedGalleryMetadata: Codable, Hashable, Sendable {
     let identifier: EHGalleryIdentifier
     let title: String
     let note: String?

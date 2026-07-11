@@ -396,3 +396,35 @@ xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platfo
 ```
 
 结果：通过。新增 `Documents/Cached Gallery` 永久图库目录和 `Application Support/CachedGalleryStaging` 暂存目录；覆盖成功迁移后删除重复缓存、失败时保留缓存、永久文件优先读取、直接下载不写临时缓存、重试清理垃圾文件和再次保存替换旧目录。模拟器使用本地封面、无法加载的远程封面以及 `1206×2622` 纵向 MP4 验证：缓存网格顶部无异常空白，远程封面失败时仍保持固定比例半宽卡片，视频严格保持全宽 16:9 单行。完整回归测试通过，仅有 Xcode AppIntents metadata 提取提示。
+
+## 2026-07-11
+
+### 图库下载性能与并发一致性定向回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/MyEHViewerDownloadPerformance -only-testing:MyEHViewerTests/CachedGalleryStoreTests -only-testing:MyEHViewerTests/GalleryDownloadManagerTests test
+```
+
+结果：定向范围 37/37 通过。覆盖持久化乱序提交、目标页增量投影、refresh tombstone、严格 `1...N` 完整性、并发 finalize 幂等、全局页面流水线容量 4、许可等待取消、暂停后立即恢复的执行标识、完整暂存离线 finalize、完整临时缓存提升为永久图库、Files 外部删页后重新下载，以及异步图片写入与清理交错时的 generation/sequence、alias owner、物理版本收敛和孤儿文件清理。
+
+### 图库下载性能完整回归
+
+```sh
+git diff --check
+xcodebuild -project MyEHViewer.xcodeproj -scheme MyEHViewer -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath /tmp/MyEHViewerDownloadPerformance -parallel-testing-enabled NO test
+```
+
+结果：`git diff --check` 通过；完整 XCTest 142/142 通过。覆盖 Hitomi galleryinfo 在途合并、独立 waiter 取消、最后 waiter 取消底层请求、批量取消传播、失败不缓存和容量 8 的 LRU。测试日志包含 Xcode AppIntents metadata 提取提示、iOS 26.5 模拟器 WebKit/WebCore accessibility 重复类提示，以及 AVIF 测试的 ImageIO opaque-alpha 日志；较早的 clean build 还会显示现有 `ReaderView.swift` 使用 `UIScreen.main` 的弃用警告，因此不再表述为“无项目 warning”。
+
+### 模拟器安装与启动冒烟
+
+```sh
+xcrun simctl install booted /tmp/MyEHViewerDownloadPerformance/Build/Products/Debug-iphonesimulator/MyEHViewer.app
+xcrun simctl launch --terminate-running-process booted com.ikode.MyEHViewer
+xcrun simctl io booted screenshot /tmp/MyEHViewerDownloadPerformance/smoke-after-launch.png
+```
+
+结果：安装和启动命令退出码均为 0，进程成功创建；等待启动完成后的截图非空，正常显示搜索首页和底部 Tab，没有启动崩溃或明显遮挡。
+
+本轮尚未在 Instruments 或 iPhone 14 真机上采集 Time Profiler、File Activity 和峰值内存，因此不把模拟器自动化结果表述为真机卡顿已完全消除。真机结论需要后续用五图库下载负载复测搜索滚动、Tab 切换、缓存管理、阅读器和暂停/恢复。

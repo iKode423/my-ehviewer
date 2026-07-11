@@ -14,7 +14,10 @@ final class CachedGalleryStoreTests: XCTestCase {
         let fixture = try makeGalleryFixture(in: environment.baseURL)
 
         try await store.prepareGallery(summary: fixture.summary)
+        XCTAssertTrue(store.hasStagedGallery(fixture.identifier))
+        XCTAssertFalse(store.hasCompleteStagedGallery(fixture.identifier))
         try await store.importCachedPage(fixture.input, identifier: fixture.identifier)
+        XCTAssertTrue(store.hasCompleteStagedGallery(fixture.identifier))
         try await store.finalizeGallery(fixture.identifier, requireComplete: false)
 
         let localFileURL = try XCTUnwrap(store.fileURL(for: fixture.imageURL))
@@ -27,6 +30,9 @@ final class CachedGalleryStoreTests: XCTestCase {
         XCTAssertEqual(galleryFolders.count, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: galleryFolders[0].appending(path: "manifest.json").path))
         XCTAssertEqual(store.summaries.first?.storageState, .persistent)
+        XCTAssertEqual(store.summaries.first?.isStaged, false)
+        XCTAssertFalse(store.hasStagedGallery(fixture.identifier))
+        XCTAssertFalse(store.hasCompleteStagedGallery(fixture.identifier))
     }
 
     /// Confirms durable staging counts as persistent before the gallery is finalized.
@@ -41,9 +47,292 @@ final class CachedGalleryStoreTests: XCTestCase {
 
         try await store.prepareGallery(summary: fixture.summary)
         XCTAssertEqual(store.summaries.first?.storageState, .cacheOnly)
+        XCTAssertEqual(store.summaries.first?.isStaged, true)
+        XCTAssertEqual(store.summaries.first?.isStagedComplete, false)
 
         try await store.importCachedPage(fixture.input, identifier: fixture.identifier)
         XCTAssertEqual(store.summaries.first?.storageState, .persistent)
+        XCTAssertEqual(store.summaries.first?.isStaged, true)
+        XCTAssertEqual(store.summaries.first?.isStagedComplete, true)
+        store.markDownloadUnavailable(
+            fixture.identifier,
+            title: fixture.summary.title,
+            thumbnailURL: fixture.summary.thumbnailURL,
+            totalPageCount: 1
+        )
+        XCTAssertEqual(store.summaries.first?.isDownloadUnavailable, true)
+        XCTAssertEqual(store.summaries.first?.needsDownloadResume, true)
+        await store.refresh()
+    }
+
+    /// Confirms out-of-order concurrent page commits merge into the latest manifest.
+    func testConcurrentDownloadedPagesKeepEveryManifestEntry() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+        let commitGate = PageCommitGate(expectedPageCount: 3)
+        let store = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL,
+            beforePageCommit: { pageNumber in
+                await commitGate.wait(pageNumber: pageNumber)
+            }
+        )
+        let summary = CachedGallerySummary(
+            galleryIdentifier: fixture.identifier,
+            title: fixture.summary.title,
+            thumbnailURL: fixture.summary.thumbnailURL,
+            cachedPageCount: 0,
+            totalPageCount: 3,
+            byteCount: 0,
+            updatedAt: Date(),
+            pageRecords: []
+        )
+        try await store.prepareGallery(summary: summary)
+
+        let tasks = (1...3).map { pageNumber in
+            Task {
+                let pageURL = URL(string: "https://e-hentai.org/s/page-token/42-\(pageNumber)")!
+                let imageURL = URL(string: "https://example.com/image-\(pageNumber).webp")!
+                try await store.saveDownloadedPage(
+                    Data("page-\(pageNumber)".utf8),
+                    requestedURL: imageURL,
+                    responseURL: imageURL,
+                    context: ImageCacheContext(
+                        galleryIdentifier: fixture.identifier,
+                        galleryTitle: summary.title,
+                        pageNumber: pageNumber,
+                        pageURL: pageURL,
+                        totalPageCount: 3,
+                        thumbnailURL: summary.thumbnailURL
+                    )
+                )
+            }
+        }
+
+        await commitGate.waitUntilAllPagesArrive()
+        for pageNumber in [3, 2, 1] {
+            await commitGate.release(pageNumber: pageNumber)
+        }
+        for task in tasks {
+            try await task.value
+        }
+
+        XCTAssertEqual(store.summaries.first?.pageRecords.map(\.pageNumber), [1, 2, 3])
+        try await store.finalizeGallery(fixture.identifier, requireComplete: true)
+
+        let reloadedStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        XCTAssertEqual(reloadedStore.summaries.first?.pageRecords.map(\.pageNumber), [1, 2, 3])
+        let galleryFolder = try XCTUnwrap(
+            FileManager.default.contentsOfDirectory(
+                at: environment.rootURL,
+                includingPropertiesForKeys: nil
+            ).first
+        )
+        let storedPageNames = try FileManager.default.contentsOfDirectory(
+            at: galleryFolder,
+            includingPropertiesForKeys: nil
+        )
+        .map(\.lastPathComponent)
+        .filter { $0 != "manifest.json" }
+        XCTAssertEqual(storedPageNames.sorted(), ["0001.webp", "0002.webp", "0003.webp"])
+    }
+
+    /// Confirms a queued note write cannot be overwritten by a concurrent page commit.
+    func testNoteMutationSurvivesConcurrentPageCommit() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+        let commitGate = PageCommitGate(expectedPageCount: 1)
+        let store = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL,
+            beforePageCommit: { pageNumber in
+                await commitGate.wait(pageNumber: pageNumber)
+            }
+        )
+        try await store.prepareGallery(summary: fixture.summary)
+        let pageTask = Task {
+            try await store.saveDownloadedPage(
+                fixture.data,
+                requestedURL: fixture.imageURL,
+                responseURL: fixture.imageURL,
+                context: fixture.context
+            )
+        }
+
+        await commitGate.waitUntilAllPagesArrive()
+        store.setNote("Keep this note", for: fixture.identifier)
+        await commitGate.release(pageNumber: 1)
+        try await pageTask.value
+        try await store.finalizeGallery(fixture.identifier, requireComplete: true)
+
+        let reloadedStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        XCTAssertEqual(reloadedStore.note(for: fixture.identifier), "Keep this note")
+    }
+
+    /// Confirms a note queued after durable preparation survives before its projection appears.
+    func testNoteSetBeforePreparedProjectionPersists() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+        let projectionGate = OneShotAsyncGate()
+        let store = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL,
+            beforePreparationProjection: {
+                await projectionGate.suspendOnce()
+            }
+        )
+        let preparationTask = Task {
+            try await store.prepareGallery(summary: fixture.summary)
+        }
+
+        await projectionGate.waitUntilSuspended()
+        store.setNote("Queued before projection", for: fixture.identifier)
+        await projectionGate.release()
+        try await preparationTask.value
+        try await store.importCachedPage(fixture.input, identifier: fixture.identifier)
+        try await store.finalizeGallery(fixture.identifier, requireComplete: true)
+
+        let reloadedStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        XCTAssertEqual(reloadedStore.note(for: fixture.identifier), "Queued before projection")
+    }
+
+    /// Confirms downloaded pages update only their lookup keys until summaries are read.
+    func testDownloadedPageCommitAvoidsFullGalleryProjectionRebuild() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+        var fullProjectionPageCounts: [Int] = []
+        let store = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL,
+            onFullProjectionRebuild: { pageCount in
+                fullProjectionPageCounts.append(pageCount)
+            }
+        )
+        let summary = CachedGallerySummary(
+            galleryIdentifier: fixture.identifier,
+            title: fixture.summary.title,
+            thumbnailURL: fixture.summary.thumbnailURL,
+            cachedPageCount: 0,
+            totalPageCount: 3,
+            byteCount: 0,
+            updatedAt: Date(),
+            pageRecords: []
+        )
+        try await store.prepareGallery(summary: summary)
+        XCTAssertEqual(fullProjectionPageCounts, [0])
+
+        for pageNumber in 1...3 {
+            let pageURL = URL(string: "https://e-hentai.org/s/page-token/42-\(pageNumber)")!
+            let imageURL = URL(string: "https://example.com/image-\(pageNumber).webp")!
+            try await store.saveDownloadedPage(
+                Data("page-\(pageNumber)".utf8),
+                requestedURL: imageURL,
+                responseURL: imageURL,
+                context: ImageCacheContext(
+                    galleryIdentifier: fixture.identifier,
+                    galleryTitle: summary.title,
+                    pageNumber: pageNumber,
+                    pageURL: pageURL,
+                    totalPageCount: 3,
+                    thumbnailURL: summary.thumbnailURL
+                )
+            )
+            XCTAssertEqual(store.pageRecord(for: fixture.identifier, pageNumber: pageNumber)?.imageURL, imageURL)
+        }
+
+        XCTAssertEqual(fullProjectionPageCounts, [0])
+        XCTAssertEqual(store.summaries.first?.pageRecords.map(\.pageNumber), [1, 2, 3])
+        XCTAssertEqual(store.summaries.first?.isStaged, true)
+        XCTAssertEqual(fullProjectionPageCounts, [0])
+        XCTAssertTrue(store.hasCompleteStagedGallery(fixture.identifier))
+    }
+
+    /// Confirms noncontiguous page numbers cannot satisfy durable completeness.
+    func testFinalizeRejectsNoncontiguousPageNumbersWithMatchingCount() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+        let store = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        let summary = CachedGallerySummary(
+            galleryIdentifier: fixture.identifier,
+            title: fixture.summary.title,
+            thumbnailURL: fixture.summary.thumbnailURL,
+            cachedPageCount: 0,
+            totalPageCount: 2,
+            byteCount: 0,
+            updatedAt: Date(),
+            pageRecords: []
+        )
+        try await store.prepareGallery(summary: summary)
+        for pageNumber in [2, 3] {
+            let imageURL = URL(string: "https://example.com/noncontiguous-\(pageNumber).webp")!
+            try await store.saveDownloadedPage(
+                Data("page-\(pageNumber)".utf8),
+                requestedURL: imageURL,
+                responseURL: imageURL,
+                context: ImageCacheContext(
+                    galleryIdentifier: fixture.identifier,
+                    galleryTitle: summary.title,
+                    pageNumber: pageNumber,
+                    pageURL: URL(string: "https://e-hentai.org/s/page-token/42-\(pageNumber)")!,
+                    totalPageCount: 2,
+                    thumbnailURL: nil
+                )
+            )
+        }
+
+        XCTAssertFalse(store.hasCompleteStagedGallery(fixture.identifier))
+        XCTAssertEqual(store.summaries.first?.isStagedComplete, false)
+        do {
+            try await store.finalizeGallery(fixture.identifier, requireComplete: true)
+            XCTFail("Expected noncontiguous staging to remain incomplete")
+        } catch CachedGalleryStoreError.incompleteGallery {
+        } catch {
+            XCTFail("Unexpected finalization error: \(error)")
+        }
+        XCTAssertTrue(store.hasStagedGallery(fixture.identifier))
+    }
+
+    /// Confirms concurrent retries treat an already finalized gallery as success.
+    func testConcurrentFinalizeRetriesAreIdempotent() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+        let store = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        try await store.prepareGallery(summary: fixture.summary)
+        try await store.importCachedPage(fixture.input, identifier: fixture.identifier)
+
+        let firstFinalization = Task {
+            try await store.finalizeGallery(fixture.identifier, requireComplete: true)
+        }
+        let secondFinalization = Task {
+            try await store.finalizeGallery(fixture.identifier, requireComplete: true)
+        }
+        try await firstFinalization.value
+        try await secondFinalization.value
+
+        XCTAssertFalse(store.hasStagedGallery(fixture.identifier))
+        XCTAssertEqual(store.summaries.first?.isStaged, false)
+        XCTAssertEqual(store.summaries.first?.cachedPageCount, 1)
     }
 
     /// Confirms an invalid interrupted folder is removed before a retry starts.
@@ -66,6 +355,8 @@ final class CachedGalleryStoreTests: XCTestCase {
             rootURL: environment.rootURL,
             stagingRootURL: environment.stagingURL
         )
+        XCTAssertEqual(store.summaries.first?.isStaged, true)
+        XCTAssertTrue(store.hasStagedGallery(fixture.identifier))
 
         try await store.prepareGallery(summary: fixture.summary)
 
@@ -108,6 +399,76 @@ final class CachedGalleryStoreTests: XCTestCase {
             includingPropertiesForKeys: nil
         )
         XCTAssertEqual(galleryFolders.count, 1)
+    }
+
+    /// Confirms an explicit refresh updates the actor path before a later delete command.
+    func testRefreshTracksExternallyRenamedGalleryForLaterMutation() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let store = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+        try await store.prepareGallery(summary: fixture.summary)
+        try await store.importCachedPage(fixture.input, identifier: fixture.identifier)
+        try await store.finalizeGallery(fixture.identifier, requireComplete: false)
+        let originalFolderURL = try XCTUnwrap(
+            FileManager.default.contentsOfDirectory(
+                at: environment.rootURL,
+                includingPropertiesForKeys: nil
+            ).first
+        )
+        let renamedFolderURL = environment.rootURL.appending(
+            path: "Renamed Gallery",
+            directoryHint: .isDirectory
+        )
+        try FileManager.default.moveItem(at: originalFolderURL, to: renamedFolderURL)
+
+        await store.refresh()
+        store.deleteGallery(fixture.identifier)
+        await store.refresh()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: renamedFolderURL.path))
+        XCTAssertNil(store.summaries.first { $0.galleryIdentifier == fixture.identifier })
+    }
+
+    /// Confirms a rejected refresh tombstone is issued again by the next refresh.
+    func testRefreshReissuesTombstoneAfterStaleProjectionWasRejected() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let refreshGate = OneShotAsyncGate()
+        let store = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL,
+            beforeRefreshProjection: {
+                await refreshGate.suspendOnce()
+            }
+        )
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+        try await store.prepareGallery(summary: fixture.summary)
+        try await store.importCachedPage(fixture.input, identifier: fixture.identifier)
+        try await store.finalizeGallery(fixture.identifier, requireComplete: true)
+        let galleryFolderURL = try XCTUnwrap(
+            FileManager.default.contentsOfDirectory(
+                at: environment.rootURL,
+                includingPropertiesForKeys: nil
+            ).first
+        )
+        try FileManager.default.removeItem(at: galleryFolderURL)
+        let staleRefreshTask = Task {
+            await store.refresh()
+        }
+
+        await refreshGate.waitUntilSuspended()
+        store.setNote("Reject the stale refresh", for: fixture.identifier)
+        await refreshGate.release()
+        await staleRefreshTask.value
+        XCTAssertNotNil(store.summaries.first { $0.galleryIdentifier == fixture.identifier })
+
+        await store.refresh()
+
+        XCTAssertNil(store.summaries.first { $0.galleryIdentifier == fixture.identifier })
     }
 
     /// Confirms permanent files take priority over duplicate disposable cache bytes.
@@ -372,4 +733,75 @@ private struct GalleryFixture {
     let summary: CachedGallerySummary
     let input: CachedGalleryPageInput
     let context: ImageCacheContext
+}
+
+private actor PageCommitGate {
+    private let expectedPageCount: Int
+    private var continuationsByPageNumber: [Int: CheckedContinuation<Void, Never>] = [:]
+    private var arrivalContinuation: CheckedContinuation<Void, Never>?
+
+    init(expectedPageCount: Int) {
+        self.expectedPageCount = expectedPageCount
+    }
+
+    /// Suspends a page until the test releases its commit in a chosen order.
+    func wait(pageNumber: Int) async {
+        await withCheckedContinuation { continuation in
+            continuationsByPageNumber[pageNumber] = continuation
+            if continuationsByPageNumber.count == expectedPageCount {
+                arrivalContinuation?.resume()
+                arrivalContinuation = nil
+            }
+        }
+    }
+
+    /// Waits until every concurrent page has reached the commit boundary.
+    func waitUntilAllPagesArrive() async {
+        guard continuationsByPageNumber.count < expectedPageCount else { return }
+        await withCheckedContinuation { continuation in
+            arrivalContinuation = continuation
+        }
+    }
+
+    /// Releases one page commit without changing the remaining waiters.
+    func release(pageNumber: Int) {
+        continuationsByPageNumber.removeValue(forKey: pageNumber)?.resume()
+    }
+}
+
+private actor OneShotAsyncGate {
+    private var isSuspended = false
+    private var isReleased = false
+    private var suspensionContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    /// Suspends the first caller until the test releases the boundary.
+    func suspendOnce() async {
+        guard !isReleased else { return }
+        isSuspended = true
+        suspensionContinuation?.resume()
+        suspensionContinuation = nil
+        await withCheckedContinuation { continuation in
+            if isReleased {
+                continuation.resume()
+            } else {
+                releaseContinuation = continuation
+            }
+        }
+    }
+
+    /// Waits until production code reaches the controlled boundary.
+    func waitUntilSuspended() async {
+        guard !isSuspended else { return }
+        await withCheckedContinuation { continuation in
+            suspensionContinuation = continuation
+        }
+    }
+
+    /// Releases the controlled boundary and disables later suspension.
+    func release() {
+        isReleased = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
 }

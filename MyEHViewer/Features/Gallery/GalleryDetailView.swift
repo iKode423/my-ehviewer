@@ -8,7 +8,7 @@ struct GalleryDetailView: View {
     @EnvironmentObject private var appNavigationStore: AppNavigationStore
     @StateObject private var siteCookieStore = SiteCookieStore.shared
     @StateObject private var imageCacheStore = ImageCacheStore.shared
-    @StateObject private var downloadManager = GalleryDownloadManager.shared
+    private let downloadManager = GalleryDownloadManager.shared
     @StateObject private var viewModel: GalleryDetailViewModel
     @State private var showsMetadata = false
     @State private var showsTags = false
@@ -447,11 +447,7 @@ struct GalleryDetailView: View {
     /// Shows cache/download progress for the current gallery.
     @ViewBuilder
     private func downloadProgress(for detail: EHGalleryDetail) -> some View {
-        if let progress = downloadManager.progress(for: detail.identifier), progress.downloadedPageCount > 0 || progress.isRunning {
-            Label(progress.displayText, systemImage: progress.isRunning ? "arrow.down.circle" : "checkmark.circle")
-                .font(.footnote)
-                .foregroundStyle(progress.isRunning ? Color.secondary : Color.green)
-        }
+        GalleryDownloadProgressView(galleryIdentifier: detail.identifier)
     }
 
     /// Shows one readable page thumbnail and opens it in the reader.
@@ -593,20 +589,56 @@ struct GalleryDetailView: View {
     @ViewBuilder
     private var downloadButton: some View {
         if let detail = viewModel.detail {
-            let progress = downloadManager.progress(for: detail.identifier)
-            Button {
+            GalleryDownloadToolbarButton(
+                galleryIdentifier: detail.identifier,
+                isDownloadAvailable: !detail.pageLinks.isEmpty
+            ) {
                 Task { await startDownload(detail) }
-            } label: {
-                if progress?.isRunning == true {
-                    Label(AppCopy.galleryDownloadQueued, systemImage: "arrow.down.circle")
-                } else if let progress, progress.totalPageCount > 0, progress.downloadedPageCount >= progress.totalPageCount {
-                    Label(AppCopy.galleryDownloadComplete, systemImage: "checkmark.circle")
-                } else {
-                    Label(AppCopy.galleryDownload, systemImage: "arrow.down.to.line")
-                }
             }
-            .disabled(progress?.isRunning == true || detail.pageLinks.isEmpty)
         }
+    }
+}
+
+/// Observes per-gallery progress without invalidating the surrounding page directory.
+private struct GalleryDownloadProgressView: View {
+    let galleryIdentifier: EHGalleryIdentifier
+    @ObservedObject private var downloadManager = GalleryDownloadManager.shared
+
+    var body: some View {
+        if let progress = downloadManager.progress(for: galleryIdentifier),
+           progress.downloadedPageCount > 0 || progress.isRunning {
+            Label(
+                progress.displayText,
+                systemImage: progress.isRunning ? "arrow.down.circle" : "checkmark.circle"
+            )
+            .font(.footnote)
+            .foregroundStyle(progress.isRunning ? Color.secondary : Color.green)
+        }
+    }
+}
+
+/// Observes toolbar state while the parent keeps ownership of the download command.
+private struct GalleryDownloadToolbarButton: View {
+    let galleryIdentifier: EHGalleryIdentifier
+    let isDownloadAvailable: Bool
+    let startDownload: () -> Void
+    @ObservedObject private var downloadManager = GalleryDownloadManager.shared
+
+    var body: some View {
+        let progress = downloadManager.progress(for: galleryIdentifier)
+
+        Button(action: startDownload) {
+            if progress?.isRunning == true {
+                Label(AppCopy.galleryDownloadQueued, systemImage: "arrow.down.circle")
+            } else if let progress,
+                      progress.totalPageCount > 0,
+                      progress.downloadedPageCount >= progress.totalPageCount {
+                Label(AppCopy.galleryDownloadComplete, systemImage: "checkmark.circle")
+            } else {
+                Label(AppCopy.galleryDownload, systemImage: "arrow.down.to.line")
+            }
+        }
+        .disabled(progress?.isRunning == true || !isDownloadAvailable)
     }
 }
 

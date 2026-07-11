@@ -430,7 +430,6 @@ private struct LocalDataTransferAlert: Identifiable {
 private struct ImageCacheManagementView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @StateObject private var imageCacheStore = ImageCacheStore.shared
-    @StateObject private var downloadManager = GalleryDownloadManager.shared
     @AppStorage(ContentSite.storageKey) private var contentSiteRaw = ContentSite.eHentai.rawValue
     @AppStorage("CacheManagement.layoutMode") private var layoutModeRaw = CollectionLayoutMode.list.rawValue
     @State private var galleryFilterText = ""
@@ -557,76 +556,19 @@ private struct ImageCacheManagementView: View {
     /// Shows the bulk download action and current aggregate download status.
     @ViewBuilder
     private var cacheDownloadControls: some View {
-        if downloadManager.aggregateProgress != nil || !unfinishedSummaries.isEmpty {
-            Section { cacheDownloadControlsContent }
-        }
+        CacheDownloadControlsView(
+            gallerySummaries: currentSiteGallerySummaries,
+            presentation: .listSection
+        )
     }
 
     /// Shows download controls without List section spacing in grid mode.
     @ViewBuilder
     private var cacheDownloadPanel: some View {
-        if downloadManager.aggregateProgress != nil || !unfinishedSummaries.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                cacheDownloadControlsContent
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.secondary.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        }
-    }
-
-    /// Builds the shared download button and aggregate status content.
-    @ViewBuilder
-    private var cacheDownloadControlsContent: some View {
-        Button {
-            if downloadManager.aggregateProgress == nil {
-                downloadManager.startUnfinishedDownloads(from: currentSiteGallerySummaries)
-            } else {
-                downloadManager.pauseAllDownloads()
-            }
-        } label: {
-            Label(cacheDownloadButtonTitle, systemImage: cacheDownloadButtonSystemImage)
-                .frame(minHeight: 44, alignment: .leading)
-        }
-
-        if let aggregateProgress = downloadManager.aggregateProgress {
-            VStack(alignment: .leading, spacing: 10) {
-                Label(AppCopy.cacheManagementProgressTitle, systemImage: "speedometer")
-                    .font(.headline)
-
-                ProgressView(value: aggregateProgress.progressFraction)
-                    .tint(.accentColor)
-
-                HStack {
-                    Text(aggregateProgress.progressText)
-                    Spacer()
-                    Text(aggregateProgress.speedText)
-                        .monospacedDigit()
-                }
-                .font(.subheadline)
-
-                HStack(spacing: 12) {
-                    Label(aggregateProgress.activeDownloadText, systemImage: "arrow.down")
-                    if aggregateProgress.queuedDownloadCount > 0 {
-                        Label(aggregateProgress.queuedDownloadText, systemImage: "clock")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .padding(.vertical, 6)
-        }
-    }
-
-    /// Returns the bulk download button title for the current queue state.
-    private var cacheDownloadButtonTitle: String {
-        downloadManager.aggregateProgress == nil ? AppCopy.cacheManagementStartUnfinished : AppCopy.cacheManagementPauseAllDownloads
-    }
-
-    /// Returns the bulk download button icon for the current queue state.
-    private var cacheDownloadButtonSystemImage: String {
-        downloadManager.aggregateProgress == nil ? "arrow.down.circle" : "pause.circle"
+        CacheDownloadControlsView(
+            gallerySummaries: currentSiteGallerySummaries,
+            presentation: .gridPanel
+        )
     }
 
     /// Renders one cached gallery summary row.
@@ -779,19 +721,102 @@ private struct ImageCacheManagementView: View {
         }
     }
 
-    private var unfinishedSummaries: [CachedGallerySummary] {
-        currentSiteGallerySummaries.filter { summary in
-            guard let totalPageCount = summary.totalPageCount else { return false }
-            return !summary.isDownloadUnavailable && summary.cachedPageCount < totalPageCount
-        }
-    }
-
     private var currentSite: ContentSite {
         ContentSite.resolved(rawValue: contentSiteRaw)
     }
 
     private var currentSiteGallerySummaries: [CachedGallerySummary] {
         imageCacheStore.gallerySummaries.filter { $0.galleryIdentifier.site == currentSite }
+    }
+}
+
+/// Observes queue progress without invalidating the surrounding cache collection.
+private struct CacheDownloadControlsView: View {
+    enum Presentation {
+        case listSection
+        case gridPanel
+    }
+
+    let gallerySummaries: [CachedGallerySummary]
+    let presentation: Presentation
+    @ObservedObject private var downloadManager = GalleryDownloadManager.shared
+
+    @ViewBuilder
+    var body: some View {
+        if downloadManager.aggregateProgress != nil || !unfinishedSummaries.isEmpty {
+            switch presentation {
+            case .listSection:
+                Section { controlsContent }
+            case .gridPanel:
+                VStack(alignment: .leading, spacing: 10) {
+                    controlsContent
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.secondary.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+        }
+    }
+
+    /// Builds the unchanged queue command and aggregate progress content.
+    @ViewBuilder
+    private var controlsContent: some View {
+        Button {
+            if downloadManager.aggregateProgress == nil {
+                downloadManager.startUnfinishedDownloads(from: gallerySummaries)
+            } else {
+                downloadManager.pauseAllDownloads()
+            }
+        } label: {
+            Label(downloadButtonTitle, systemImage: downloadButtonSystemImage)
+                .frame(minHeight: 44, alignment: .leading)
+        }
+
+        if let aggregateProgress = downloadManager.aggregateProgress {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(AppCopy.cacheManagementProgressTitle, systemImage: "speedometer")
+                    .font(.headline)
+
+                ProgressView(value: aggregateProgress.progressFraction)
+                    .tint(.accentColor)
+
+                HStack {
+                    Text(aggregateProgress.progressText)
+                    Spacer()
+                    Text(aggregateProgress.speedText)
+                        .monospacedDigit()
+                }
+                .font(.subheadline)
+
+                HStack(spacing: 12) {
+                    Label(aggregateProgress.activeDownloadText, systemImage: "arrow.down")
+                    if aggregateProgress.queuedDownloadCount > 0 {
+                        Label(aggregateProgress.queuedDownloadText, systemImage: "clock")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    /// Returns the bulk download button title for the current queue state.
+    private var downloadButtonTitle: String {
+        downloadManager.aggregateProgress == nil
+            ? AppCopy.cacheManagementStartUnfinished
+            : AppCopy.cacheManagementPauseAllDownloads
+    }
+
+    /// Returns the bulk download button icon for the current queue state.
+    private var downloadButtonSystemImage: String {
+        downloadManager.aggregateProgress == nil ? "arrow.down.circle" : "pause.circle"
+    }
+
+    /// Returns galleries that still need page downloads or staged finalization.
+    private var unfinishedSummaries: [CachedGallerySummary] {
+        gallerySummaries.filter(\.needsDownloadResume)
     }
 }
 

@@ -129,6 +129,12 @@ private struct HitomiSearchIDPage {
     let totalCount: Int?
 }
 
+private struct HitomiGalleryInfoRequest {
+    let id: UUID
+    let task: Task<Void, Never>
+    var waiters: [UUID: CheckedContinuation<HitomiGalleryInfo, Error>]
+}
+
 @MainActor
 final class HitomiDataSource {
     private let client: EHDataHTTPClient
@@ -147,6 +153,10 @@ final class HitomiDataSource {
     private let previewPageBatchSize = 20
     private var galleriesIndexVersion: String?
     private var imageContext: HitomiImageContext?
+    private var galleryInfoByID: [Int: HitomiGalleryInfo] = [:]
+    private var galleryInfoCacheOrder: [Int] = []
+    private var galleryInfoRequestsByID: [Int: HitomiGalleryInfoRequest] = [:]
+    private let galleryInfoCacheLimit = 8
 
     /// Creates a Hitomi data source backed by the shared HTTP client.
     init(
@@ -428,8 +438,14 @@ final class HitomiDataSource {
     private func loadGalleryInfos(for galleryIDs: [Int]) async throws -> [HitomiGalleryInfo] {
         var details: [HitomiGalleryInfo] = []
         for galleryID in galleryIDs {
-            if let info = try? await galleryInfo(for: galleryID) {
+            try Task.checkCancellation()
+            do {
+                let info = try await galleryInfo(for: galleryID)
                 details.append(info)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                continue
             }
         }
         return details
@@ -445,15 +461,131 @@ final class HitomiDataSource {
 
     /// Loads and parses one gallery info script by id.
     private func galleryInfo(for galleryID: Int) async throws -> HitomiGalleryInfo {
+        if let cachedInfo = galleryInfoByID[galleryID] {
+            touchGalleryInfoCache(galleryID)
+            return cachedInfo
+        }
+        let waiterID = UUID()
+        let info = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                registerGalleryInfoWaiter(
+                    continuation,
+                    galleryID: galleryID,
+                    waiterID: waiterID
+                )
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.cancelGalleryInfoWaiter(galleryID: galleryID, waiterID: waiterID)
+            }
+        }
+        try Task.checkCancellation()
+        return info
+    }
+
+    /// Joins one caller to a shared request while preserving independent cancellation.
+    private func registerGalleryInfoWaiter(
+        _ continuation: CheckedContinuation<HitomiGalleryInfo, Error>,
+        galleryID: Int,
+        waiterID: UUID
+    ) {
+        if var request = galleryInfoRequestsByID[galleryID] {
+            request.waiters[waiterID] = continuation
+            galleryInfoRequestsByID[galleryID] = request
+            return
+        }
+
+        let requestID = UUID()
+        let client = client
         let url = galleryInfoBaseURL.appending(path: "\(galleryID).js")
-        let response = try await client.get(url)
-        let json = response.body
-            .replacingOccurrences(of: #"^\s*var\s+galleryinfo\s*=\s*"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #";?\s*$"#, with: "", options: .regularExpression)
+        let task = Task { @MainActor [weak self] in
+            let result: Result<HitomiGalleryInfo, Error>
+            do {
+                let response = try await client.get(url)
+                result = Result { try Self.decodeGalleryInfo(from: response.body) }
+            } catch {
+                result = .failure(error)
+            }
+            self?.completeGalleryInfoRequest(
+                galleryID: galleryID,
+                requestID: requestID,
+                result: result
+            )
+        }
+        galleryInfoRequestsByID[galleryID] = HitomiGalleryInfoRequest(
+            id: requestID,
+            task: task,
+            waiters: [waiterID: continuation]
+        )
+    }
+
+    /// Stops one waiter and cancels the shared request only after its last caller leaves.
+    private func cancelGalleryInfoWaiter(galleryID: Int, waiterID: UUID) {
+        guard var request = galleryInfoRequestsByID[galleryID],
+              let continuation = request.waiters.removeValue(forKey: waiterID)
+        else {
+            return
+        }
+
+        continuation.resume(throwing: CancellationError())
+        if request.waiters.isEmpty {
+            galleryInfoRequestsByID[galleryID] = nil
+            request.task.cancel()
+        } else {
+            galleryInfoRequestsByID[galleryID] = request
+        }
+    }
+
+    /// Completes only the waiters that belong to the matching shared request generation.
+    private func completeGalleryInfoRequest(
+        galleryID: Int,
+        requestID: UUID,
+        result: Result<HitomiGalleryInfo, Error>
+    ) {
+        guard let request = galleryInfoRequestsByID[galleryID], request.id == requestID else { return }
+        galleryInfoRequestsByID[galleryID] = nil
+        if case .success(let info) = result {
+            cacheGalleryInfo(info, for: galleryID)
+        }
+        for continuation in request.waiters.values {
+            continuation.resume(with: result)
+        }
+    }
+
+    /// Decodes the JavaScript assignment returned by Hitomi into gallery metadata.
+    nonisolated private static func decodeGalleryInfo(from body: String) throws -> HitomiGalleryInfo {
+        let json = body
+            .replacingOccurrences(
+                of: #"^\s*var\s+galleryinfo\s*=\s*"#,
+                with: "",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #";?\s*$"#,
+                with: "",
+                options: .regularExpression
+            )
         guard let jsonData = json.data(using: .utf8) else {
             throw EHNetworkError.undecodableBody
         }
         return try JSONDecoder().decode(HitomiGalleryInfo.self, from: jsonData)
+    }
+
+    /// Stores recently used gallery metadata in a small memory-only cache.
+    private func cacheGalleryInfo(_ info: HitomiGalleryInfo, for galleryID: Int) {
+        galleryInfoByID[galleryID] = info
+        touchGalleryInfoCache(galleryID)
+        while galleryInfoCacheOrder.count > galleryInfoCacheLimit {
+            let evictedID = galleryInfoCacheOrder.removeFirst()
+            galleryInfoByID[evictedID] = nil
+        }
+    }
+
+    /// Moves one gallery to the most-recently-used end of the cache order.
+    private func touchGalleryInfoCache(_ galleryID: Int) {
+        galleryInfoCacheOrder.removeAll { $0 == galleryID }
+        galleryInfoCacheOrder.append(galleryID)
     }
 
     /// Converts one Hitomi gallery into a shared detail model.
@@ -461,7 +593,8 @@ final class HitomiDataSource {
         let galleryID = Int(info.id) ?? 0
         let identifier = EHGalleryIdentifier(gid: galleryID, token: "hitomi", site: .hitomi)
         let pageLinks = try await pageLinks(from: info, startIndex: 0, limit: previewPageBatchSize)
-
+        let relatedGalleries = try await relatedSearchResults(from: info)
+        cacheGalleryInfo(info, for: galleryID)
         return EHGalleryDetail(
             identifier: identifier,
             title: info.title,
@@ -476,7 +609,7 @@ final class HitomiDataSource {
             pageLinks: pageLinks,
             thumbnailPageURLs: [],
             pageCount: info.files.count,
-            relatedGalleries: try await relatedSearchResults(from: info)
+            relatedGalleries: relatedGalleries
         )
     }
 

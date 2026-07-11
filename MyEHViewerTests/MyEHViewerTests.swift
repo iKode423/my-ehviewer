@@ -280,6 +280,217 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertEqual(page.imageURL.absoluteString, "https://a1.gold-usergeneratedcontent.net/1783501202/\(hashCode)/\(hash).avif")
     }
 
+    /// Confirms concurrent page batches share one gallery info request and later calls reuse its cached result.
+    @MainActor
+    func testHitomiConcurrentPageBatchesShareGalleryInfoRequest() async throws {
+        let galleryID = 4_037_854
+        let galleryURL = try XCTUnwrap(URL(string: "https://hitomi.la/galleries/\(galleryID).html"))
+        let client = HitomiMockHTTPClient(
+            indexVersion: "1783485646",
+            galleryInfos: [
+                galleryID: Self.hitomiGalleryInfoJSON(id: galleryID, title: "Shared Gallery", fileCount: 3)
+            ],
+            galleryInfoDelayNanoseconds: 50_000_000
+        )
+        let dataSource = HitomiDataSource(client: client) { _, _ in Data() }
+
+        let firstTask = Task { @MainActor in
+            try await dataSource.galleryPageLinks(from: galleryURL, startPage: 1, limit: 1)
+        }
+        let secondTask = Task { @MainActor in
+            try await dataSource.galleryPageLinks(from: galleryURL, startPage: 2, limit: 1)
+        }
+        let thirdTask = Task { @MainActor in
+            try await dataSource.galleryPageLinks(from: galleryURL, startPage: 3, limit: 1)
+        }
+
+        let firstBatch = try await firstTask.value
+        let secondBatch = try await secondTask.value
+        let thirdBatch = try await thirdTask.value
+        let cachedBatch = try await dataSource.galleryPageLinks(from: galleryURL, startPage: 1, limit: 1)
+
+        XCTAssertEqual(firstBatch.map(\.pageNumber), [1])
+        XCTAssertEqual(secondBatch.map(\.pageNumber), [2])
+        XCTAssertEqual(thirdBatch.map(\.pageNumber), [3])
+        XCTAssertEqual(cachedBatch.map(\.pageNumber), [1])
+        XCTAssertEqual(client.requestedGalleryInfoIDs, [galleryID])
+    }
+
+    /// Confirms cancelling one caller does not wait for or cancel another caller's shared request.
+    @MainActor
+    func testHitomiSharedGalleryInfoRequestSupportsIndependentCancellation() async throws {
+        let galleryID = 4_037_854
+        let galleryURL = try XCTUnwrap(URL(string: "https://hitomi.la/galleries/\(galleryID).html"))
+        let client = HitomiMockHTTPClient(
+            indexVersion: "1783485646",
+            galleryInfos: [
+                galleryID: Self.hitomiGalleryInfoJSON(id: galleryID, title: "Shared Gallery", fileCount: 2)
+            ],
+            galleryInfoDelayNanoseconds: 200_000_000
+        )
+        let dataSource = HitomiDataSource(client: client) { _, _ in Data() }
+        let cancelledTask = Task { @MainActor in
+            do {
+                _ = try await dataSource.galleryPageLinks(from: galleryURL, startPage: 1, limit: 1)
+                return false
+            } catch is CancellationError {
+                return true
+            } catch {
+                return false
+            }
+        }
+        let requestDeadline = Date().addingTimeInterval(1)
+        while client.requestedGalleryInfoIDs.isEmpty, Date() < requestDeadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(client.requestedGalleryInfoIDs, [galleryID])
+        let remainingTask = Task { @MainActor in
+            try await dataSource.galleryPageLinks(from: galleryURL, startPage: 2, limit: 1)
+        }
+
+        await Task.yield()
+        cancelledTask.cancel()
+
+        let wasCancelled = await cancelledTask.value
+        let remainingBatch = try await remainingTask.value
+        XCTAssertTrue(wasCancelled)
+        XCTAssertEqual(remainingBatch.map(\.pageNumber), [2])
+        XCTAssertEqual(client.requestedGalleryInfoIDs, [galleryID])
+    }
+
+    /// Confirms a failed shared gallery info request is removed so a later request can retry.
+    @MainActor
+    func testHitomiFailedGalleryInfoRequestIsNotCached() async throws {
+        let galleryID = 4_037_854
+        let galleryURL = try XCTUnwrap(URL(string: "https://hitomi.la/galleries/\(galleryID).html"))
+        let client = HitomiMockHTTPClient(
+            indexVersion: "1783485646",
+            galleryInfos: [
+                galleryID: Self.hitomiGalleryInfoJSON(id: galleryID, title: "Retry Gallery")
+            ],
+            galleryInfoDelayNanoseconds: 50_000_000,
+            galleryInfoFailuresRemainingByID: [galleryID: 1]
+        )
+        let dataSource = HitomiDataSource(client: client) { _, _ in Data() }
+
+        let firstTask = Task { @MainActor in
+            do {
+                _ = try await dataSource.galleryPageLinks(from: galleryURL, startPage: 1, limit: 1)
+                return false
+            } catch {
+                return true
+            }
+        }
+        let secondTask = Task { @MainActor in
+            do {
+                _ = try await dataSource.galleryPageLinks(from: galleryURL, startPage: 1, limit: 1)
+                return false
+            } catch {
+                return true
+            }
+        }
+
+        let firstFailed = await firstTask.value
+        let secondFailed = await secondTask.value
+        let retriedBatch = try await dataSource.galleryPageLinks(from: galleryURL, startPage: 1, limit: 1)
+
+        XCTAssertTrue(firstFailed)
+        XCTAssertTrue(secondFailed)
+        XCTAssertEqual(retriedBatch.map(\.pageNumber), [1])
+        XCTAssertEqual(client.requestedGalleryInfoIDs, [galleryID, galleryID])
+    }
+
+    /// Confirms the gallery info cache evicts older entries after reaching its fixed capacity.
+    @MainActor
+    func testHitomiGalleryInfoCacheHasBoundedCapacity() async throws {
+        let galleryIDs = Array(4_037_850...4_037_858)
+        let galleryInfos = Dictionary(uniqueKeysWithValues: galleryIDs.map { galleryID in
+            (galleryID, Self.hitomiGalleryInfoJSON(id: galleryID, title: "Gallery \(galleryID)"))
+        })
+        let client = HitomiMockHTTPClient(indexVersion: "1783485646", galleryInfos: galleryInfos)
+        let dataSource = HitomiDataSource(client: client) { _, _ in Data() }
+
+        for galleryID in galleryIDs {
+            let galleryURL = try XCTUnwrap(URL(string: "https://hitomi.la/galleries/\(galleryID).html"))
+            _ = try await dataSource.galleryPageLinks(from: galleryURL, startPage: 1, limit: 1)
+        }
+
+        let firstGalleryID = try XCTUnwrap(galleryIDs.first)
+        let firstGalleryURL = try XCTUnwrap(URL(string: "https://hitomi.la/galleries/\(firstGalleryID).html"))
+        _ = try await dataSource.galleryPageLinks(from: firstGalleryURL, startPage: 1, limit: 1)
+
+        XCTAssertEqual(client.requestedGalleryInfoIDs.count, galleryIDs.count + 1)
+        XCTAssertEqual(client.requestedGalleryInfoIDs.filter { $0 == firstGalleryID }.count, 2)
+    }
+
+    /// Confirms related galleries cannot evict the main detail before its page batches are requested.
+    @MainActor
+    func testHitomiDetailKeepsMainGalleryInfoAfterLoadingManyRelatedGalleries() async throws {
+        let galleryID = 4_037_854
+        let relatedIDs = Array(4_037_855...4_037_863)
+        let galleryInfos = Dictionary(uniqueKeysWithValues: relatedIDs.map { relatedID in
+            (relatedID, Self.hitomiGalleryInfoJSON(id: relatedID, title: "Related \(relatedID)"))
+        }).merging([
+            galleryID: Self.hitomiGalleryInfoJSON(
+                id: galleryID,
+                title: "Main Gallery",
+                fileCount: 2,
+                relatedIDs: relatedIDs
+            )
+        ]) { current, _ in current }
+        let client = HitomiMockHTTPClient(indexVersion: "1783485646", galleryInfos: galleryInfos)
+        let dataSource = HitomiDataSource(client: client) { _, _ in Data() }
+        let galleryURL = try XCTUnwrap(URL(string: "https://hitomi.la/galleries/\(galleryID).html"))
+
+        _ = try await dataSource.galleryDetail(from: galleryURL)
+        let pageLinks = try await dataSource.galleryPageLinks(from: galleryURL, startPage: 2, limit: 1)
+
+        XCTAssertEqual(pageLinks.map(\.pageNumber), [2])
+        XCTAssertEqual(client.requestedGalleryInfoIDs.filter { $0 == galleryID }.count, 1)
+    }
+
+    /// Confirms cancelling related gallery loading stops the remaining gallery info requests.
+    @MainActor
+    func testHitomiCancellationStopsRemainingGalleryInfoBatchRequests() async throws {
+        let galleryID = 4_037_854
+        let relatedIDs = Array(4_037_855...4_037_858)
+        let galleryInfos = Dictionary(uniqueKeysWithValues: relatedIDs.map { relatedID in
+            (relatedID, Self.hitomiGalleryInfoJSON(id: relatedID, title: "Related \(relatedID)"))
+        }).merging([
+            galleryID: Self.hitomiGalleryInfoJSON(
+                id: galleryID,
+                title: "Main Gallery",
+                relatedIDs: relatedIDs
+            )
+        ]) { current, _ in current }
+        let client = HitomiMockHTTPClient(
+            indexVersion: "1783485646",
+            galleryInfos: galleryInfos,
+            galleryInfoDelayNanoseconds: 50_000_000
+        )
+        let dataSource = HitomiDataSource(client: client) { _, _ in Data() }
+        let galleryURL = try XCTUnwrap(URL(string: "https://hitomi.la/galleries/\(galleryID).html"))
+        let task = Task { @MainActor in
+            try await dataSource.galleryDetail(from: galleryURL)
+        }
+        let deadline = Date().addingTimeInterval(1)
+        while client.requestedGalleryInfoIDs.count < 2, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(client.requestedGalleryInfoIDs.count, 2)
+
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("Expected gallery detail cancellation.")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("Unexpected cancellation error: \(error.localizedDescription)")
+        }
+        try? await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(client.requestedGalleryInfoIDs.count, 2)
+    }
 
     /// Confirms reader preference labels stay localized for settings and toolbar menus.
     func testReaderPreferenceCopy() {
@@ -525,6 +736,578 @@ final class MyEHViewerTests: XCTestCase {
 
         XCTAssertEqual(store.data(for: legacyURL), imageData)
         XCTAssertTrue(store.containsData(for: legacyURL))
+    }
+
+    /// Confirms a full clear invalidates an async save that already wrote its bytes.
+    @MainActor
+    func testImageCacheClearPreventsSuspendedSaveFromRestoringCache() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+        let gate = ImageCacheWriteGate()
+        let store = ImageCacheStore(
+            directoryURL: directoryURL,
+            afterCacheFileWrite: { await gate.suspend() }
+        )
+        let imageURL = URL(string: "https://example.test/suspended-clear.webp")!
+        let saveTask = Task {
+            await store.saveAsync(
+                Data([0x01, 0x02, 0x03]),
+                for: imageURL,
+                responseURL: imageURL,
+                context: nil
+            )
+        }
+
+        await gate.waitUntilSuspended()
+        store.clear()
+        await gate.resume()
+        await saveTask.value
+
+        XCTAssertNil(store.data(for: imageURL))
+        XCTAssertEqual(store.snapshot, .empty)
+    }
+
+    /// Confirms clearing one gallery invalidates only that gallery's suspended save.
+    @MainActor
+    func testImageCacheGalleryClearPreventsSuspendedSaveFromRestoringGallery() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+        let gate = ImageCacheWriteGate()
+        let store = ImageCacheStore(
+            directoryURL: directoryURL,
+            afterCacheFileWrite: { await gate.suspend() }
+        )
+        let identifier = EHGalleryIdentifier(gid: 710, token: "abcdef1234")
+        let imageURL = URL(string: "https://example.test/suspended-gallery-clear.webp")!
+        let saveTask = Task {
+            await store.saveAsync(
+                Data([0x04, 0x05, 0x06]),
+                for: imageURL,
+                responseURL: imageURL,
+                context: ImageCacheContext(
+                    galleryIdentifier: identifier,
+                    galleryTitle: "Suspended Gallery",
+                    pageNumber: 1,
+                    pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/710-1")!,
+                    totalPageCount: 1,
+                    thumbnailURL: nil
+                )
+            )
+        }
+
+        await gate.waitUntilSuspended()
+        store.clearGallery(identifier)
+        await gate.resume()
+        await saveTask.value
+
+        XCTAssertNil(store.data(for: imageURL))
+        XCTAssertNil(store.gallerySummary(for: identifier))
+        XCTAssertEqual(store.snapshot, .empty)
+    }
+
+    /// Confirms a replacement save overwrites bytes owned by a stale suspended save after a clear.
+    @MainActor
+    func testImageCacheGalleryClearAllowsReplacementSaveToOverwriteStaleBytes() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+        let gate = SelectiveImageCacheWriteGate()
+        let store = ImageCacheStore(
+            directoryURL: directoryURL,
+            afterCacheFileWrite: { await gate.suspendFirstInvocation() }
+        )
+        let identifier = EHGalleryIdentifier(gid: 711, token: "abcdef1234")
+        let imageURL = URL(string: "https://example.test/replacement-gallery-clear.webp")!
+        let context = ImageCacheContext(
+            galleryIdentifier: identifier,
+            galleryTitle: "Replacement Gallery",
+            pageNumber: 1,
+            pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/711-1")!,
+            totalPageCount: 1,
+            thumbnailURL: nil
+        )
+        let staleTask = Task {
+            await store.saveAsync(
+                Data([0x01, 0x02, 0x03]),
+                for: imageURL,
+                responseURL: imageURL,
+                context: context
+            )
+        }
+
+        await gate.waitUntilFirstInvocationSuspends()
+        store.clearGallery(identifier)
+        await store.saveAsync(
+            Data([0x09, 0x08, 0x07]),
+            for: imageURL,
+            responseURL: imageURL,
+            context: context
+        )
+        await gate.resumeFirstInvocation()
+        await staleTask.value
+
+        XCTAssertEqual(store.data(for: imageURL), Data([0x09, 0x08, 0x07]))
+        XCTAssertEqual(store.gallerySummary(for: identifier)?.cachedPageCount, 1)
+    }
+
+    /// Confirms the newest same-key save owns bytes, page records, and digest reuse.
+    @MainActor
+    func testImageCacheNewestSameKeySaveRejectsOlderLateCommit() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+        let gate = SelectiveImageCacheWriteGate()
+        let store = ImageCacheStore(
+            directoryURL: directoryURL,
+            afterCacheFileWrite: { await gate.suspendFirstInvocation() }
+        )
+        let identifier = EHGalleryIdentifier(gid: 712, token: "abcdef1234")
+        let imageURL = URL(string: "https://example.test/same-key-race.webp")!
+        let olderData = Data([0x01, 0x02, 0x03])
+        let newerData = Data([0x09, 0x08, 0x07])
+        let olderTask = Task {
+            await store.saveAsync(
+                olderData,
+                for: imageURL,
+                responseURL: imageURL,
+                context: ImageCacheContext(
+                    galleryIdentifier: identifier,
+                    galleryTitle: "Same Key Gallery",
+                    pageNumber: 1,
+                    pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/712-1")!,
+                    totalPageCount: 2,
+                    thumbnailURL: nil
+                )
+            )
+        }
+
+        await gate.waitUntilFirstInvocationSuspends()
+        await store.saveAsync(
+            newerData,
+            for: imageURL,
+            responseURL: imageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: identifier,
+                galleryTitle: "Same Key Gallery",
+                pageNumber: 2,
+                pageURL: URL(string: "https://e-hentai.org/s/ddddeeeeff/712-2")!,
+                totalPageCount: 2,
+                thumbnailURL: nil
+            )
+        )
+        await gate.resumeFirstInvocation()
+        await olderTask.value
+
+        XCTAssertEqual(store.data(for: imageURL), newerData)
+        XCTAssertNil(store.pageRecord(for: identifier, pageNumber: 1))
+        XCTAssertEqual(store.pageRecord(for: identifier, pageNumber: 2)?.imageURL, imageURL)
+
+        let olderAliasURL = URL(string: "https://example.test/same-key-older-content.webp")!
+        await store.saveAsync(
+            olderData,
+            for: olderAliasURL,
+            responseURL: olderAliasURL,
+            context: nil
+        )
+
+        XCTAssertEqual(store.data(for: imageURL), newerData)
+        XCTAssertEqual(store.data(for: olderAliasURL), olderData)
+    }
+
+    /// Confirms synchronous replacement keeps file bytes and digest reuse aligned.
+    @MainActor
+    func testImageCacheSynchronousSameURLReplacementUpdatesBytesAndDigest() {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+        let store = ImageCacheStore(directoryURL: directoryURL)
+        let imageURL = URL(string: "https://example.test/synchronous-replacement.webp")!
+        let duplicateURL = URL(string: "https://example.test/synchronous-duplicate.webp")!
+        let originalData = Data([0x01, 0x02, 0x03])
+        let replacementData = Data([0x09, 0x08, 0x07])
+
+        store.save(originalData, for: imageURL)
+        store.save(replacementData, for: imageURL)
+        store.save(replacementData, for: duplicateURL)
+
+        XCTAssertEqual(store.data(for: imageURL), replacementData)
+        XCTAssertEqual(store.data(for: duplicateURL), replacementData)
+    }
+
+    /// Confirms an older successful write can commit after a newer same-key write fails.
+    @MainActor
+    func testImageCacheNewerSameKeyFailureRestoresOlderSuccessfulOwner() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+        let writeGate = SelectiveImageCacheWriteGate()
+        let writeFailure = SelectiveImageCacheDataWriteFailure(failingInvocation: 2)
+        let store = ImageCacheStore(
+            directoryURL: directoryURL,
+            afterCacheFileWrite: { await writeGate.suspendFirstInvocation() },
+            beforeCacheDataWrite: { try writeFailure.throwIfNeeded() },
+            cacheWriteErrorHandler: { _ in }
+        )
+        let identifier = EHGalleryIdentifier(gid: 714, token: "abcdef1234")
+        let imageURL = URL(string: "https://example.test/newer-write-failure.webp")!
+        let olderData = Data([0x01, 0x02, 0x03])
+        let olderTask = Task {
+            await store.saveAsync(
+                olderData,
+                for: imageURL,
+                responseURL: imageURL,
+                context: ImageCacheContext(
+                    galleryIdentifier: identifier,
+                    galleryTitle: "Write Failure Gallery",
+                    pageNumber: 1,
+                    pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/714-1")!,
+                    totalPageCount: 2,
+                    thumbnailURL: nil
+                )
+            )
+        }
+
+        await writeGate.waitUntilFirstInvocationSuspends()
+        await store.saveAsync(
+            Data([0x09, 0x08, 0x07]),
+            for: imageURL,
+            responseURL: imageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: identifier,
+                galleryTitle: "Write Failure Gallery",
+                pageNumber: 2,
+                pageURL: URL(string: "https://e-hentai.org/s/ddddeeeeff/714-2")!,
+                totalPageCount: 2,
+                thumbnailURL: nil
+            )
+        )
+        await writeGate.resumeFirstInvocation()
+        await olderTask.value
+
+        XCTAssertEqual(store.data(for: imageURL), olderData)
+        XCTAssertEqual(store.pageRecord(for: identifier, pageNumber: 1)?.imageURL, imageURL)
+        XCTAssertNil(store.pageRecord(for: identifier, pageNumber: 2))
+    }
+
+    /// Confirms clearing one gallery preserves a pending same-key write for another gallery.
+    @MainActor
+    func testImageCacheGalleryClearPreservesOtherScopePendingSameKeyWrite() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+        let writeGate = SelectiveImageCacheWriteGate()
+        let store = ImageCacheStore(
+            directoryURL: directoryURL,
+            afterCacheFileWrite: { await writeGate.suspendFirstInvocation() }
+        )
+        let firstIdentifier = EHGalleryIdentifier(gid: 715, token: "abcdef1234")
+        let secondIdentifier = EHGalleryIdentifier(gid: 716, token: "abcdef1234")
+        let imageURL = URL(string: "https://example.test/cross-scope-same-key.webp")!
+        store.save(
+            Data([0x01, 0x02, 0x03]),
+            for: imageURL,
+            responseURL: imageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: firstIdentifier,
+                galleryTitle: "First Gallery",
+                pageNumber: 1,
+                pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/715-1")!,
+                totalPageCount: 1,
+                thumbnailURL: nil
+            )
+        )
+        let replacementData = Data([0x09, 0x08, 0x07])
+        let replacementTask = Task {
+            await store.saveAsync(
+                replacementData,
+                for: imageURL,
+                responseURL: imageURL,
+                context: ImageCacheContext(
+                    galleryIdentifier: secondIdentifier,
+                    galleryTitle: "Second Gallery",
+                    pageNumber: 1,
+                    pageURL: URL(string: "https://e-hentai.org/s/ddddeeeeff/716-1")!,
+                    totalPageCount: 1,
+                    thumbnailURL: nil
+                )
+            )
+        }
+
+        await writeGate.waitUntilFirstInvocationSuspends()
+        store.clearGallery(firstIdentifier)
+        await writeGate.resumeFirstInvocation()
+        await replacementTask.value
+
+        XCTAssertNil(store.pageRecord(for: firstIdentifier, pageNumber: 1))
+        XCTAssertEqual(store.pageRecord(for: secondIdentifier, pageNumber: 1)?.imageURL, imageURL)
+        XCTAssertEqual(store.data(for: imageURL), replacementData)
+    }
+
+    /// Confirms a stale replacement reconciles existing shared references to physical bytes.
+    @MainActor
+    func testImageCacheStaleReplacementReconcilesExistingSameKeyReferences() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+        let writeGate = SelectiveImageCacheWriteGate()
+        let store = ImageCacheStore(
+            directoryURL: directoryURL,
+            afterCacheFileWrite: { await writeGate.suspendFirstInvocation() }
+        )
+        let firstIdentifier = EHGalleryIdentifier(gid: 717, token: "abcdef1234")
+        let staleIdentifier = EHGalleryIdentifier(gid: 718, token: "abcdef1234")
+        let imageURL = URL(string: "https://example.test/stale-shared-replacement.webp")!
+        let originalData = Data([0x01, 0x02])
+        let replacementData = Data([0x09, 0x08, 0x07, 0x06, 0x05])
+        store.save(
+            originalData,
+            for: imageURL,
+            responseURL: imageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: firstIdentifier,
+                galleryTitle: "Existing Gallery",
+                pageNumber: 1,
+                pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/717-1")!,
+                totalPageCount: 1,
+                thumbnailURL: nil
+            )
+        )
+        let staleTask = Task {
+            await store.saveAsync(
+                replacementData,
+                for: imageURL,
+                responseURL: imageURL,
+                context: ImageCacheContext(
+                    galleryIdentifier: staleIdentifier,
+                    galleryTitle: "Stale Gallery",
+                    pageNumber: 1,
+                    pageURL: URL(string: "https://e-hentai.org/s/ddddeeeeff/718-1")!,
+                    totalPageCount: 1,
+                    thumbnailURL: nil
+                )
+            )
+        }
+
+        await writeGate.waitUntilFirstInvocationSuspends()
+        store.clearGallery(staleIdentifier)
+        await writeGate.resumeFirstInvocation()
+        await staleTask.value
+
+        XCTAssertEqual(store.data(for: imageURL), replacementData)
+        XCTAssertEqual(
+            store.pageRecord(for: firstIdentifier, pageNumber: 1)?.byteCount,
+            Int64(replacementData.count)
+        )
+        XCTAssertNil(store.pageRecord(for: staleIdentifier, pageNumber: 1))
+
+        let originalAliasURL = URL(string: "https://example.test/stale-original-content.webp")!
+        store.save(originalData, for: originalAliasURL)
+        XCTAssertEqual(store.data(for: originalAliasURL), originalData)
+    }
+
+    /// Confirms stale gallery replacement preserves an alias-only cache owner.
+    @MainActor
+    func testImageCacheStaleReplacementPreservesNonGalleryAlias() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+        let writeGate = SelectiveImageCacheWriteGate()
+        let store = ImageCacheStore(
+            directoryURL: directoryURL,
+            afterCacheFileWrite: { await writeGate.suspendFirstInvocation() }
+        )
+        let staleIdentifier = EHGalleryIdentifier(gid: 719, token: "abcdef1234")
+        let imageURL = URL(string: "https://example.test/stale-alias-replacement.webp")!
+        let originalData = Data([0x01, 0x02])
+        let replacementData = Data([0x09, 0x08, 0x07, 0x06])
+        store.save(originalData, for: imageURL)
+
+        let staleTask = Task {
+            await store.saveAsync(
+                replacementData,
+                for: imageURL,
+                responseURL: imageURL,
+                context: ImageCacheContext(
+                    galleryIdentifier: staleIdentifier,
+                    galleryTitle: "Stale Alias Gallery",
+                    pageNumber: 1,
+                    pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/719-1")!,
+                    totalPageCount: 1,
+                    thumbnailURL: nil
+                )
+            )
+        }
+
+        await writeGate.waitUntilFirstInvocationSuspends()
+        store.clearGallery(staleIdentifier)
+        await writeGate.resumeFirstInvocation()
+        await staleTask.value
+
+        XCTAssertEqual(store.data(for: imageURL), replacementData)
+        XCTAssertEqual(store.snapshot.fileCount, 1)
+        XCTAssertEqual(store.snapshot.byteCount, Int64(replacementData.count))
+        XCTAssertNil(store.pageRecord(for: staleIdentifier, pageNumber: 1))
+
+        let originalAliasURL = URL(string: "https://example.test/stale-alias-original.webp")!
+        store.save(originalData, for: originalAliasURL)
+        XCTAssertEqual(store.data(for: imageURL), replacementData)
+        XCTAssertEqual(store.data(for: originalAliasURL), originalData)
+    }
+
+    /// Confirms a failed newer owner cleans stale bytes that no valid reference retained.
+    @MainActor
+    func testImageCacheFailedNewerOwnerCleansUnreferencedStaleBytes() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+        let writeGate = SelectiveImageCacheWriteGate()
+        let diskGate = ImageCacheDiskMutationGate()
+        let writeFailure = SelectiveImageCacheDataWriteFailure(failingInvocation: 2)
+        let store = ImageCacheStore(
+            directoryURL: directoryURL,
+            afterCacheFileWrite: { await writeGate.suspendFirstInvocation() },
+            beforeCacheDiskMutation: { diskGate.suspendNextMutationIfArmed() },
+            beforeCacheDataWrite: { try writeFailure.throwIfNeeded() },
+            cacheWriteErrorHandler: { _ in }
+        )
+        let staleIdentifier = EHGalleryIdentifier(gid: 720, token: "abcdef1234")
+        let newerIdentifier = EHGalleryIdentifier(gid: 721, token: "abcdef1234")
+        let imageURL = URL(string: "https://example.test/stale-then-failed-owner.webp")!
+        let staleTask = Task {
+            await store.saveAsync(
+                Data([0x01, 0x02, 0x03]),
+                for: imageURL,
+                responseURL: imageURL,
+                context: ImageCacheContext(
+                    galleryIdentifier: staleIdentifier,
+                    galleryTitle: "Stale Owner",
+                    pageNumber: 1,
+                    pageURL: URL(string: "https://e-hentai.org/s/aaaabbbbcc/720-1")!,
+                    totalPageCount: 1,
+                    thumbnailURL: nil
+                )
+            )
+        }
+
+        await writeGate.waitUntilFirstInvocationSuspends()
+        store.clearGallery(staleIdentifier)
+        diskGate.armNextMutation()
+        let failingTask = Task {
+            await store.saveAsync(
+                Data([0x09, 0x08, 0x07]),
+                for: imageURL,
+                responseURL: imageURL,
+                context: ImageCacheContext(
+                    galleryIdentifier: newerIdentifier,
+                    galleryTitle: "Failed Owner",
+                    pageNumber: 1,
+                    pageURL: URL(string: "https://e-hentai.org/s/ddddeeeeff/721-1")!,
+                    totalPageCount: 1,
+                    thumbnailURL: nil
+                )
+            )
+        }
+
+        await diskGate.waitUntilSuspended()
+        await writeGate.resumeFirstInvocation()
+        await staleTask.value
+        diskGate.resume()
+        await failingTask.value
+
+        XCTAssertFalse(store.hasNonGalleryImageCache)
+        XCTAssertNil(store.pageRecord(for: staleIdentifier, pageNumber: 1))
+        XCTAssertNil(store.pageRecord(for: newerIdentifier, pageNumber: 1))
+        XCTAssertEqual(store.snapshot, .empty)
+    }
+
+    /// Confirms a save queued behind gallery cleanup rechecks file existence before writing.
+    @MainActor
+    func testImageCacheSaveQueuedBehindAsyncRemovalRestoresBackingFile() async throws {
+        let baseURL = FileManager.default.temporaryDirectory.appending(
+            path: "ImageCacheRemovalRace-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: baseURL) }
+        let rootURL = baseURL.appending(path: "Cached Gallery", directoryHint: .isDirectory)
+        let stagingURL = baseURL.appending(path: "Staging", directoryHint: .isDirectory)
+        let cacheURL = baseURL.appending(path: "Cache", directoryHint: .isDirectory)
+        let diskGate = ImageCacheDiskMutationGate()
+        let enqueueGate = ImageCacheEnqueueGate()
+        let persistentStore = CachedGalleryStore(rootURL: rootURL, stagingRootURL: stagingURL)
+        let store = ImageCacheStore(
+            directoryURL: cacheURL,
+            persistentGalleryStore: persistentStore,
+            afterCacheDataWriteEnqueued: {
+                await enqueueGate.signal()
+            },
+            beforeCacheDiskMutation: {
+                diskGate.suspendNextMutationIfArmed()
+            }
+        )
+        let identifier = EHGalleryIdentifier(gid: 713, token: "abcdef1234")
+        let pageURL = URL(string: "https://e-hentai.org/s/aaaabbbbcc/713-1")!
+        let imageURL = URL(string: "https://example.test/removal-race.webp")!
+        let context = ImageCacheContext(
+            galleryIdentifier: identifier,
+            galleryTitle: "Removal Race Gallery",
+            pageNumber: 1,
+            pageURL: pageURL,
+            totalPageCount: 1,
+            thumbnailURL: nil
+        )
+        let detail = EHGalleryDetail(
+            identifier: identifier,
+            title: "Removal Race Gallery",
+            japaneseTitle: nil,
+            category: "Manga",
+            coverURL: nil,
+            uploader: nil,
+            metadata: [],
+            ratingLabel: nil,
+            ratingCount: nil,
+            tags: [],
+            pageLinks: [EHGalleryPageLink(pageNumber: 1, pageURL: pageURL)],
+            thumbnailPageURLs: [],
+            pageCount: 1
+        )
+        store.save(Data([0x01, 0x02, 0x03]), for: imageURL, responseURL: imageURL, context: context)
+        try await store.preparePersistentDownload(detail: detail, fallback: nil)
+        XCTAssertTrue(persistentStore.hasCompleteStagedGallery(identifier))
+
+        diskGate.armNextMutation()
+        let finalizationTask = Task {
+            try await store.finalizePersistentDownload(identifier)
+        }
+        await diskGate.waitUntilSuspended()
+        let replacementData = Data([0x09, 0x08, 0x07])
+        let replacementTask = Task {
+            await store.saveAsync(
+                replacementData,
+                for: imageURL,
+                responseURL: imageURL,
+                context: context
+            )
+        }
+        await enqueueGate.waitUntilSignaled()
+        diskGate.resume()
+        try await finalizationTask.value
+        await replacementTask.value
+
+        let reloadedStore = ImageCacheStore(directoryURL: cacheURL)
+        XCTAssertEqual(reloadedStore.data(for: imageURL), replacementData)
+        XCTAssertEqual(reloadedStore.pageRecord(for: identifier, pageNumber: 1)?.imageURL, imageURL)
     }
 
     /// Confirms opening a reader route keeps the current tab and presents a route.
@@ -773,6 +1556,8 @@ private final class HitomiMockHTTPClient: EHDataHTTPClient {
     private let galleryInfos: [Int: String]
     private let imageContextScript: String
     private let nozomiGalleryIDsByPath: [String: [Int]]
+    private let galleryInfoDelayNanoseconds: UInt64
+    private var galleryInfoFailuresRemainingByID: [Int: Int]
     private(set) var requestedGalleryInfoIDs: [Int] = []
     private(set) var requestedDataPaths: [String] = []
 
@@ -781,12 +1566,16 @@ private final class HitomiMockHTTPClient: EHDataHTTPClient {
         indexVersion: String,
         galleryInfos: [Int: String],
         imageContextScript: String = MyEHViewerTests.hitomiImageContextScript(pathPrefix: "galleries/", suffixValue: 1, codes: []),
-        nozomiGalleryIDsByPath: [String: [Int]] = [:]
+        nozomiGalleryIDsByPath: [String: [Int]] = [:],
+        galleryInfoDelayNanoseconds: UInt64 = 0,
+        galleryInfoFailuresRemainingByID: [Int: Int] = [:]
     ) {
         self.indexVersion = indexVersion
         self.galleryInfos = galleryInfos
         self.imageContextScript = imageContextScript
         self.nozomiGalleryIDsByPath = nozomiGalleryIDsByPath
+        self.galleryInfoDelayNanoseconds = galleryInfoDelayNanoseconds
+        self.galleryInfoFailuresRemainingByID = galleryInfoFailuresRemainingByID
     }
 
     /// Returns the search index version, image context, or one gallery info script.
@@ -797,8 +1586,18 @@ private final class HitomiMockHTTPClient: EHDataHTTPClient {
         if url.path == "/gg.js" {
             return EHHTTPResponse(url: url, statusCode: 200, body: imageContextScript)
         }
-        if let galleryID = galleryID(from: url), let body = galleryInfos[galleryID] {
+        if let galleryID = galleryID(from: url) {
             requestedGalleryInfoIDs.append(galleryID)
+            if galleryInfoDelayNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: galleryInfoDelayNanoseconds)
+            }
+            if let remainingFailureCount = galleryInfoFailuresRemainingByID[galleryID], remainingFailureCount > 0 {
+                galleryInfoFailuresRemainingByID[galleryID] = remainingFailureCount - 1
+                throw EHNetworkError.invalidResponse
+            }
+            guard let body = galleryInfos[galleryID] else {
+                throw EHNetworkError.unacceptableStatusCode(404)
+            }
             return EHHTTPResponse(url: url, statusCode: 200, body: "var galleryinfo = \(body);")
         }
         throw EHNetworkError.unacceptableStatusCode(404)
@@ -1223,15 +2022,768 @@ final class GalleryDownloadManagerTests: XCTestCase {
         }
     }
 
-    /// Waits briefly for the manager's background task to finish.
-    private func waitForFinishedDownload(manager: GalleryDownloadManager, identifier: EHGalleryIdentifier) async {
-        let deadline = Date().addingTimeInterval(2)
+    /// Confirms the injected global limit bounds page pipelines across galleries.
+    func testDownloadLimitsGlobalPagePipelinesAcrossGalleries() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let fixtures = (401...403).map { Self.downloadFixture(galleryID: $0, pageCount: 2) }
+        var htmlResponses: [URL: String] = [:]
+        var dataResponses: [URL: Result<Data, Error>] = [:]
+        for fixture in fixtures {
+            htmlResponses.merge(fixture.htmlResponses) { _, incoming in incoming }
+            dataResponses.merge(fixture.dataResponses) { _, incoming in incoming }
+        }
+        let imageURLs = fixtures.flatMap { $0.imageURLs }
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: htmlResponses,
+            dataResponses: dataResponses,
+            suspendedDataURLs: Set(imageURLs)
+        )
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            maxConcurrentDownloads: 3,
+            maxConcurrentPagesPerGallery: 2,
+            maxConcurrentPageOperations: 4,
+            retryDelayRange: 0...0
+        )
+
+        for fixture in fixtures {
+            manager.startDownload(detail: fixture.detail)
+        }
+
+        let reachedGlobalLimit = await waitUntil(
+            failureMessage: "Timed out waiting for four global page pipelines."
+        ) {
+            client.activeDataRequestCount == 4
+        }
+        guard reachedGlobalLimit else {
+            manager.pauseAllDownloads()
+            client.resumeAllDataRequests()
+            return
+        }
+
+        XCTAssertEqual(client.maxConcurrentDataRequestCount, 4)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(client.requestedDataURLs.count, 4)
+
+        client.resumeAllDataRequests()
+        let startedRemainingPages = await waitUntil(
+            failureMessage: "Timed out waiting for the remaining page pipelines."
+        ) {
+            client.requestedDataURLs.count == imageURLs.count
+        }
+        guard startedRemainingPages else {
+            manager.pauseAllDownloads()
+            client.resumeAllDataRequests()
+            return
+        }
+        client.resumeAllDataRequests()
+
+        for fixture in fixtures {
+            await waitForFinishedDownload(manager: manager, identifier: fixture.detail.identifier)
+        }
+        for fixture in fixtures {
+            XCTAssertEqual(manager.progress(for: fixture.detail.identifier)?.downloadedPageCount, 2)
+        }
+        XCTAssertEqual(client.maxConcurrentDataRequestCount, 4)
+    }
+
+    /// Confirms the global permit remains held while permanent page persistence is blocked.
+    func testGlobalPageLimitIncludesPersistentCommitStage() async throws {
+        let environment = try Self.makePersistentDownloadEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let commitGate = DownloadPersistenceGate(expectedArrivalCount: 4)
+        let persistentStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL,
+            beforePageCommit: { _ in
+                await commitGate.suspendUntilOpened()
+            }
+        )
+        let cacheStore = ImageCacheStore(
+            directoryURL: environment.cacheURL,
+            persistentGalleryStore: persistentStore
+        )
+        let fixtures = (410...412).map { Self.downloadFixture(galleryID: $0, pageCount: 2) }
+        var htmlResponses: [URL: String] = [:]
+        var dataResponses: [URL: Result<Data, Error>] = [:]
+        for fixture in fixtures {
+            htmlResponses.merge(fixture.htmlResponses) { _, incoming in incoming }
+            dataResponses.merge(fixture.dataResponses) { _, incoming in incoming }
+        }
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: htmlResponses,
+            dataResponses: dataResponses
+        )
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            maxConcurrentDownloads: 3,
+            maxConcurrentPagesPerGallery: 2,
+            maxConcurrentPageOperations: 4,
+            retryDelayRange: 0...0
+        )
+
+        for fixture in fixtures {
+            manager.startDownload(detail: fixture.detail)
+        }
+        await commitGate.waitUntilExpectedArrivals()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(client.requestedDataURLs.count, 4)
+        await commitGate.open()
+        for fixture in fixtures {
+            await waitForFinishedDownload(manager: manager, identifier: fixture.detail.identifier)
+            XCTAssertEqual(manager.progress(for: fixture.detail.identifier)?.downloadedPageCount, 2)
+        }
+    }
+
+    /// Confirms a fast three-page download finalizes from local progress before the publish delay.
+    func testFastPersistentDownloadFinalizesAllPagesBeforeProgressPublishWindow() async throws {
+        let environment = try Self.makePersistentDownloadEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = Self.downloadFixture(galleryID: 406, pageCount: 3)
+        let persistentStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        let cacheStore = ImageCacheStore(
+            directoryURL: environment.cacheURL,
+            persistentGalleryStore: persistentStore
+        )
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: fixture.htmlResponses,
+            dataResponses: fixture.dataResponses
+        )
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            maxConcurrentPagesPerGallery: 3,
+            maxConcurrentPageOperations: 3,
+            retryDelayRange: 0...0
+        )
+        let startedAt = Date()
+
+        manager.startDownload(detail: fixture.detail)
+        let finishedWithinPublishWindow = await waitUntil(
+            timeout: 0.35,
+            failureMessage: "Timed out waiting for the permanent download before the progress publish window."
+        ) {
+            manager.progress(for: fixture.detail.identifier)?.isRunning == false
+        }
+        guard finishedWithinPublishWindow else {
+            manager.pauseAllDownloads()
+            return
+        }
+
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 0.35)
+        let progress = try XCTUnwrap(manager.progress(for: fixture.detail.identifier))
+        XCTAssertEqual(progress.downloadedPageCount, 3)
+        XCTAssertEqual(progress.totalPageCount, 3)
+        XCTAssertNil(progress.errorMessage)
+        for imageURL in fixture.imageURLs {
+            XCTAssertEqual(client.dataRequestCount(for: imageURL), 1)
+        }
+
+        let stagedGalleryURL = environment.stagingURL.appending(
+            path: fixture.detail.identifier.id,
+            directoryHint: .isDirectory
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagedGalleryURL.path))
+        let finalFolders = try FileManager.default.contentsOfDirectory(
+            at: environment.rootURL,
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(finalFolders.count, 1)
+        let finalFolder = try XCTUnwrap(finalFolders.first)
+        let manifestData = try Data(contentsOf: finalFolder.appending(path: "manifest.json"))
+        let manifestObject = try JSONSerialization.jsonObject(with: manifestData)
+        let manifest = try XCTUnwrap(manifestObject as? [String: Any])
+        let pages = try XCTUnwrap(manifest["pages"] as? [[String: Any]])
+        XCTAssertEqual(pages.compactMap { $0["pageNumber"] as? Int }.sorted(), [1, 2, 3])
+
+        let reloadedStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        XCTAssertEqual(
+            reloadedStore.summaries.first?.pageRecords.map(\.pageNumber),
+            [1, 2, 3]
+        )
+    }
+
+    /// Confirms a complete staged gallery can resume only to finish its folder move.
+    func testCompleteStagingResumesFinalizationWithoutRedownloadingImages() async throws {
+        let environment = try Self.makePersistentDownloadEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = Self.downloadFixture(galleryID: 413, pageCount: 1)
+        let persistentStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        let cacheStore = ImageCacheStore(
+            directoryURL: environment.cacheURL,
+            persistentGalleryStore: persistentStore
+        )
+        let imageURL = fixture.imageURLs[0]
+        try await cacheStore.preparePersistentDownload(detail: fixture.detail, fallback: nil)
+        try await cacheStore.saveDownloadedPageAsync(
+            Data([0x41, 0x42, 0x43]),
+            for: imageURL,
+            responseURL: imageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: fixture.detail.identifier,
+                galleryTitle: fixture.detail.title,
+                pageNumber: 1,
+                pageURL: fixture.pageURLs[0],
+                totalPageCount: 1,
+                thumbnailURL: nil
+            )
+        )
+        XCTAssertTrue(persistentStore.hasStagedGallery(fixture.detail.identifier))
+
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: fixture.htmlResponses,
+            dataResponses: fixture.dataResponses
+        )
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            retryDelayRange: 0...0
+        )
+
+        manager.startDownload(detail: fixture.detail)
+        await waitForFinishedDownload(manager: manager, identifier: fixture.detail.identifier)
+
+        XCTAssertEqual(client.dataRequestCount(for: imageURL), 0)
+        XCTAssertFalse(persistentStore.hasStagedGallery(fixture.detail.identifier))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: environment.stagingURL.appending(
+                    path: fixture.detail.identifier.id,
+                    directoryHint: .isDirectory
+                ).path
+            )
+        )
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(
+                at: environment.rootURL,
+                includingPropertiesForKeys: nil
+            ).count,
+            1
+        )
+    }
+
+    /// Confirms bulk resume includes a complete gallery that still lives in staging.
+    func testBulkResumeQueuesCompleteStagingForFinalization() async throws {
+        let environment = try Self.makePersistentDownloadEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = Self.downloadFixture(galleryID: 414, pageCount: 1)
+        let persistentStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        let cacheStore = ImageCacheStore(
+            directoryURL: environment.cacheURL,
+            persistentGalleryStore: persistentStore
+        )
+        let imageURL = fixture.imageURLs[0]
+        try await cacheStore.preparePersistentDownload(detail: fixture.detail, fallback: nil)
+        try await cacheStore.saveDownloadedPageAsync(
+            Data([0x51, 0x52, 0x53]),
+            for: imageURL,
+            responseURL: imageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: fixture.detail.identifier,
+                galleryTitle: fixture.detail.title,
+                pageNumber: 1,
+                pageURL: fixture.pageURLs[0],
+                totalPageCount: 1,
+                thumbnailURL: nil
+            )
+        )
+        await cacheStore.markGalleryDownloadUnavailable(
+            fixture.detail.identifier,
+            title: fixture.detail.title,
+            totalPageCount: 1
+        )
+        let summary = try XCTUnwrap(cacheStore.gallerySummary(for: fixture.detail.identifier))
+        XCTAssertTrue(summary.isDownloadUnavailable)
+        XCTAssertTrue(summary.isStagedComplete)
+        XCTAssertTrue(summary.needsDownloadResume)
+        let client = GalleryDownloadMockHTTPClient(htmlResponses: [:], dataResponses: [:])
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            retryDelayRange: 0...0
+        )
+
+        manager.startUnfinishedDownloads(from: [summary])
+        await waitForFinishedDownload(manager: manager, identifier: fixture.detail.identifier)
+
+        XCTAssertEqual(client.htmlRequestCount(for: fixture.detail.identifier.url()), 0)
+        XCTAssertEqual(client.requestedDataURLs, [])
+        XCTAssertFalse(persistentStore.hasStagedGallery(fixture.detail.identifier))
+        let progress = try XCTUnwrap(manager.progress(for: fixture.detail.identifier))
+        XCTAssertEqual(progress.downloadedPageCount, 1)
+        XCTAssertEqual(progress.totalPageCount, 1)
+        XCTAssertNil(progress.errorMessage)
+    }
+
+    /// Confirms a complete disposable cache can still be promoted to permanent storage.
+    func testCompleteCacheOnlyGalleryCanStartPermanentDownload() async throws {
+        let environment = try Self.makePersistentDownloadEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = Self.downloadFixture(galleryID: 415, pageCount: 1)
+        let persistentStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        let cacheStore = ImageCacheStore(
+            directoryURL: environment.cacheURL,
+            persistentGalleryStore: persistentStore
+        )
+        let imageURL = fixture.imageURLs[0]
+        cacheStore.save(
+            Data([0x61, 0x62, 0x63]),
+            for: imageURL,
+            responseURL: imageURL,
+            context: ImageCacheContext(
+                galleryIdentifier: fixture.detail.identifier,
+                galleryTitle: fixture.detail.title,
+                pageNumber: 1,
+                pageURL: fixture.pageURLs[0],
+                totalPageCount: 1,
+                thumbnailURL: nil
+            )
+        )
+        XCTAssertEqual(
+            cacheStore.gallerySummary(for: fixture.detail.identifier)?.storageState,
+            .cacheOnly
+        )
+        let client = GalleryDownloadMockHTTPClient(htmlResponses: [:], dataResponses: [:])
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            retryDelayRange: 0...0
+        )
+
+        manager.startDownload(detail: fixture.detail)
+        let didFinalize = await waitUntil(
+            failureMessage: "Timed out promoting a complete cache-only gallery."
+        ) {
+            let summary = cacheStore.gallerySummary(for: fixture.detail.identifier)
+            return summary?.storageState == .persistent && summary?.isStaged == false
+        }
+
+        XCTAssertTrue(didFinalize)
+        XCTAssertEqual(client.requestedDataURLs, [])
+        XCTAssertEqual(client.htmlRequestCount(for: fixture.pageURLs[0]), 0)
+        XCTAssertFalse(persistentStore.hasStagedGallery(fixture.detail.identifier))
+    }
+
+    /// Confirms a finalized gallery can redownload a page removed through Files.
+    func testCompletedPersistentGalleryWithMissingFileCanRestart() async throws {
+        let environment = try Self.makePersistentDownloadEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = Self.downloadFixture(galleryID: 416, pageCount: 1)
+        let persistentStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        let cacheStore = ImageCacheStore(
+            directoryURL: environment.cacheURL,
+            persistentGalleryStore: persistentStore
+        )
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: fixture.htmlResponses,
+            dataResponses: fixture.dataResponses
+        )
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            maxConcurrentPagesPerGallery: 1,
+            retryDelayRange: 0...0
+        )
+
+        manager.startDownload(detail: fixture.detail)
+        await waitForFinishedDownload(manager: manager, identifier: fixture.detail.identifier)
+        let storedRecord = try XCTUnwrap(
+            cacheStore.pageRecord(for: fixture.detail.identifier, pageNumber: 1)
+        )
+        let localFileURL = try XCTUnwrap(storedRecord.localFileURL)
+        XCTAssertEqual(client.dataRequestCount(for: fixture.imageURLs[0]), 1)
+        try FileManager.default.removeItem(at: localFileURL)
+
+        manager.startDownload(detail: fixture.detail)
+        await waitForFinishedDownload(manager: manager, identifier: fixture.detail.identifier)
+
+        XCTAssertEqual(client.dataRequestCount(for: fixture.imageURLs[0]), 2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: localFileURL.path))
+        XCTAssertFalse(persistentStore.hasStagedGallery(fixture.detail.identifier))
+    }
+
+    /// Confirms one completed permanent gallery publishes while another gallery keeps downloading.
+    func testCompletedPersistentGalleryPublishesBeforeAnotherGalleryFinishesAndCannotRestart() async throws {
+        let environment = try Self.makePersistentDownloadEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let completedFixture = Self.downloadFixture(galleryID: 408, pageCount: 1)
+        let blockedFixture = Self.downloadFixture(galleryID: 409, pageCount: 1)
+        var htmlResponses = blockedFixture.htmlResponses
+        htmlResponses.merge(completedFixture.htmlResponses) { _, incoming in incoming }
+        var dataResponses = blockedFixture.dataResponses
+        dataResponses.merge(completedFixture.dataResponses) { _, incoming in incoming }
+        let persistentStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        let cacheStore = ImageCacheStore(
+            directoryURL: environment.cacheURL,
+            persistentGalleryStore: persistentStore
+        )
+        let blockedImageURL = blockedFixture.imageURLs[0]
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: htmlResponses,
+            dataResponses: dataResponses,
+            suspendedDataURLs: [blockedImageURL]
+        )
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            maxConcurrentDownloads: 2,
+            maxConcurrentPagesPerGallery: 1,
+            maxConcurrentPageOperations: 2,
+            retryDelayRange: 0...0
+        )
+
+        manager.startDownload(detail: blockedFixture.detail)
+        let blockedDownloadStarted = await waitUntil(
+            failureMessage: "Timed out waiting for the blocked gallery request."
+        ) {
+            client.activeDataRequestCount == 1
+                && client.dataRequestCount(for: blockedImageURL) == 1
+        }
+        guard blockedDownloadStarted else {
+            manager.pauseAllDownloads()
+            client.resumeAllDataRequests()
+            return
+        }
+
+        manager.startDownload(detail: completedFixture.detail)
+        await waitForFinishedDownload(
+            manager: manager,
+            identifier: completedFixture.detail.identifier
+        )
+        let completedTaskReleased = await waitUntil(
+            failureMessage: "Timed out waiting for the completed gallery task to release its slot."
+        ) {
+            manager.aggregateProgress?.activeDownloadCount == 1
+        }
+        guard completedTaskReleased else {
+            manager.pauseAllDownloads()
+            client.resumeAllDataRequests()
+            return
+        }
+
+        let summary = cacheStore.gallerySummaries.first {
+            $0.galleryIdentifier == completedFixture.detail.identifier
+        }
+        XCTAssertEqual(summary?.cachedPageCount, 1)
+        XCTAssertEqual(summary?.totalPageCount, 1)
+        XCTAssertEqual(summary?.storageState, .persistent)
+        XCTAssertFalse(cacheStore.gallerySummaries.contains { candidate in
+            candidate.galleryIdentifier == completedFixture.detail.identifier
+                && candidate.cachedPageCount < (candidate.totalPageCount ?? candidate.cachedPageCount)
+        })
+
+        let completedProgress = manager.progress(for: completedFixture.detail.identifier)
+        XCTAssertEqual(completedProgress?.downloadedPageCount, 1)
+        XCTAssertEqual(completedProgress?.totalPageCount, 1)
+        XCTAssertEqual(completedProgress?.isRunning, false)
+        XCTAssertNil(completedProgress?.errorMessage)
+        XCTAssertEqual(manager.progress(for: blockedFixture.detail.identifier)?.isRunning, true)
+
+        manager.startDownload(detail: completedFixture.detail)
+        XCTAssertEqual(manager.progress(for: completedFixture.detail.identifier)?.isRunning, false)
+
+        manager.pauseAllDownloads()
+        client.resumeAllDataRequests()
+        _ = await waitUntil(failureMessage: "Timed out cleaning up the blocked gallery request.") {
+            client.activeDataRequestCount == 0
+        }
+    }
+
+    /// Confirms a durable write failure is visible without downloading the image again.
+    func testPersistentWriteFailureDoesNotRetryImageRequest() async throws {
+        let environment = try Self.makePersistentDownloadEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = Self.downloadFixture(galleryID: 407, pageCount: 1)
+        let stagedGalleryURL = environment.stagingURL.appending(
+            path: fixture.detail.identifier.id,
+            directoryHint: .isDirectory
+        )
+        let saboteur = StagingDirectorySaboteur(targetURL: stagedGalleryURL)
+        let persistentStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL,
+            beforePageCommit: { _ in
+                await saboteur.replaceDirectoryWithFile()
+            }
+        )
+        let cacheStore = ImageCacheStore(
+            directoryURL: environment.cacheURL,
+            persistentGalleryStore: persistentStore
+        )
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: fixture.htmlResponses,
+            dataResponses: fixture.dataResponses
+        )
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            maxPageDownloadRetryCount: 2,
+            retryDelayRange: 0...0
+        )
+
+        manager.startDownload(detail: fixture.detail)
+        await waitForFinishedDownload(manager: manager, identifier: fixture.detail.identifier)
+
+        let sabotageErrorMessage = await saboteur.errorMessage
+        let sabotageInvocationCount = await saboteur.invocationCount
+        XCTAssertNil(sabotageErrorMessage)
+        XCTAssertEqual(sabotageInvocationCount, 1)
+        let progress = try XCTUnwrap(manager.progress(for: fixture.detail.identifier))
+        XCTAssertFalse(progress.isRunning)
+        XCTAssertEqual(progress.downloadedPageCount, 0)
+        XCTAssertEqual(progress.totalPageCount, 1)
+        XCTAssertTrue(progress.errorMessage?.hasPrefix("第 1 页下载失败：") == true)
+        XCTAssertEqual(client.dataRequestCount(for: fixture.imageURLs[0]), 1)
+    }
+
+    /// Confirms a cancelled run cannot remove the replacement task when it exits late.
+    func testRestartedDownloadKeepsNewTaskTrackedWhenCancelledTaskFinishesLate() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let fixture = Self.downloadFixture(galleryID: 404, pageCount: 1)
+        let imageURL = fixture.imageURLs[0]
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: fixture.htmlResponses,
+            dataResponses: fixture.dataResponses,
+            suspendedDataURLs: [imageURL]
+        )
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            maxConcurrentPageOperations: 2,
+            retryDelayRange: 0...0
+        )
+
+        manager.startDownload(detail: fixture.detail)
+        let startedOriginalRequest = await waitUntil(failureMessage: "Timed out waiting for the original page request.") {
+            client.requestedDataURLs.count == 1
+        }
+        guard startedOriginalRequest else {
+            manager.pauseAllDownloads()
+            client.resumeAllDataRequests()
+            return
+        }
+
+        manager.pauseAllDownloads()
+        manager.startDownload(detail: fixture.detail)
+        let startedReplacementRequest = await waitUntil(failureMessage: "Timed out waiting for the replacement page request.") {
+            client.requestedDataURLs.count == 2
+        }
+        guard startedReplacementRequest else {
+            manager.pauseAllDownloads()
+            client.resumeAllDataRequests()
+            return
+        }
+
+        client.resumeNextDataRequest(for: imageURL)
+        let cancelledRequestExited = await waitUntil(failureMessage: "Timed out waiting for the cancelled request to exit.") {
+            client.completedDataRequestCount == 1
+        }
+        guard cancelledRequestExited else {
+            manager.pauseAllDownloads()
+            client.resumeAllDataRequests()
+            return
+        }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(manager.progress(for: fixture.detail.identifier)?.isRunning, true)
+        manager.startDownload(detail: fixture.detail)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(client.requestedDataURLs.count, 2)
+
+        manager.pauseAllDownloads()
+        client.resumeAllDataRequests()
+        _ = await waitUntil(failureMessage: "Timed out cleaning up the replacement request.") {
+            client.activeDataRequestCount == 0
+        }
+        XCTAssertNil(cacheStore.data(for: imageURL))
+    }
+
+    /// Confirms pausing cancels permit waiters before they can start network work.
+    func testPauseCancelsPagesWaitingForGlobalPermitBeforeRequestsStart() async {
+        let directoryURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cacheStore = ImageCacheStore(directoryURL: directoryURL)
+        let fixture = Self.downloadFixture(galleryID: 405, pageCount: 2)
+        let client = GalleryDownloadMockHTTPClient(
+            htmlResponses: fixture.htmlResponses,
+            dataResponses: fixture.dataResponses,
+            suspendedDataURLs: Set(fixture.imageURLs)
+        )
+        let manager = GalleryDownloadManager(
+            client: client,
+            cacheStore: cacheStore,
+            maxConcurrentPagesPerGallery: 2,
+            maxConcurrentPageOperations: 1,
+            retryDelayRange: 0...0
+        )
+
+        manager.startDownload(detail: fixture.detail)
+        let startedPermittedRequest = await waitUntil(failureMessage: "Timed out waiting for the permitted page request.") {
+            client.requestedDataURLs.count == 1
+        }
+        guard startedPermittedRequest else {
+            manager.pauseAllDownloads()
+            client.resumeAllDataRequests()
+            return
+        }
+
+        guard
+            let requestedImageURL = client.requestedDataURLs.first,
+            let requestedIndex = fixture.imageURLs.firstIndex(of: requestedImageURL)
+        else {
+            XCTFail("The permitted page request was not part of the fixture.")
+            manager.pauseAllDownloads()
+            client.resumeAllDataRequests()
+            return
+        }
+        let waitingIndex = requestedIndex == 0 ? 1 : 0
+        let waitingPageURL = fixture.pageURLs[waitingIndex]
+        let waitingImageURL = fixture.imageURLs[waitingIndex]
+        XCTAssertEqual(client.htmlRequestCount(for: waitingPageURL), 0)
+        XCTAssertEqual(client.dataRequestCount(for: waitingImageURL), 0)
+
+        manager.pauseAllDownloads()
+        client.resumeAllDataRequests()
+        _ = await waitUntil(failureMessage: "Timed out waiting for the permitted request to stop.") {
+            client.activeDataRequestCount == 0
+        }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(client.htmlRequestCount(for: waitingPageURL), 0)
+        XCTAssertEqual(client.dataRequestCount(for: waitingImageURL), 0)
+    }
+
+    /// Waits for one gallery download and records a test failure on timeout.
+    private func waitForFinishedDownload(
+        manager: GalleryDownloadManager,
+        identifier: EHGalleryIdentifier,
+        timeout: TimeInterval = 3,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        _ = await waitUntil(
+            timeout: timeout,
+            failureMessage: "Timed out waiting for gallery \(identifier.id) to finish.",
+            file: file,
+            line: line
+        ) {
+            manager.progress(for: identifier)?.isRunning == false
+        }
+    }
+
+    /// Polls a MainActor condition and records a test failure on timeout.
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        failureMessage: String,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        condition: () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if manager.progress(for: identifier)?.isRunning == false {
-                return
+            if condition() {
+                return true
             }
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
+        XCTFail(failureMessage, file: file, line: line)
+        return false
+    }
+
+    /// Builds deterministic page and image responses for one download gallery.
+    private static func downloadFixture(
+        galleryID: Int,
+        pageCount: Int
+    ) -> (
+        detail: EHGalleryDetail,
+        htmlResponses: [URL: String],
+        dataResponses: [URL: Result<Data, Error>],
+        pageURLs: [URL],
+        imageURLs: [URL]
+    ) {
+        let identifier = EHGalleryIdentifier(gid: galleryID, token: "abcdef1234")
+        var htmlResponses: [URL: String] = [:]
+        var dataResponses: [URL: Result<Data, Error>] = [:]
+        var pageLinks: [EHGalleryPageLink] = []
+        var pageURLs: [URL] = []
+        var imageURLs: [URL] = []
+
+        for pageNumber in 1...pageCount {
+            let pageToken = String(format: "%010x", galleryID * 100 + pageNumber)
+            let pageURL = URL(string: "https://e-hentai.org/s/\(pageToken)/\(galleryID)-\(pageNumber)")!
+            let imageURL = URL(string: "https://example.test/\(galleryID)-\(pageNumber).webp")!
+            htmlResponses[pageURL] = imagePageHTML(
+                pageNumber: pageNumber,
+                imageURL: imageURL,
+                galleryID: galleryID
+            )
+            dataResponses[imageURL] = .success(Data([UInt8(truncatingIfNeeded: galleryID + pageNumber)]))
+            pageLinks.append(EHGalleryPageLink(pageNumber: pageNumber, pageURL: pageURL))
+            pageURLs.append(pageURL)
+            imageURLs.append(imageURL)
+        }
+
+        let detail = EHGalleryDetail(
+            identifier: identifier,
+            title: "Gallery \(galleryID)",
+            japaneseTitle: nil,
+            category: "Manga",
+            coverURL: nil,
+            uploader: nil,
+            metadata: [],
+            ratingLabel: nil,
+            ratingCount: nil,
+            tags: [],
+            pageLinks: pageLinks,
+            thumbnailPageURLs: [],
+            pageCount: pageCount
+        )
+        return (detail, htmlResponses, dataResponses, pageURLs, imageURLs)
+    }
+
+    /// Creates isolated cache, staging, and finalized roots for permanent download tests.
+    private static func makePersistentDownloadEnvironment() throws -> (
+        baseURL: URL,
+        rootURL: URL,
+        stagingURL: URL,
+        cacheURL: URL
+    ) {
+        let baseURL = FileManager.default.temporaryDirectory.appending(
+            path: "GalleryDownloadManagerTests-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+        return (
+            baseURL,
+            baseURL.appending(path: "Cached Gallery", directoryHint: .isDirectory),
+            baseURL.appending(path: "Staging", directoryHint: .isDirectory),
+            baseURL.appending(path: "Cache", directoryHint: .isDirectory)
+        )
     }
 
     /// Builds minimal reader HTML that the image page parser accepts.
@@ -1250,20 +2802,29 @@ private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
     private let htmlResponses: [URL: String]
     private let htmlErrors: [URL: Error]
     private let dataDelays: [URL: UInt64]
+    private let suspendedDataURLs: Set<URL>
     private var dataResponses: [URL: [Result<Data, Error>]]
+    private var htmlRequestCounts: [URL: Int] = [:]
     private var dataRequestCounts: [URL: Int] = [:]
     private var imageReferers: [URL: URL?] = [:]
+    private var dataRequestContinuations: [URL: [CheckedContinuation<Void, Never>]] = [:]
+    private(set) var requestedDataURLs: [URL] = []
+    private(set) var activeDataRequestCount = 0
+    private(set) var maxConcurrentDataRequestCount = 0
+    private(set) var completedDataRequestCount = 0
 
     /// Creates a mock client with fixed page and image responses.
     init(
         htmlResponses: [URL: String],
         dataResponses: [URL: Result<Data, Error>],
         htmlErrors: [URL: Error] = [:],
-        dataDelays: [URL: UInt64] = [:]
+        dataDelays: [URL: UInt64] = [:],
+        suspendedDataURLs: Set<URL> = []
     ) {
         self.htmlResponses = htmlResponses
         self.htmlErrors = htmlErrors
         self.dataDelays = dataDelays
+        self.suspendedDataURLs = suspendedDataURLs
         self.dataResponses = dataResponses.mapValues { [$0] }
     }
 
@@ -1272,16 +2833,19 @@ private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
         htmlResponses: [URL: String],
         dataResponseSequences: [URL: [Result<Data, Error>]],
         htmlErrors: [URL: Error] = [:],
-        dataDelays: [URL: UInt64] = [:]
+        dataDelays: [URL: UInt64] = [:],
+        suspendedDataURLs: Set<URL> = []
     ) {
         self.htmlResponses = htmlResponses
         self.htmlErrors = htmlErrors
         self.dataDelays = dataDelays
+        self.suspendedDataURLs = suspendedDataURLs
         self.dataResponses = dataResponseSequences
     }
 
     /// Returns configured reader page HTML.
     func get(_ url: URL) async throws -> EHHTTPResponse {
+        htmlRequestCounts[url, default: 0] += 1
         if let error = htmlErrors[url] {
             throw error
         }
@@ -1300,6 +2864,18 @@ private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
     func data(_ url: URL, referer: URL?) async throws -> EHDataResponse {
         imageReferers[url] = referer
         dataRequestCounts[url, default: 0] += 1
+        requestedDataURLs.append(url)
+        activeDataRequestCount += 1
+        maxConcurrentDataRequestCount = max(maxConcurrentDataRequestCount, activeDataRequestCount)
+        defer {
+            activeDataRequestCount -= 1
+            completedDataRequestCount += 1
+        }
+        if suspendedDataURLs.contains(url) {
+            await withCheckedContinuation { continuation in
+                dataRequestContinuations[url, default: []].append(continuation)
+            }
+        }
         if let delay = dataDelays[url], delay > 0 {
             try await Task.sleep(nanoseconds: delay)
         }
@@ -1315,6 +2891,11 @@ private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
         }
     }
 
+    /// Returns how many times reader HTML was requested for a URL.
+    func htmlRequestCount(for url: URL) -> Int {
+        htmlRequestCounts[url] ?? 0
+    }
+
     /// Returns how many times image data was requested for a URL.
     func dataRequestCount(for url: URL) -> Int {
         dataRequestCounts[url] ?? 0
@@ -1323,6 +2904,23 @@ private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
     /// Returns the last referer used for an image request.
     func imageReferer(for url: URL) -> URL? {
         imageReferers[url] ?? nil
+    }
+
+    /// Resumes the oldest suspended image request for one URL.
+    func resumeNextDataRequest(for url: URL) {
+        guard var continuations = dataRequestContinuations[url], !continuations.isEmpty else { return }
+        let continuation = continuations.removeFirst()
+        dataRequestContinuations[url] = continuations
+        continuation.resume()
+    }
+
+    /// Resumes every image request that is currently suspended.
+    func resumeAllDataRequests() {
+        let continuations = dataRequestContinuations.values.flatMap { $0 }
+        dataRequestContinuations.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
     }
 
     /// Pops the next configured response, repeating the final value if needed.
@@ -1335,5 +2933,241 @@ private final class GalleryDownloadMockHTTPClient: EHDataHTTPClient {
             dataResponses[url] = responses
         }
         return first
+    }
+}
+
+/// Replaces a prepared staging directory with a file to force a real write failure.
+private actor StagingDirectorySaboteur {
+    private let targetURL: URL
+    private(set) var invocationCount = 0
+    private(set) var errorMessage: String?
+
+    init(targetURL: URL) {
+        self.targetURL = targetURL
+    }
+
+    /// Invalidates the staging path immediately before the page commit starts.
+    func replaceDirectoryWithFile() {
+        invocationCount += 1
+        do {
+            let fileManager = FileManager.default
+            if fileManager.fileExists(atPath: targetURL.path) {
+                try fileManager.removeItem(at: targetURL)
+            }
+            try Data("blocks-page-writes".utf8).write(to: targetURL, options: [.atomic])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+/// Suspends one cache save after its file write so tests can interleave a clear.
+private actor ImageCacheWriteGate {
+    private var isSuspended = false
+    private var resumeContinuation: CheckedContinuation<Void, Never>?
+    private var suspensionWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Holds the save until the test completes its clear operation.
+    func suspend() async {
+        isSuspended = true
+        let waiters = suspensionWaiters
+        suspensionWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+        await withCheckedContinuation { continuation in
+            resumeContinuation = continuation
+        }
+    }
+
+    /// Waits until the async save reaches the controlled suspension point.
+    func waitUntilSuspended() async {
+        guard !isSuspended else { return }
+        await withCheckedContinuation { continuation in
+            suspensionWaiters.append(continuation)
+        }
+    }
+
+    /// Allows the suspended save to continue after the clear has completed.
+    func resume() {
+        isSuspended = false
+        resumeContinuation?.resume()
+        resumeContinuation = nil
+    }
+}
+
+/// Suspends only the first cache save so a newer generation can replace its bytes.
+private actor SelectiveImageCacheWriteGate {
+    private var invocationCount = 0
+    private var resumeContinuation: CheckedContinuation<Void, Never>?
+    private var suspensionWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Holds the first invocation and lets every later save continue immediately.
+    func suspendFirstInvocation() async {
+        invocationCount += 1
+        guard invocationCount == 1 else { return }
+        let waiters = suspensionWaiters
+        suspensionWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+        await withCheckedContinuation { continuation in
+            resumeContinuation = continuation
+        }
+    }
+
+    /// Waits until the first save reaches the controlled suspension point.
+    func waitUntilFirstInvocationSuspends() async {
+        guard invocationCount > 0 else {
+            await withCheckedContinuation { continuation in
+                suspensionWaiters.append(continuation)
+            }
+            return
+        }
+    }
+
+    /// Allows the stale first save to complete its generation check.
+    func resumeFirstInvocation() {
+        resumeContinuation?.resume()
+        resumeContinuation = nil
+    }
+}
+
+/// Blocks one FIFO cache mutation so tests can enqueue ordered work behind it.
+private final class ImageCacheDiskMutationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let suspendedSemaphore = DispatchSemaphore(value: 0)
+    private let resumeSemaphore = DispatchSemaphore(value: 0)
+    private var suspendsNextMutation = false
+
+    /// Arms the next writer mutation without blocking the calling thread.
+    func armNextMutation() {
+        lock.lock()
+        suspendsNextMutation = true
+        lock.unlock()
+    }
+
+    /// Blocks the armed writer mutation until the test releases it.
+    func suspendNextMutationIfArmed() {
+        lock.lock()
+        let shouldSuspend = suspendsNextMutation
+        suspendsNextMutation = false
+        lock.unlock()
+        guard shouldSuspend else { return }
+        suspendedSemaphore.signal()
+        resumeSemaphore.wait()
+    }
+
+    /// Waits away from MainActor until the writer reaches the controlled mutation.
+    func waitUntilSuspended() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                self.suspendedSemaphore.wait()
+                continuation.resume()
+            }
+        }
+    }
+
+    /// Releases the blocked FIFO writer mutation.
+    func resume() {
+        resumeSemaphore.signal()
+    }
+}
+
+/// Signals when one async cache data write has entered the FIFO queue.
+private actor ImageCacheEnqueueGate {
+    private var isSignaled = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Releases every waiter after the data write is queued.
+    func signal() {
+        isSignaled = true
+        let continuations = waiters
+        waiters.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+
+    /// Waits until the async save has queued its data transaction.
+    func waitUntilSignaled() async {
+        guard !isSignaled else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+}
+
+/// Injects one deterministic cache data-write failure by invocation number.
+private final class SelectiveImageCacheDataWriteFailure: @unchecked Sendable {
+    private enum ExpectedFailure: Error {
+        case dataWrite
+    }
+
+    private let lock = NSLock()
+    private let failingInvocation: Int
+    private var invocationCount = 0
+
+    /// Creates a failure injector for one one-based invocation.
+    init(failingInvocation: Int) {
+        self.failingInvocation = failingInvocation
+    }
+
+    /// Throws only for the configured FIFO data-write invocation.
+    func throwIfNeeded() throws {
+        lock.lock()
+        invocationCount += 1
+        let shouldFail = invocationCount == failingInvocation
+        lock.unlock()
+        if shouldFail {
+            throw ExpectedFailure.dataWrite
+        }
+    }
+}
+
+/// Holds permanent page commits so tests can verify the complete pipeline permit boundary.
+private actor DownloadPersistenceGate {
+    private let expectedArrivalCount: Int
+    private var arrivalCount = 0
+    private var isOpen = false
+    private var commitContinuations: [CheckedContinuation<Void, Never>] = []
+    private var arrivalContinuations: [CheckedContinuation<Void, Never>] = []
+
+    init(expectedArrivalCount: Int) {
+        self.expectedArrivalCount = expectedArrivalCount
+    }
+
+    /// Suspends each page commit until the test opens the persistence boundary.
+    func suspendUntilOpened() async {
+        guard !isOpen else { return }
+        arrivalCount += 1
+        if arrivalCount >= expectedArrivalCount {
+            let continuations = arrivalContinuations
+            arrivalContinuations.removeAll()
+            for continuation in continuations {
+                continuation.resume()
+            }
+        }
+        await withCheckedContinuation { continuation in
+            commitContinuations.append(continuation)
+        }
+    }
+
+    /// Waits until every globally permitted page reaches persistence.
+    func waitUntilExpectedArrivals() async {
+        guard arrivalCount < expectedArrivalCount else { return }
+        await withCheckedContinuation { continuation in
+            arrivalContinuations.append(continuation)
+        }
+    }
+
+    /// Releases current commits and lets later commits proceed without suspension.
+    func open() {
+        isOpen = true
+        let continuations = commitContinuations
+        commitContinuations.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
     }
 }
