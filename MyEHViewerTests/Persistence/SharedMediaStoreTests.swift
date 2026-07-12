@@ -1,4 +1,5 @@
 import XCTest
+import ZIPFoundation
 @testable import MyEHViewer
 
 @MainActor
@@ -17,6 +18,7 @@ final class SharedMediaStoreTests: XCTestCase {
 
         await store.importIncomingAndRefresh()
 
+        XCTAssertNil(store.transferMessage)
         let record = try XCTUnwrap(store.records.first)
         XCTAssertEqual(record.id, itemID)
         XCTAssertEqual(record.kind, .image)
@@ -39,6 +41,68 @@ final class SharedMediaStoreTests: XCTestCase {
         await store.importIncomingAndRefresh()
 
         XCTAssertEqual(store.records.count, 1)
+    }
+
+    /// Confirms a folder manifest creates one gallery with persisted member order.
+    func testImportIncomingFolderCreatesOrderedGallery() async throws {
+        let paths = try makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        try writeIncomingGallery(
+            paths: paths,
+            title: "Sample Folder",
+            entries: [
+                ("chapter/2.png", Data("two".utf8)),
+                ("chapter/10.png", Data("ten".utf8))
+            ]
+        )
+        let store = SharedMediaStore(
+            mediaRootURL: paths.media,
+            metadataRootURL: paths.metadata,
+            incomingRootURL: paths.incoming
+        )
+
+        await store.importIncomingAndRefresh()
+
+        XCTAssertNil(store.transferMessage)
+        let gallery = try XCTUnwrap(store.galleries.first)
+        XCTAssertEqual(gallery.title, "Sample Folder")
+        XCTAssertEqual(
+            store.records(in: gallery).map(\.originalFilename),
+            ["chapter/2.png", "chapter/10.png"]
+        )
+        XCTAssertEqual(gallery.coverMediaID, gallery.memberIDs.first)
+    }
+
+    /// Confirms duplicate bytes can belong to two galleries and delete by final reference.
+    func testDeleteGalleryPreservesSharedMediaUntilLastReference() async throws {
+        let paths = try makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let sharedData = Data("shared-image".utf8)
+        try writeIncomingGallery(paths: paths, title: "First", entries: [("1.png", sharedData)])
+        try writeIncomingGallery(paths: paths, title: "Second", entries: [("1.png", sharedData)])
+        let store = SharedMediaStore(
+            mediaRootURL: paths.media,
+            metadataRootURL: paths.metadata,
+            incomingRootURL: paths.incoming
+        )
+        await store.importIncomingAndRefresh()
+
+        XCTAssertEqual(store.records.count, 1)
+        XCTAssertEqual(store.galleries.count, 2)
+        let record = try XCTUnwrap(store.records.first)
+        let fileURL = store.fileURL(for: record)
+
+        store.delete(store.galleries[0])
+
+        XCTAssertEqual(store.records.count, 1)
+        XCTAssertEqual(store.galleries.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+
+        store.delete(store.galleries[0])
+
+        XCTAssertTrue(store.records.isEmpty)
+        XCTAssertTrue(store.galleries.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
     }
 
     /// Confirms Files renames preserve favorite and metadata identity through digest matching.
@@ -98,6 +162,113 @@ final class SharedMediaStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: restoredStore.fileURL(for: restoredStore.records[0]).path))
     }
 
+    /// Confirms a v2 archive restores gallery metadata and ordered relationships.
+    func testArchiveRoundTripPreservesGallery() async throws {
+        let sourcePaths = try makePaths()
+        let restoredPaths = try makePaths()
+        defer {
+            try? FileManager.default.removeItem(at: sourcePaths.root)
+            try? FileManager.default.removeItem(at: restoredPaths.root)
+        }
+        try writeIncomingGallery(
+            paths: sourcePaths,
+            title: "Archive Gallery",
+            entries: [
+                ("2.png", Data("two".utf8)),
+                ("10.png", Data("ten".utf8))
+            ]
+        )
+        let sourceStore = SharedMediaStore(
+            mediaRootURL: sourcePaths.media,
+            metadataRootURL: sourcePaths.metadata,
+            incomingRootURL: sourcePaths.incoming
+        )
+        await sourceStore.importIncomingAndRefresh()
+        let archiveURL = try await sourceStore.createArchive()
+
+        let restoredStore = SharedMediaStore(
+            mediaRootURL: restoredPaths.media,
+            metadataRootURL: restoredPaths.metadata,
+            incomingRootURL: restoredPaths.incoming
+        )
+        try await restoredStore.importArchive(from: archiveURL)
+
+        let gallery = try XCTUnwrap(restoredStore.galleries.first)
+        XCTAssertEqual(gallery.title, "Archive Gallery")
+        XCTAssertEqual(
+            restoredStore.records(in: gallery).map(\.originalFilename),
+            ["2.png", "10.png"]
+        )
+    }
+
+    /// Confirms the versioned index still loads the legacy record-array format.
+    func testLegacyIndexStillLoads() throws {
+        let paths = try makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        try FileManager.default.createDirectory(at: paths.metadata, withIntermediateDirectories: true)
+        let record = makeRecord(id: UUID(), digest: "legacy")
+        try JSONEncoder().encode([record]).write(to: paths.metadata.appending(path: "index.json"))
+
+        let store = SharedMediaStore(
+            mediaRootURL: paths.media,
+            metadataRootURL: paths.metadata,
+            incomingRootURL: paths.incoming
+        )
+
+        XCTAssertEqual(store.records.map(\.id), [record.id])
+        XCTAssertTrue(store.galleries.isEmpty)
+    }
+
+    /// Confirms a legacy v1 archive still imports media without gallery relationships.
+    func testLegacyArchiveStillImports() async throws {
+        let archivePaths = try makePaths()
+        let restoredPaths = try makePaths()
+        defer {
+            try? FileManager.default.removeItem(at: archivePaths.root)
+            try? FileManager.default.removeItem(at: restoredPaths.root)
+        }
+        let record = makeRecord(id: UUID(), digest: "legacy-archive")
+        let archiveURL = try makeLegacyArchive(paths: archivePaths, record: record)
+        let store = SharedMediaStore(
+            mediaRootURL: restoredPaths.media,
+            metadataRootURL: restoredPaths.metadata,
+            incomingRootURL: restoredPaths.incoming
+        )
+
+        try await store.importArchive(from: archiveURL)
+
+        XCTAssertEqual(store.records.map(\.id), [record.id])
+        XCTAssertTrue(store.galleries.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.fileURL(for: store.records[0]).path))
+    }
+
+    /// Confirms manifest paths cannot escape the extracted archive directory.
+    func testArchiveRejectsUnsafeManifestRecordPath() async throws {
+        let archivePaths = try makePaths()
+        let restoredPaths = try makePaths()
+        defer {
+            try? FileManager.default.removeItem(at: archivePaths.root)
+            try? FileManager.default.removeItem(at: restoredPaths.root)
+        }
+        var record = makeRecord(id: UUID(), digest: "unsafe")
+        record.relativePath = "../escape.png"
+        let archiveURL = try makeLegacyArchive(paths: archivePaths, record: record, includesMedia: false)
+        let store = SharedMediaStore(
+            mediaRootURL: restoredPaths.media,
+            metadataRootURL: restoredPaths.metadata,
+            incomingRootURL: restoredPaths.incoming
+        )
+
+        do {
+            try await store.importArchive(from: archiveURL)
+            XCTFail("Expected unsafe archive path rejection")
+        } catch SharedMediaStoreError.unsafeArchivePath {
+            XCTAssertTrue(store.records.isEmpty)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     /// Creates isolated media, metadata, and incoming directories.
     private func makePaths() throws -> TestPaths {
         let root = FileManager.default.temporaryDirectory.appending(
@@ -138,9 +309,98 @@ final class SharedMediaStoreTests: XCTestCase {
         )
     }
 
+    /// Writes one completed folder-gallery batch with explicit member order.
+    private func writeIncomingGallery(
+        paths: TestPaths,
+        title: String,
+        entries: [(relativePath: String, data: Data)]
+    ) throws {
+        let batchID = UUID()
+        let batchURL = paths.incoming.appending(path: batchID.uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: batchURL, withIntermediateDirectories: true)
+        var items: [SharedMediaIncomingItem] = []
+        for entry in entries {
+            let itemID = UUID()
+            let storedFilename = "\(itemID.uuidString).png"
+            try entry.data.write(to: batchURL.appending(path: storedFilename))
+            items.append(SharedMediaIncomingItem(
+                id: itemID,
+                kind: .image,
+                storedFilename: storedFilename,
+                originalFilename: entry.relativePath,
+                contentType: "public.png"
+            ))
+        }
+        let manifest = SharedMediaIncomingManifest(
+            batchID: batchID,
+            importedAt: Date(),
+            items: items,
+            gallery: SharedMediaIncomingGallery(title: title, memberIDs: items.map(\.id))
+        )
+        try JSONEncoder().encode(manifest).write(
+            to: batchURL.appending(path: SharedMediaConstants.manifestFilename)
+        )
+    }
+
+    /// Creates one legacy-compatible record for index decoding tests.
+    private func makeRecord(id: UUID, digest: String) -> SharedMediaRecord {
+        SharedMediaRecord(
+            id: id,
+            kind: .image,
+            relativePath: "Images/\(id.uuidString).png",
+            originalFilename: "sample.png",
+            contentType: "public.png",
+            importedAt: Date(),
+            batchID: UUID(),
+            byteCount: 1,
+            pixelWidth: 1,
+            pixelHeight: 1,
+            duration: nil,
+            contentDigest: digest,
+            note: nil,
+            isFavorite: false,
+            favoriteOrder: nil,
+            lastPlaybackPosition: 0,
+            playbackCount: 0
+        )
+    }
+
+    /// Creates one portable v1 ZIP fixture using the legacy manifest shape.
+    private func makeLegacyArchive(
+        paths: TestPaths,
+        record: SharedMediaRecord,
+        includesMedia: Bool = true
+    ) throws -> URL {
+        try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true)
+        let sourceURL = paths.root.appending(path: record.relativePath)
+        if includesMedia {
+            try FileManager.default.createDirectory(
+                at: sourceURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Self.pngData.write(to: sourceURL)
+        }
+        let manifestURL = paths.root.appending(path: "manifest.json")
+        try JSONEncoder().encode(LegacyArchiveManifest(records: [record])).write(to: manifestURL)
+        let archiveURL = paths.root.appending(path: "legacy.zip")
+        let archive = try Archive(url: archiveURL, accessMode: .create)
+        try archive.addEntry(with: "manifest.json", fileURL: manifestURL)
+        if includesMedia {
+            try archive.addEntry(with: record.relativePath, fileURL: sourceURL)
+        }
+        return archiveURL
+    }
+
     private static let pngData = Data(base64Encoded:
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
     )!
+}
+
+/// Reproduces the archive manifest written before gallery support.
+private struct LegacyArchiveManifest: Codable {
+    let version = 1
+    let exportedAt = Date()
+    let records: [SharedMediaRecord]
 }
 
 private struct TestPaths {

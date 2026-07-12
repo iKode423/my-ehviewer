@@ -40,11 +40,39 @@ struct SharedMediaIncomingItem: Codable, Hashable, Identifiable {
     }
 }
 
+/// Describes one ordered gallery produced from a shared folder.
+struct SharedMediaIncomingGallery: Codable, Hashable, Identifiable {
+    let id: UUID
+    let title: String
+    let memberIDs: [UUID]
+
+    /// Creates one incoming folder gallery with stable member order.
+    init(id: UUID = UUID(), title: String, memberIDs: [UUID]) {
+        self.id = id
+        self.title = title
+        self.memberIDs = memberIDs
+    }
+}
+
 /// Describes one batch written atomically by the Share Extension.
 struct SharedMediaIncomingManifest: Codable {
     let batchID: UUID
     let importedAt: Date
     let items: [SharedMediaIncomingItem]
+    let gallery: SharedMediaIncomingGallery?
+
+    /// Creates a media batch with an optional shared-folder gallery.
+    init(
+        batchID: UUID,
+        importedAt: Date,
+        items: [SharedMediaIncomingItem],
+        gallery: SharedMediaIncomingGallery? = nil
+    ) {
+        self.batchID = batchID
+        self.importedAt = importedAt
+        self.items = items
+        self.gallery = gallery
+    }
 }
 
 /// Stores all persistent metadata for one shared image or video.
@@ -74,6 +102,15 @@ struct SharedMediaRecord: Codable, Hashable, Identifiable {
     }
 }
 
+/// Stores one local gallery and its ordered media relationships.
+struct SharedMediaGalleryRecord: Codable, Hashable, Identifiable {
+    let id: UUID
+    var title: String
+    var importedAt: Date
+    var coverMediaID: UUID
+    var memberIDs: [UUID]
+}
+
 /// Defines supported filters for the shared media management screen.
 enum SharedMediaFilter: String, CaseIterable, Identifiable {
     case all
@@ -94,16 +131,48 @@ enum SharedMediaConstants {
     static let videosDirectoryName = "Videos"
 }
 
+/// Stores the versioned shared media index used by the host app.
+struct SharedMediaIndex: Codable {
+    let version: Int
+    let records: [SharedMediaRecord]
+    let galleries: [SharedMediaGalleryRecord]
+
+    /// Creates the current persistent index schema.
+    init(records: [SharedMediaRecord], galleries: [SharedMediaGalleryRecord]) {
+        version = 2
+        self.records = records
+        self.galleries = galleries
+    }
+}
+
 /// Stores the portable metadata written into a shared media ZIP archive.
 struct SharedMediaArchiveManifest: Codable {
     let version: Int
     let exportedAt: Date
     let records: [SharedMediaRecord]
+    let galleries: [SharedMediaGalleryRecord]
 
     /// Creates the current archive schema.
-    init(records: [SharedMediaRecord]) {
-        version = 1
+    init(records: [SharedMediaRecord], galleries: [SharedMediaGalleryRecord]) {
+        version = 2
         exportedAt = Date()
         self.records = records
+        self.galleries = galleries
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case exportedAt
+        case records
+        case galleries
+    }
+
+    /// Decodes both legacy v1 archives and current v2 archives.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        exportedAt = try container.decode(Date.self, forKey: .exportedAt)
+        records = try container.decode([SharedMediaRecord].self, forKey: .records)
+        galleries = try container.decodeIfPresent([SharedMediaGalleryRecord].self, forKey: .galleries) ?? []
     }
 }

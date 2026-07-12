@@ -8,7 +8,7 @@ struct SharedMediaView: View {
     @AppStorage("SharedMedia.layoutMode") private var layoutModeRaw = CollectionLayoutMode.grid.rawValue
     @State private var filter = SharedMediaFilter.all
     @State private var mediaFilterText = ""
-    @State private var randomRecords: [SharedMediaRecord]?
+    @State private var randomItems: [SharedMediaDisplayItem]?
     @State private var archiveURL: URL?
     @State private var showsArchiveExporter = false
     @State private var showsArchiveImporter = false
@@ -26,9 +26,9 @@ struct SharedMediaView: View {
                     mediaContent
                 }
 
-                if !filteredRecords.isEmpty {
+                if !filteredItems.isEmpty {
                     Button {
-                        showRandomRecords(scrollProxy: scrollProxy)
+                        showRandomItems(scrollProxy: scrollProxy)
                     } label: {
                         Image(systemName: "shuffle")
                             .font(.headline)
@@ -57,7 +57,7 @@ struct SharedMediaView: View {
             }
         }
         .task { await store.importIncomingAndRefresh() }
-        .onChange(of: filter) { _, _ in randomRecords = nil }
+        .onChange(of: filter) { _, _ in randomItems = nil }
         .sheet(isPresented: $showsArchiveExporter, onDismiss: clearTemporaryArchive) {
             if let archiveURL {
                 SharedMediaDocumentExporter(urls: [archiveURL])
@@ -85,11 +85,16 @@ struct SharedMediaView: View {
     }
 
     private var listContent: some View {
-        List(displayedRecords) { record in
-            destinationLink(for: record) {
-                SharedMediaListRow(record: record)
+        List(displayedItems) { item in
+            destinationLink(for: item) {
+                switch item {
+                case .gallery(let gallery):
+                    SharedMediaGalleryListRow(gallery: gallery)
+                case .media(let record):
+                    SharedMediaListRow(record: record)
+                }
             }
-            .contextMenu { mediaActions(for: record) }
+            .contextMenu { itemActions(for: item) }
         }
         .listStyle(.plain)
         .refreshable { await resetRandomModeAndRefresh() }
@@ -104,24 +109,29 @@ struct SharedMediaView: View {
 
                 ForEach(layoutRows) { row in
                     switch row {
-                    case .images(let records):
+                    case .tiles(let items):
                         HStack(alignment: .top, spacing: 12) {
-                            ForEach(records) { record in
-                                destinationLink(for: record) {
-                                    SharedMediaGridCard(record: record)
+                            ForEach(items) { item in
+                                destinationLink(for: item) {
+                                    switch item {
+                                    case .gallery(let gallery):
+                                        SharedMediaGalleryGridCard(gallery: gallery)
+                                    case .media(let record):
+                                        SharedMediaGridCard(record: record)
+                                    }
                                 }
                                 .buttonStyle(.plain)
-                                .contextMenu { mediaActions(for: record) }
+                                .contextMenu { itemActions(for: item) }
                                 .frame(maxWidth: .infinity, alignment: .top)
                             }
 
-                            if records.count == 1 {
+                            if items.count == 1 {
                                 Color.clear
                                     .frame(maxWidth: .infinity)
                             }
                         }
                     case .video(let record):
-                        destinationLink(for: record) {
+                        destinationLink(for: .media(record)) {
                             SharedMediaVideoRow(record: record)
                         }
                         .buttonStyle(.plain)
@@ -130,14 +140,14 @@ struct SharedMediaView: View {
                 }
             }
             .padding(12)
-            .padding(.bottom, filteredRecords.isEmpty ? 0 : 64)
+            .padding(.bottom, filteredItems.isEmpty ? 0 : 64)
         }
         .refreshable { await resetRandomModeAndRefresh() }
     }
 
     @ViewBuilder
     private var mediaContent: some View {
-        if displayedRecords.isEmpty {
+        if displayedItems.isEmpty {
             ScrollView {
                 ContentUnavailableView(
                     mediaFilterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -183,7 +193,7 @@ struct SharedMediaView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
-            if randomRecords == nil, filter != .videos, filter != .favoriteVideos {
+            if randomItems == nil, filter != .videos, filter != .favoriteVideos {
                 Button {
                     layoutModeRaw = (layoutMode == .list ? CollectionLayoutMode.grid : .list).rawValue
                 } label: {
@@ -208,24 +218,47 @@ struct SharedMediaView: View {
 
     @ViewBuilder
     private func destinationLink<Label: View>(
-        for record: SharedMediaRecord,
+        for item: SharedMediaDisplayItem,
         @ViewBuilder label: () -> Label
     ) -> some View {
-        if record.kind == .image {
+        switch item {
+        case .gallery(let gallery):
             NavigationLink {
-                SharedImageReaderView(
-                    records: readerRecords(for: record),
-                    initialRecordID: record.id
-                )
+                SharedMediaGalleryView(galleryID: gallery.id)
             } label: {
                 label()
             }
-        } else {
-            NavigationLink {
-                SharedVideoPlayerView(recordID: record.id)
-            } label: {
-                label()
+        case .media(let record):
+            if record.kind == .image {
+                NavigationLink {
+                    SharedImageReaderView(
+                        records: readerRecords(for: record),
+                        initialRecordID: record.id
+                    )
+                } label: {
+                    label()
+                }
+            } else {
+                NavigationLink {
+                    SharedVideoPlayerView(recordID: record.id)
+                } label: {
+                    label()
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func itemActions(for item: SharedMediaDisplayItem) -> some View {
+        switch item {
+        case .gallery(let gallery):
+            Button(role: .destructive) {
+                store.delete(gallery)
+            } label: {
+                Label(AppCopy.sharedMediaDeleteGallery, systemImage: "trash")
+            }
+        case .media(let record):
+            mediaActions(for: record)
         }
     }
 
@@ -270,59 +303,78 @@ struct SharedMediaView: View {
         }
     }
 
-    private var filteredRecords: [SharedMediaRecord] {
-        let sourceRecords: [SharedMediaRecord]
+    private var filteredItems: [SharedMediaDisplayItem] {
+        let sourceItems: [SharedMediaDisplayItem]
         switch filter {
-        case .all: sourceRecords = store.records.sorted { $0.importedAt > $1.importedAt }
-        case .images: sourceRecords = store.imageRecords
-        case .videos: sourceRecords = store.videoRecords
-        case .favoriteVideos: sourceRecords = store.favoriteVideos
+        case .all:
+            let galleryMemberIDs = Set(store.galleries.flatMap(\.memberIDs))
+            sourceItems = (
+                store.galleries.map(SharedMediaDisplayItem.gallery)
+                    + store.records
+                        .filter { !galleryMemberIDs.contains($0.id) }
+                        .map(SharedMediaDisplayItem.media)
+            ).sorted { $0.importedAt > $1.importedAt }
+        case .images:
+            sourceItems = store.imageRecords.map(SharedMediaDisplayItem.media)
+        case .videos:
+            sourceItems = store.videoRecords.map(SharedMediaDisplayItem.media)
+        case .favoriteVideos:
+            sourceItems = store.favoriteVideos.map(SharedMediaDisplayItem.media)
         }
 
         let trimmedFilterText = mediaFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedFilterText.isEmpty else { return sourceRecords }
-        return sourceRecords.filter { record in
-            record.originalFilename.localizedCaseInsensitiveContains(trimmedFilterText)
-                || (record.note?.localizedCaseInsensitiveContains(trimmedFilterText) ?? false)
+        guard !trimmedFilterText.isEmpty else { return sourceItems }
+        return sourceItems.filter { item in
+            switch item {
+            case .gallery(let gallery):
+                return gallery.title.localizedCaseInsensitiveContains(trimmedFilterText)
+                    || store.records(in: gallery).contains { record in
+                        record.originalFilename.localizedCaseInsensitiveContains(trimmedFilterText)
+                            || (record.note?.localizedCaseInsensitiveContains(trimmedFilterText) ?? false)
+                    }
+            case .media(let record):
+                return record.originalFilename.localizedCaseInsensitiveContains(trimmedFilterText)
+                    || (record.note?.localizedCaseInsensitiveContains(trimmedFilterText) ?? false)
+            }
         }
     }
 
-    private var displayedRecords: [SharedMediaRecord] {
-        guard let randomRecords else { return filteredRecords }
-        return randomRecords.filter { randomRecord in
-            filteredRecords.contains(where: { $0.id == randomRecord.id })
+    private var displayedItems: [SharedMediaDisplayItem] {
+        guard let randomItems else { return filteredItems }
+        return randomItems.filter { randomItem in
+            filteredItems.contains(where: { $0.id == randomItem.id })
         }
     }
 
     /// Groups images into pairs while keeping every video on its own row.
     private var layoutRows: [SharedMediaLayoutRow] {
         var rows: [SharedMediaLayoutRow] = []
-        var pendingImages: [SharedMediaRecord] = []
+        var pendingTiles: [SharedMediaDisplayItem] = []
 
-        func flushImages() {
-            guard !pendingImages.isEmpty else { return }
-            rows.append(.images(pendingImages))
-            pendingImages = []
+        func flushTiles() {
+            guard !pendingTiles.isEmpty else { return }
+            rows.append(.tiles(pendingTiles))
+            pendingTiles = []
         }
 
-        for record in displayedRecords {
-            if record.kind == .video {
-                flushImages()
+        for item in displayedItems {
+            if case .media(let record) = item, record.kind == .video {
+                flushTiles()
                 rows.append(.video(record))
             } else {
-                pendingImages.append(record)
-                if pendingImages.count == 2 {
-                    flushImages()
+                pendingTiles.append(item)
+                if pendingTiles.count == 2 {
+                    flushTiles()
                 }
             }
         }
-        flushImages()
+        flushTiles()
         return rows
     }
 
     /// Enters random mode and scrolls after the grid replaces the current layout.
-    private func showRandomRecords(scrollProxy: ScrollViewProxy) {
-        randomRecords = Array(filteredRecords.shuffled().prefix(10))
+    private func showRandomItems(scrollProxy: ScrollViewProxy) {
+        randomItems = Array(filteredItems.shuffled().prefix(10))
         Task { @MainActor in
             await Task.yield()
             scrollProxy.scrollTo(Self.scrollTopID, anchor: .top)
@@ -331,12 +383,12 @@ struct SharedMediaView: View {
 
     /// Leaves random mode before synchronizing new shared files.
     private func resetRandomModeAndRefresh() async {
-        randomRecords = nil
+        randomItems = nil
         await store.importIncomingAndRefresh()
     }
 
     private var usesGridLayout: Bool {
-        randomRecords != nil
+        randomItems != nil
             || filter == .videos
             || filter == .favoriteVideos
             || layoutMode == .grid
@@ -356,6 +408,10 @@ struct SharedMediaView: View {
 
     /// Returns images from the selected share batch in import order.
     private func readerRecords(for record: SharedMediaRecord) -> [SharedMediaRecord] {
+        if let gallery = store.galleries(containing: record).first {
+            let galleryImages = store.records(in: gallery).filter { $0.kind == .image }
+            if !galleryImages.isEmpty { return galleryImages }
+        }
         let batchRecords = store.imageRecords
             .filter { $0.batchID == record.batchID }
             .sorted { $0.importedAt < $1.importedAt }
@@ -425,18 +481,116 @@ struct SharedMediaView: View {
     }
 }
 
+/// Represents one top-level entry in the shared media screen.
+private enum SharedMediaDisplayItem: Identifiable, Hashable {
+    case gallery(SharedMediaGalleryRecord)
+    case media(SharedMediaRecord)
+
+    var id: String {
+        switch self {
+        case .gallery(let gallery): "gallery-\(gallery.id.uuidString)"
+        case .media(let record): "media-\(record.id.uuidString)"
+        }
+    }
+
+    var importedAt: Date {
+        switch self {
+        case .gallery(let gallery): gallery.importedAt
+        case .media(let record): record.importedAt
+        }
+    }
+}
 
 /// Describes one visual row containing either two images or one video.
 private enum SharedMediaLayoutRow: Identifiable {
-    case images([SharedMediaRecord])
+    case tiles([SharedMediaDisplayItem])
     case video(SharedMediaRecord)
 
     var id: String {
         switch self {
-        case .images(let records):
-            return "images-\(records.map { $0.id.uuidString }.joined(separator: "-"))"
+        case .tiles(let items):
+            return "tiles-\(items.map(\.id).joined(separator: "-"))"
         case .video(let record):
             return "video-\(record.id.uuidString)"
+        }
+    }
+}
+
+/// Displays one folder gallery as a compact list row.
+private struct SharedMediaGalleryListRow: View {
+    @EnvironmentObject private var store: SharedMediaStore
+    let gallery: SharedMediaGalleryRecord
+
+    var body: some View {
+        HStack(spacing: 12) {
+            galleryCover
+                .frame(width: 86, height: 86)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            SharedMediaGalleryDetails(gallery: gallery)
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var galleryCover: some View {
+        if let coverRecord = store.records.first(where: { $0.id == gallery.coverMediaID }) {
+            SharedMediaThumbnail(record: coverRecord)
+        } else {
+            Color.secondary.opacity(0.12)
+                .overlay { Image(systemName: "photo.on.rectangle.angled") }
+        }
+    }
+}
+
+/// Displays one folder gallery as a stable square grid card.
+private struct SharedMediaGalleryGridCard: View {
+    @EnvironmentObject private var store: SharedMediaStore
+    let gallery: SharedMediaGalleryRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            GeometryReader { proxy in
+                galleryCover
+                    .frame(width: proxy.size.width, height: proxy.size.width)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .aspectRatio(1, contentMode: .fit)
+
+            SharedMediaGalleryDetails(gallery: gallery)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var galleryCover: some View {
+        if let coverRecord = store.records.first(where: { $0.id == gallery.coverMediaID }) {
+            SharedMediaThumbnail(record: coverRecord)
+        } else {
+            Color.secondary.opacity(0.12)
+                .overlay { Image(systemName: "photo.on.rectangle.angled") }
+        }
+    }
+}
+
+/// Displays local gallery title and member count.
+private struct SharedMediaGalleryDetails: View {
+    let gallery: SharedMediaGalleryRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: "photo.on.rectangle.angled")
+                Text(gallery.title)
+                    .lineLimit(2)
+            }
+            .font(.subheadline.weight(.semibold))
+
+            Text("\(gallery.memberIDs.count) \(AppCopy.sharedMediaGalleryItems)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -527,6 +681,84 @@ private struct SharedMediaCardDetails: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Displays one shared folder as an ordered mixed-media gallery.
+private struct SharedMediaGalleryView: View {
+    @EnvironmentObject private var store: SharedMediaStore
+    let galleryID: UUID
+    private let columns = Array(
+        repeating: GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 10),
+        count: 3
+    )
+
+    var body: some View {
+        Group {
+            if let gallery {
+                ScrollView {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+                        ForEach(records) { record in
+                            destinationLink(for: record) {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    GeometryReader { proxy in
+                                        SharedMediaThumbnail(record: record)
+                                            .frame(width: proxy.size.width, height: proxy.size.height)
+                                    }
+                                    .aspectRatio(0.72, contentMode: .fit)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                                    Text(record.displayName)
+                                        .font(.caption)
+                                        .lineLimit(1)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(12)
+                }
+                .navigationTitle(gallery.title)
+            } else {
+                ContentUnavailableView(AppCopy.sharedMediaGallery, systemImage: "photo.on.rectangle.angled")
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var gallery: SharedMediaGalleryRecord? {
+        store.galleries.first { $0.id == galleryID }
+    }
+
+    private var records: [SharedMediaRecord] {
+        guard let gallery else { return [] }
+        return store.records(in: gallery)
+    }
+
+    private var imageRecords: [SharedMediaRecord] {
+        records.filter { $0.kind == .image }
+    }
+
+    @ViewBuilder
+    private func destinationLink<Label: View>(
+        for record: SharedMediaRecord,
+        @ViewBuilder label: () -> Label
+    ) -> some View {
+        if record.kind == .image {
+            NavigationLink {
+                SharedImageReaderView(records: imageRecords, initialRecordID: record.id)
+            } label: {
+                label()
+            }
+        } else {
+            NavigationLink {
+                SharedVideoPlayerView(recordID: record.id)
+            } label: {
+                label()
+            }
         }
     }
 }

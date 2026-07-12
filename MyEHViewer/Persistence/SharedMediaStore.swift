@@ -22,6 +22,7 @@ final class SharedMediaStore: ObservableObject {
     }()
 
     @Published private(set) var records: [SharedMediaRecord] = []
+    @Published private(set) var galleries: [SharedMediaGalleryRecord] = []
     @Published private(set) var isImporting = false
     @Published private(set) var isTransferringArchive = false
     @Published private(set) var transferMessage: String?
@@ -94,6 +95,19 @@ final class SharedMediaStore: ObservableObject {
     /// Resolves the current local file URL for one media record.
     func fileURL(for record: SharedMediaRecord) -> URL {
         mediaRootURL.appending(path: record.relativePath)
+    }
+
+    /// Returns the existing records in one gallery's persisted order.
+    func records(in gallery: SharedMediaGalleryRecord) -> [SharedMediaRecord] {
+        let recordsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        return gallery.memberIDs.compactMap { recordsByID[$0] }
+    }
+
+    /// Returns galleries containing one media record, newest first.
+    func galleries(containing record: SharedMediaRecord) -> [SharedMediaGalleryRecord] {
+        galleries
+            .filter { $0.memberIDs.contains(record.id) }
+            .sorted { $0.importedAt > $1.importedAt }
     }
 
     /// Imports completed Share Extension batches and synchronizes Files changes.
@@ -172,7 +186,31 @@ final class SharedMediaStore: ObservableObject {
     func delete(_ record: SharedMediaRecord) {
         try? fileManager.removeItem(at: fileURL(for: record))
         records.removeAll { $0.id == record.id }
+        galleries = galleries.compactMap { gallery in
+            var updatedGallery = gallery
+            updatedGallery.memberIDs.removeAll { $0 == record.id }
+            guard let coverMediaID = updatedGallery.memberIDs.first else { return nil }
+            if updatedGallery.coverMediaID == record.id {
+                updatedGallery.coverMediaID = coverMediaID
+            }
+            return updatedGallery
+        }
         normalizeFavoriteOrder(kind: record.kind)
+        saveIndex()
+    }
+
+    /// Deletes one gallery and media files that no remaining gallery references.
+    func delete(_ gallery: SharedMediaGalleryRecord) {
+        galleries.removeAll { $0.id == gallery.id }
+        let referencedIDs = Set(galleries.flatMap(\.memberIDs))
+        let orphanIDs = Set(gallery.memberIDs).subtracting(referencedIDs)
+        let orphanRecords = records.filter { orphanIDs.contains($0.id) }
+        for record in orphanRecords {
+            try? fileManager.removeItem(at: fileURL(for: record))
+        }
+        records.removeAll { orphanIDs.contains($0.id) }
+        normalizeFavoriteOrder(kind: .image)
+        normalizeFavoriteOrder(kind: .video)
         saveIndex()
     }
 
@@ -182,6 +220,7 @@ final class SharedMediaStore: ObservableObject {
         isTransferringArchive = true
         defer { isTransferringArchive = false }
         let records = records
+        let galleries = galleries
         let mediaRootURL = mediaRootURL
         let temporaryDirectory = fileManager.temporaryDirectory.appending(
             path: "SharedMediaExport-\(UUID().uuidString)",
@@ -190,7 +229,9 @@ final class SharedMediaStore: ObservableObject {
         try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
         let archiveURL = temporaryDirectory.appending(path: "EHReader-SharedMedia.zip")
         let manifestURL = temporaryDirectory.appending(path: "manifest.json")
-        let manifestData = try JSONEncoder.pretty.encode(SharedMediaArchiveManifest(records: records))
+        let manifestData = try JSONEncoder.pretty.encode(
+            SharedMediaArchiveManifest(records: records, galleries: galleries)
+        )
         try manifestData.write(to: manifestURL, options: [.atomic])
 
         return try await Task.detached(priority: .utility) {
@@ -237,12 +278,26 @@ final class SharedMediaStore: ObservableObject {
             SharedMediaArchiveManifest.self,
             from: Data(contentsOf: manifestURL)
         )
-        guard manifest.version == 1 else { throw SharedMediaStoreError.unsupportedArchiveVersion }
+        guard manifest.version == 1 || manifest.version == 2 else {
+            throw SharedMediaStoreError.unsupportedArchiveVersion
+        }
 
+        var importedMediaIDs: [UUID: UUID] = [:]
         for importedRecord in manifest.records {
-            let sourceURL = temporaryDirectory.appending(path: importedRecord.relativePath)
+            guard Self.isSafeArchivePath(importedRecord.relativePath) else {
+                throw SharedMediaStoreError.unsafeArchivePath
+            }
+            let sourceURL = temporaryDirectory
+                .appending(path: importedRecord.relativePath)
+                .standardizedFileURL
+            guard Self.contains(sourceURL, in: temporaryDirectory) else {
+                throw SharedMediaStoreError.unsafeArchivePath
+            }
             guard fileManager.fileExists(atPath: sourceURL.path) else { continue }
-            if records.contains(where: { $0.contentDigest == importedRecord.contentDigest }) { continue }
+            if let existingRecord = records.first(where: { $0.contentDigest == importedRecord.contentDigest }) {
+                importedMediaIDs[importedRecord.id] = existingRecord.id
+                continue
+            }
             let newID = records.contains(where: { $0.id == importedRecord.id }) ? UUID() : importedRecord.id
             let destinationDirectory = directoryURL(for: importedRecord.kind)
             let destinationFilename = persistentFilename(id: newID, originalFilename: importedRecord.originalFilename)
@@ -269,6 +324,27 @@ final class SharedMediaStore: ObservableObject {
                 playbackCount: importedRecord.playbackCount
             )
             records.append(record)
+            importedMediaIDs[importedRecord.id] = newID
+        }
+        if manifest.version == 2 {
+            for importedGallery in manifest.galleries {
+                let memberIDs = Self.uniqueIDs(
+                    importedGallery.memberIDs.compactMap { importedMediaIDs[$0] }
+                )
+                guard let coverMediaID = memberIDs.first else { continue }
+                let galleryID = galleries.contains(where: { $0.id == importedGallery.id })
+                    ? UUID()
+                    : importedGallery.id
+                let importedCoverMediaID = importedMediaIDs[importedGallery.coverMediaID]
+                galleries.append(SharedMediaGalleryRecord(
+                    id: galleryID,
+                    title: importedGallery.title,
+                    importedAt: importedGallery.importedAt,
+                    coverMediaID: importedCoverMediaID.map { memberIDs.contains($0) ? $0 : coverMediaID }
+                        ?? coverMediaID,
+                    memberIDs: memberIDs
+                ))
+            }
         }
         normalizeFavoriteOrder(kind: .image)
         normalizeFavoriteOrder(kind: .video)
@@ -289,20 +365,29 @@ final class SharedMediaStore: ObservableObject {
                 SharedMediaIncomingManifest.self,
                 from: Data(contentsOf: manifestURL)
             )
+            var importedMediaIDs: [UUID: UUID] = [:]
             for item in manifest.items {
-                let sourceURL = batchURL.appending(path: item.storedFilename)
+                guard Self.isSafeRelativePath(item.storedFilename) else {
+                    throw SharedMediaStoreError.unsafeIncomingPath
+                }
+                let sourceURL = batchURL.appending(path: item.storedFilename).standardizedFileURL
+                guard Self.contains(sourceURL, in: batchURL) else {
+                    throw SharedMediaStoreError.unsafeIncomingPath
+                }
                 guard fileManager.fileExists(atPath: sourceURL.path) else { continue }
                 let digest = try await Self.digest(for: sourceURL)
-                if records.contains(where: { $0.contentDigest == digest }) {
+                if let existingRecord = records.first(where: { $0.contentDigest == digest }) {
+                    importedMediaIDs[item.id] = existingRecord.id
                     continue
                 }
+                let metadata = try await Self.metadata(for: sourceURL, kind: item.kind)
                 let destinationDirectory = directoryURL(for: item.kind)
-                let destinationFilename = persistentFilename(id: item.id, originalFilename: item.originalFilename)
+                let recordID = records.contains(where: { $0.id == item.id }) ? UUID() : item.id
+                let destinationFilename = persistentFilename(id: recordID, originalFilename: item.originalFilename)
                 let destinationURL = destinationDirectory.appending(path: destinationFilename)
                 try fileManager.moveItem(at: sourceURL, to: destinationURL)
-                let metadata = try await Self.metadata(for: destinationURL, kind: item.kind)
                 records.append(SharedMediaRecord(
-                    id: item.id,
+                    id: recordID,
                     kind: item.kind,
                     relativePath: relativePath(for: destinationURL, kind: item.kind),
                     originalFilename: item.originalFilename,
@@ -320,6 +405,24 @@ final class SharedMediaStore: ObservableObject {
                     lastPlaybackPosition: 0,
                     playbackCount: 0
                 ))
+                importedMediaIDs[item.id] = recordID
+            }
+            if let incomingGallery = manifest.gallery {
+                let memberIDs = Self.uniqueIDs(
+                    incomingGallery.memberIDs.compactMap { importedMediaIDs[$0] }
+                )
+                if let coverMediaID = memberIDs.first {
+                    let galleryID = galleries.contains(where: { $0.id == incomingGallery.id })
+                        ? UUID()
+                        : incomingGallery.id
+                    galleries.append(SharedMediaGalleryRecord(
+                        id: galleryID,
+                        title: incomingGallery.title,
+                        importedAt: manifest.importedAt,
+                        coverMediaID: coverMediaID,
+                        memberIDs: memberIDs
+                    ))
+                }
             }
             try? fileManager.removeItem(at: batchURL)
         }
@@ -379,6 +482,7 @@ final class SharedMediaStore: ObservableObject {
                 playbackCount: 0
             ))
         }
+        reconcileGalleries()
         saveIndex()
     }
 
@@ -424,22 +528,44 @@ final class SharedMediaStore: ObservableObject {
 
     /// Loads the persisted metadata index without scanning media files.
     private func loadIndex() {
-        guard
-            let data = try? Data(contentsOf: indexURL),
-            let storedRecords = try? JSONDecoder().decode([SharedMediaRecord].self, from: data)
-        else {
+        guard let data = try? Data(contentsOf: indexURL) else { return }
+        if let index = try? JSONDecoder().decode(SharedMediaIndex.self, from: data) {
+            records = index.records
+            galleries = index.galleries
+            reconcileGalleries()
             return
         }
-        records = storedRecords
+        if let storedRecords = try? JSONDecoder().decode([SharedMediaRecord].self, from: data) {
+            records = storedRecords
+            galleries = []
+        }
     }
 
     /// Persists the current metadata index atomically.
     private func saveIndex() {
         do {
-            let data = try JSONEncoder.pretty.encode(records)
+            let data = try JSONEncoder.pretty.encode(
+                SharedMediaIndex(records: records, galleries: galleries)
+            )
             try data.write(to: indexURL, options: [.atomic])
         } catch {
             transferMessage = error.localizedDescription
+        }
+    }
+
+    /// Removes missing members and empty galleries after external file changes.
+    private func reconcileGalleries() {
+        let recordIDs = Set(records.map(\.id))
+        galleries = galleries.compactMap { gallery in
+            var updatedGallery = gallery
+            updatedGallery.memberIDs = Self.uniqueIDs(
+                gallery.memberIDs.filter { recordIDs.contains($0) }
+            )
+            guard let firstMemberID = updatedGallery.memberIDs.first else { return nil }
+            if !recordIDs.contains(updatedGallery.coverMediaID) {
+                updatedGallery.coverMediaID = firstMemberID
+            }
+            return updatedGallery
         }
     }
 
@@ -473,7 +599,32 @@ final class SharedMediaStore: ObservableObject {
 
     /// Rejects absolute and parent-traversing ZIP paths.
     nonisolated private static func isSafeArchivePath(_ path: String) -> Bool {
-        !path.hasPrefix("/") && !path.split(separator: "/").contains("..")
+        isSafeRelativePath(path)
+    }
+
+    /// Rejects absolute, empty, and parent-traversing relative paths.
+    nonisolated private static func isSafeRelativePath(_ path: String) -> Bool {
+        !path.isEmpty
+            && !path.hasPrefix("/")
+            && !path.split(separator: "/", omittingEmptySubsequences: false).contains("..")
+    }
+
+    /// Confirms a standardized URL remains below an expected directory.
+    nonisolated private static func contains(_ childURL: URL, in directoryURL: URL) -> Bool {
+        let directoryComponents = directoryURL.standardizedFileURL
+            .resolvingSymlinksInPath()
+            .pathComponents
+        let childComponents = childURL.standardizedFileURL
+            .resolvingSymlinksInPath()
+            .pathComponents
+        return childComponents.count > directoryComponents.count
+            && childComponents.starts(with: directoryComponents)
+    }
+
+    /// Removes repeated identifiers while preserving their first position.
+    nonisolated private static func uniqueIDs(_ ids: [UUID]) -> [UUID] {
+        var seen: Set<UUID> = []
+        return ids.filter { seen.insert($0).inserted }
     }
 
     /// Computes a streaming SHA-256 digest without loading large videos into memory.
@@ -544,6 +695,7 @@ private struct SharedMediaMetadata: Sendable {
 /// Describes persistent shared media failures shown to the user.
 enum SharedMediaStoreError: LocalizedError {
     case unreadableFile
+    case unsafeIncomingPath
     case unsafeArchivePath
     case unsupportedArchiveVersion
     case transferInProgress
@@ -551,6 +703,7 @@ enum SharedMediaStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unreadableFile: "无法读取分享媒体文件。"
+        case .unsafeIncomingPath: "分享文件夹中包含不安全的文件路径。"
         case .unsafeArchivePath: "ZIP 中包含不安全的文件路径。"
         case .unsupportedArchiveVersion: "该分享媒体备份版本不受支持。"
         case .transferInProgress: "已有分享媒体导入或导出任务正在进行。"
