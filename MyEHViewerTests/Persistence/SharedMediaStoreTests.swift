@@ -73,6 +73,74 @@ final class SharedMediaStoreTests: XCTestCase {
         XCTAssertEqual(gallery.coverMediaID, gallery.memberIDs.first)
     }
 
+    /// Confirms a selected folder becomes one naturally ordered local gallery.
+    func testImportFolderCreatesOrderedGalleryAndFiltersUnsupportedEntries() async throws {
+        let paths = try makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let sourceURL = paths.root.appending(
+            path: "Selected Folder",
+            directoryHint: .isDirectory
+        )
+        let chapterURL = sourceURL.appending(path: "chapter", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: chapterURL, withIntermediateDirectories: true)
+        var tenPNG = Self.pngData
+        var twoPNG = Self.pngData
+        tenPNG.append(10)
+        twoPNG.append(2)
+        try tenPNG.write(to: chapterURL.appending(path: "10.png"))
+        try twoPNG.write(to: chapterURL.appending(path: "2.png"))
+        try Self.pngData.write(to: sourceURL.appending(path: ".hidden.png"))
+        try Data("notes".utf8).write(to: sourceURL.appending(path: "notes.txt"))
+        try FileManager.default.createSymbolicLink(
+            at: chapterURL.appending(path: "linked.png"),
+            withDestinationURL: chapterURL.appending(path: "2.png")
+        )
+        let store = SharedMediaStore(
+            mediaRootURL: paths.media,
+            metadataRootURL: paths.metadata,
+            incomingRootURL: paths.incoming
+        )
+
+        try await store.importFolder(from: sourceURL)
+
+        let gallery = try XCTUnwrap(store.galleries.first)
+        XCTAssertEqual(gallery.title, "Selected Folder")
+        XCTAssertEqual(
+            store.records(in: gallery).map(\.originalFilename),
+            ["chapter/2.png", "chapter/10.png"]
+        )
+        XCTAssertEqual(store.records.count, 2)
+        XCTAssertTrue(store.records.allSatisfy {
+            FileManager.default.fileExists(atPath: store.fileURL(for: $0).path)
+        })
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: paths.incoming.path), [])
+    }
+
+    /// Confirms a folder without supported media does not create an empty gallery.
+    func testImportFolderRejectsFolderWithoutSupportedMedia() async throws {
+        let paths = try makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let sourceURL = paths.root.appending(path: "Documents", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+        try Data("notes".utf8).write(to: sourceURL.appending(path: "notes.txt"))
+        let store = SharedMediaStore(
+            mediaRootURL: paths.media,
+            metadataRootURL: paths.metadata,
+            incomingRootURL: paths.incoming
+        )
+
+        do {
+            try await store.importFolder(from: sourceURL)
+            XCTFail("Expected unsupported folder rejection")
+        } catch SharedMediaStoreError.noSupportedFolderMedia {
+            XCTAssertTrue(store.records.isEmpty)
+            XCTAssertTrue(store.galleries.isEmpty)
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: paths.incoming.path), [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     /// Confirms duplicate bytes can belong to two galleries and delete by final reference.
     func testDeleteGalleryPreservesSharedMediaUntilLastReference() async throws {
         let paths = try makePaths()

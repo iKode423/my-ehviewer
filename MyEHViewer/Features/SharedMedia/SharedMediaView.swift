@@ -12,6 +12,7 @@ struct SharedMediaView: View {
     @State private var archiveURL: URL?
     @State private var showsArchiveExporter = false
     @State private var showsArchiveImporter = false
+    @State private var showsFolderImporter = false
     @State private var transferAlert: SharedMediaTransferAlert?
     @State private var editingRecord: SharedMediaRecord?
     @State private var noteText = ""
@@ -68,6 +69,12 @@ struct SharedMediaView: View {
             allowedContentTypes: [.zip],
             allowsMultipleSelection: false,
             onCompletion: importArchive
+        )
+        .fileImporter(
+            isPresented: $showsFolderImporter,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false,
+            onCompletion: importFolder
         )
         .alert(item: $transferAlert) { alert in
             Alert(
@@ -208,6 +215,9 @@ struct SharedMediaView: View {
                 }
                 Button { showsArchiveImporter = true } label: {
                     Label(AppCopy.sharedMediaImportArchive, systemImage: "square.and.arrow.down")
+                }
+                Button { showsFolderImporter = true } label: {
+                    Label(AppCopy.sharedMediaImportFolder, systemImage: "folder.badge.plus")
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -463,6 +473,28 @@ struct SharedMediaView: View {
                 transferAlert = SharedMediaTransferAlert(
                     title: AppCopy.sharedMediaImportSucceeded,
                     message: AppCopy.sharedMediaImportSucceededMessage
+                )
+            } catch {
+                transferAlert = SharedMediaTransferAlert(
+                    title: AppCopy.sharedMediaImportFailed,
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    /// Imports one security-scoped folder selected from Files as a local gallery.
+    private func importFolder(_ result: Result<[URL], Error>) {
+        Task {
+            do {
+                let urls = try result.get()
+                guard let url = urls.first else { return }
+                let hasAccess = url.startAccessingSecurityScopedResource()
+                defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
+                try await store.importFolder(from: url)
+                transferAlert = SharedMediaTransferAlert(
+                    title: AppCopy.sharedMediaImportSucceeded,
+                    message: AppCopy.sharedMediaImportFolderSucceededMessage
                 )
             } catch {
                 transferAlert = SharedMediaTransferAlert(
