@@ -1388,6 +1388,32 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertFalse(model.hasMore)
     }
 
+    /// Confirms returning to discovery keeps the current randomized round unchanged.
+    @MainActor
+    func testDiscoveryViewModelInitializesOnlyOnce() {
+        var usesReversedOrder = false
+        let model = DiscoveryViewModel { identifiers in
+            usesReversedOrder.toggle()
+            let sortedIdentifiers = identifiers.sorted()
+            return usesReversedOrder ? sortedIdentifiers : Array(sortedIdentifiers.reversed())
+        }
+        let items = (0..<6).map { index in
+            LocalDiscoveryItem.sharedGallery(SharedMediaGalleryRecord(
+                id: UUID(),
+                title: "Gallery \(index)",
+                importedAt: Date(timeIntervalSince1970: TimeInterval(index)),
+                coverMediaID: UUID(),
+                memberIDs: [UUID()]
+            ))
+        }
+
+        model.initialize(items: items)
+        let initialIDs = model.visibleItems.map(\.id)
+        model.initialize(items: items)
+
+        XCTAssertEqual(model.visibleItems.map(\.id), initialIDs)
+    }
+
     /// Confirms landscape temporarily overrides the stored reader fit preference.
     func testReaderFitModeUsesHeightInLandscapeOnly() {
         XCTAssertEqual(
@@ -1404,6 +1430,125 @@ final class MyEHViewerTests: XCTestCase {
             ),
             .fitHeight
         )
+    }
+
+    /// Confirms height-fit uses the long screen edge in portrait and landscape.
+    func testReaderFitHeightUsesViewportLongEdge() {
+        XCTAssertEqual(
+            ReaderViewportLayout.fitHeightExtent(viewportSize: CGSize(width: 390, height: 844)),
+            844
+        )
+        XCTAssertEqual(
+            ReaderViewportLayout.fitHeightExtent(viewportSize: CGSize(width: 844, height: 390)),
+            844
+        )
+    }
+
+    /// Confirms fit calculations preserve image aspect ratio in every orientation.
+    func testReaderImageSizeUsesFitModeAndImageAspectRatio() {
+        let imageSize = CGSize(width: 800, height: 1600)
+
+        XCTAssertEqual(
+            ReaderViewportLayout.imageSize(
+                imageSize: imageSize,
+                mode: .fitHeight,
+                viewportSize: CGSize(width: 390, height: 844)
+            ),
+            CGSize(width: 422, height: 844)
+        )
+        XCTAssertEqual(
+            ReaderViewportLayout.imageSize(
+                imageSize: imageSize,
+                mode: .fitHeight,
+                viewportSize: CGSize(width: 844, height: 390)
+            ),
+            CGSize(width: 422, height: 844)
+        )
+    }
+
+    /// Confirms programmatic zoom keeps the same image coordinate beneath the screen center.
+    func testReaderProgrammaticZoomPreservesViewportCenterAnchor() {
+        let viewportSize = CGSize(width: 390, height: 844)
+        let centerAnchor = ReaderViewportLayout.viewportCenterAnchor(
+            contentOffset: .zero,
+            viewportSize: viewportSize,
+            zoomScale: 1
+        )
+        let zoomedOffset = ReaderViewportLayout.contentOffset(
+            centeredOn: centerAnchor,
+            viewportSize: viewportSize,
+            zoomScale: 2
+        )
+
+        XCTAssertEqual(centerAnchor, CGPoint(x: 195, y: 422))
+        XCTAssertEqual(zoomedOffset, CGPoint(x: 195, y: 422))
+        XCTAssertEqual(
+            ReaderViewportLayout.viewportCenterAnchor(
+                contentOffset: zoomedOffset,
+                viewportSize: viewportSize,
+                zoomScale: 2
+            ),
+            centerAnchor
+        )
+    }
+
+    /// Confirms pinch callbacks preserve the native scroll offset chosen from the gesture centroid.
+    @MainActor
+    func testReaderPinchZoomKeepsNativeGestureAnchor() {
+        let zoomView = CenteredReaderZoomScrollView(
+            contentSize: CGSize(width: 800, height: 1600),
+            zoomScale: .constant(2),
+            minimumZoomScale: 1,
+            maximumZoomScale: 4,
+            showsIndicators: false
+        ) {
+            Color.clear
+        }
+        let coordinator = zoomView.makeCoordinator()
+        let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        scrollView.contentSize = CGSize(width: 800, height: 1600)
+        scrollView.contentOffset = CGPoint(x: 120, y: 240)
+
+        coordinator.scrollViewDidZoom(scrollView)
+
+        XCTAssertEqual(scrollView.contentOffset, CGPoint(x: 120, y: 240))
+    }
+
+    /// Confirms SwiftUI state updates retain the native zoom range and panned position.
+    @MainActor
+    func testReaderUpdatePreservesZoomedScrollableViewport() {
+        let initialZoomView = CenteredReaderZoomScrollView(
+            contentSize: CGSize(width: 800, height: 1600),
+            zoomScale: .constant(1),
+            minimumZoomScale: 1,
+            maximumZoomScale: 4,
+            showsIndicators: false
+        ) {
+            Color.clear
+        }
+        let coordinator = initialZoomView.makeCoordinator()
+        let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        scrollView.delegate = coordinator
+        scrollView.addSubview(coordinator.hostingController.view)
+        coordinator.update(parent: initialZoomView, scrollView: scrollView)
+        scrollView.setZoomScale(2, animated: false)
+        scrollView.contentOffset = CGPoint(x: 120, y: 240)
+        let zoomedContentSize = scrollView.contentSize
+
+        let updatedZoomView = CenteredReaderZoomScrollView(
+            contentSize: CGSize(width: 800, height: 1600),
+            zoomScale: .constant(2),
+            minimumZoomScale: 1,
+            maximumZoomScale: 4,
+            showsIndicators: true
+        ) {
+            Color.clear
+        }
+        coordinator.update(parent: updatedZoomView, scrollView: scrollView)
+
+        XCTAssertGreaterThan(zoomedContentSize.width, updatedZoomView.contentSize.width)
+        XCTAssertEqual(scrollView.contentSize, zoomedContentSize)
+        XCTAssertEqual(scrollView.contentOffset, CGPoint(x: 120, y: 240))
     }
 
     /// Confirms video thumbnails fall back after Quick Look and persist until record cleanup.

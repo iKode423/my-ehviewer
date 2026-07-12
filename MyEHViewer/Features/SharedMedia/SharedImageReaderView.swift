@@ -15,7 +15,7 @@ struct SharedImageReaderView: View {
     @State private var showsPageJumpSheet = false
     @State private var pageJumpText = ""
     @State private var persistedPinchScale: CGFloat = 1
-    @GestureState private var transientPinchScale: CGFloat = 1
+    @State private var currentImageSize: CGSize?
 
     /// Creates a local reader positioned at the selected shared image.
     init(records: [SharedMediaRecord], initialRecordID: UUID) {
@@ -88,12 +88,8 @@ struct SharedImageReaderView: View {
         showsChrome ? .visible : .hidden
     }
 
-    private var activePinchScale: CGFloat {
-        min(max(persistedPinchScale * transientPinchScale, 1), 4)
-    }
-
     private var visibleZoomScale: CGFloat {
-        min(CGFloat(zoomLevel.rawValue) * activePinchScale, 4)
+        min(CGFloat(zoomLevel.rawValue) * persistedPinchScale, 4)
     }
 
     private var visibleZoomTitle: String {
@@ -144,30 +140,31 @@ struct SharedImageReaderView: View {
 
     /// Shows the local image with the same fit and zoom behavior as gallery reading.
     private func readerImageStage(for record: SharedMediaRecord, geometry: GeometryProxy) -> some View {
-        ScrollView([.vertical, .horizontal], showsIndicators: showsChrome) {
-            HStack {
-                Spacer(minLength: 0)
+        let baseImageSize = ReaderViewportLayout.imageSize(
+            imageSize: currentImageSize,
+            mode: effectiveFitMode(viewportSize: geometry.size),
+            viewportSize: geometry.size
+        )
 
-                SharedLocalImageView(url: store.fileURL(for: record))
-                    .frame(
-                        width: readerImageWidth(viewportSize: geometry.size),
-                        height: readerImageHeight(viewportSize: geometry.size)
-                    )
-                    .contentShape(Rectangle())
-
-                Spacer(minLength: 0)
-            }
-            .padding(effectiveFitMode(viewportSize: geometry.size) == .fitPage ? 16 : 0)
-            .frame(
-                minWidth: geometry.size.width,
-                minHeight: ReaderViewportLayout.fullScreenHeight,
-                alignment: .center
+        return CenteredReaderZoomScrollView(
+            contentSize: baseImageSize,
+            zoomScale: readerZoomScaleBinding,
+            minimumZoomScale: min(CGFloat(zoomLevel.rawValue), 4),
+            maximumZoomScale: 4,
+            showsIndicators: showsChrome
+        ) {
+            SharedLocalImageView(
+                url: store.fileURL(for: record),
+                onImageSizeChange: updateCurrentImageSize
             )
+            .frame(width: baseImageSize.width, height: baseImageSize.height)
+            .contentShape(Rectangle())
         }
+        .id(record.id)
+        .frame(width: geometry.size.width, height: geometry.size.height)
         .background(readerBackground)
         .contentShape(Rectangle())
         .simultaneousGesture(readerTapGesture(in: geometry.size))
-        .simultaneousGesture(readerPinchGesture)
     }
 
     /// Shows page status above the image and navigation below it.
@@ -349,17 +346,6 @@ struct SharedImageReaderView: View {
             }
     }
 
-    /// Creates temporary pinch zoom on top of the persisted zoom level.
-    private var readerPinchGesture: some Gesture {
-        MagnificationGesture()
-            .updating($transientPinchScale) { value, state, _ in
-                state = value
-            }
-            .onEnded { value in
-                persistedPinchScale = min(max(persistedPinchScale * value, 1), 4)
-            }
-    }
-
     /// Handles left, center, and right reader tap zones.
     private func handleTap(location: CGPoint, width: CGFloat) {
         if location.x < width * 0.3 {
@@ -396,23 +382,25 @@ struct SharedImageReaderView: View {
         showsPageJumpSheet = false
     }
 
-    /// Calculates width when the effective mode is page-fit or width-fit.
-    private func readerImageWidth(viewportSize: CGSize) -> CGFloat? {
-        let mode = effectiveFitMode(viewportSize: viewportSize)
-        guard mode != .fitHeight else { return nil }
-        let horizontalPadding: CGFloat = mode == .fitPage ? 32 : 0
-        return max(viewportSize.width - horizontalPadding, 44) * visibleZoomScale
-    }
-
-    /// Calculates height when portrait preference or landscape requires height-fit.
-    private func readerImageHeight(viewportSize: CGSize) -> CGFloat? {
-        guard effectiveFitMode(viewportSize: viewportSize) == .fitHeight else { return nil }
-        return max(ReaderViewportLayout.fullScreenHeight, 44) * visibleZoomScale
-    }
-
     /// Resolves the temporary landscape override without changing the saved preference.
     private func effectiveFitMode(viewportSize: CGSize) -> ReaderFitMode {
         ReaderViewportLayout.effectiveFitMode(savedMode: fitMode, viewportSize: viewportSize)
+    }
+
+    /// Synchronizes native scroll zoom back into the persisted pinch multiplier.
+    private var readerZoomScaleBinding: Binding<CGFloat> {
+        Binding {
+            visibleZoomScale
+        } set: { scale in
+            let baseScale = max(CGFloat(zoomLevel.rawValue), 1)
+            persistedPinchScale = min(max(scale / baseScale, 1), 4 / baseScale)
+        }
+    }
+
+    /// Stores decoded local-image dimensions for proportional fit calculations.
+    private func updateCurrentImageSize(_ imageSize: CGSize) {
+        guard imageSize.width > 0, imageSize.height > 0, currentImageSize != imageSize else { return }
+        currentImageSize = imageSize
     }
 
     /// Restores the saved zoom level and temporary pinch scale.
@@ -425,18 +413,21 @@ struct SharedImageReaderView: View {
     private func resetTransientReaderState() {
         showsChrome = false
         persistedPinchScale = 1
+        currentImageSize = nil
     }
 }
 
 /// Decodes one full-resolution local image away from the main actor.
 private struct SharedLocalImageView: View {
     let url: URL
+    let onImageSizeChange: (CGSize) -> Void
     @State private var image: UIImage?
 
     var body: some View {
         Group {
             if let image {
                 AnimatedImageDataView(image: image, contentMode: .scaleAspectFit)
+                    .onAppear { onImageSizeChange(image.size) }
             } else {
                 ProgressView()
             }

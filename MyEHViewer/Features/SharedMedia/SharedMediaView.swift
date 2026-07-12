@@ -779,6 +779,7 @@ struct SharedMediaGalleryView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
     }
 
     private var gallery: SharedMediaGalleryRecord? {

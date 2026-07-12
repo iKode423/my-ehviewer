@@ -189,6 +189,7 @@ struct DiscoveryView: View {
     @State private var pendingScannedContent: String?
     @State private var scannedGalleryResult: EHSearchResult?
     @State private var scannerAlert: DiscoveryScannerAlert?
+    @State private var showsCacheManagement = false
     private let columns = Array(
         repeating: GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 12),
         count: 2
@@ -202,6 +203,9 @@ struct DiscoveryView: View {
         .navigationTitle(AppCopy.discoveryTitle)
         .navigationDestination(item: $scannedGalleryResult) { result in
             GalleryDetailView(result: result)
+        }
+        .navigationDestination(isPresented: $showsCacheManagement) {
+            ImageCacheManagementView()
         }
         .sheet(isPresented: $showsQRCodeScanner, onDismiss: handleDismissedScanner) {
             QRCodeScannerSheet { content in
@@ -217,7 +221,7 @@ struct DiscoveryView: View {
             )
         }
         .task {
-            viewModel.update(items: sourceItems, resetOrder: true)
+            viewModel.initialize(items: sourceItems)
         }
         .onChange(of: imageCacheStore.gallerySummaries) { _, _ in
             viewModel.update(items: sourceItems)
@@ -288,7 +292,9 @@ struct DiscoveryView: View {
         VStack(alignment: .trailing, spacing: 10) {
             if showsActions {
                 Button {
-                    showsQRCodeScanner = true
+                    performFloatingAction {
+                        showsQRCodeScanner = true
+                    }
                 } label: {
                     Image(systemName: "qrcode.viewfinder")
                         .frame(width: 44, height: 44)
@@ -298,7 +304,9 @@ struct DiscoveryView: View {
                 .accessibilityLabel(AppCopy.searchScanQRCode)
 
                 Button {
-                    appNavigationStore.presentSearch()
+                    performFloatingAction {
+                        appNavigationStore.presentSearch()
+                    }
                 } label: {
                     Image(systemName: "magnifyingglass")
                         .frame(width: 44, height: 44)
@@ -307,8 +315,10 @@ struct DiscoveryView: View {
                 }
                 .accessibilityLabel(AppCopy.discoveryOpenSearch)
 
-                NavigationLink {
-                    ImageCacheManagementView()
+                Button {
+                    performFloatingAction {
+                        showsCacheManagement = true
+                    }
                 } label: {
                     Image(systemName: "externaldrive")
                         .frame(width: 44, height: 44)
@@ -335,6 +345,14 @@ struct DiscoveryView: View {
         .foregroundStyle(Color.accentColor)
         .padding(.trailing, 18)
         .padding(.bottom, 18)
+    }
+
+    /// Collapses the floating menu before running the selected navigation action.
+    private func performFloatingAction(_ action: () -> Void) {
+        withAnimation(.snappy(duration: 0.2)) {
+            showsActions = false
+        }
+        action()
     }
 
     private var sourceItems: [LocalDiscoveryItem] {
@@ -390,11 +408,22 @@ final class DiscoveryViewModel: ObservableObject {
     private var itemsByID: [String: LocalDiscoveryItem] = [:]
     private var orderedIDs: [String] = []
     private var visibleCount = 0
+    private var hasInitialized = false
     private let randomize: ([String]) -> [String]
 
     /// Creates a discovery model with an injectable order for deterministic tests.
     init(randomize: @escaping ([String]) -> [String] = { $0.shuffled() }) {
         self.randomize = randomize
+    }
+
+    /// Creates the first shuffled round once for the lifetime of this view model.
+    func initialize(items: [LocalDiscoveryItem]) {
+        guard !hasInitialized else {
+            update(items: items)
+            return
+        }
+        hasInitialized = true
+        update(items: items, resetOrder: true)
     }
 
     /// Synchronizes local resources, optionally beginning a completely new round.
@@ -465,14 +494,16 @@ private struct DiscoveryCachedGalleryCard: View {
             .background(Color.secondary.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 6))
 
-            Label(summary.note ?? summary.title, systemImage: "externaldrive.fill")
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
+            DiscoveryCardTitle(
+                title: summary.note ?? summary.title,
+                systemImage: "externaldrive.fill"
+            )
 
             Text(summary.progressText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -495,13 +526,16 @@ private struct DiscoverySharedGalleryLink: View {
                 .background(Color.secondary.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
-                Label(gallery.displayName, systemImage: itemSystemImage)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(2)
+                DiscoveryCardTitle(
+                    title: gallery.displayName,
+                    systemImage: itemSystemImage
+                )
 
                 Text("\(records.count) \(AppCopy.sharedMediaGalleryItems)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -549,6 +583,24 @@ private struct DiscoverySharedGalleryLink: View {
     private var itemSystemImage: String {
         guard records.count == 1, let record = records.first else { return "photo.on.rectangle.angled" }
         return record.kind == .image ? "photo" : "video"
+    }
+}
+
+/// Reserves a stable two-line title block for every discovery card.
+private struct DiscoveryCardTitle: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: systemImage)
+                .frame(width: 18)
+
+            Text(title)
+                .lineLimit(2, reservesSpace: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.subheadline.weight(.semibold))
     }
 }
 

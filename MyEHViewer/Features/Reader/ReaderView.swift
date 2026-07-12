@@ -17,11 +17,11 @@ struct ReaderView: View {
     @State private var showsReaderChrome: Bool
     @State private var pageJumpText = ""
     @State private var persistedPinchScale: CGFloat = 1.0
+    @State private var currentImageSize: CGSize?
     @State private var pendingImageSavePage: EHImagePage?
     @State private var showsImageSaveConfirmation = false
     @State private var imageSaveAlert: ReaderImageSaveAlert?
     @State private var isSavingImage = false
-    @GestureState private var transientPinchScale: CGFloat = 1.0
     private let onClose: (() -> Void)?
 
     /// Creates a reader view that can start from a parsed image page URL.
@@ -119,10 +119,6 @@ struct ReaderView: View {
         viewModel.imagePage == nil || showsReaderChrome ? .visible : .hidden
     }
 
-    private var activePinchScale: CGFloat {
-        min(max(persistedPinchScale * transientPinchScale, 1.0), 4.0)
-    }
-
     private var readerBackgroundColor: Color {
         switch backgroundMode {
         case .system: Color(.systemBackground)
@@ -215,49 +211,46 @@ struct ReaderView: View {
 
     /// Shows the full-screen image surface with tap zones and pinch zoom.
     private func readerImageStage(for imagePage: EHImagePage, geometry: GeometryProxy) -> some View {
-        ScrollView([.vertical, .horizontal], showsIndicators: showsReaderChrome) {
-            HStack {
-                Spacer(minLength: 0)
+        let baseImageSize = ReaderViewportLayout.imageSize(
+            imageSize: currentImageSize,
+            mode: effectiveFitMode(viewportSize: geometry.size),
+            viewportSize: geometry.size
+        )
 
-                CachedRemoteImageView(
+        return CenteredReaderZoomScrollView(
+            contentSize: baseImageSize,
+            zoomScale: readerZoomScaleBinding,
+            minimumZoomScale: min(CGFloat(zoomLevel.rawValue), 4),
+            maximumZoomScale: 4,
+            showsIndicators: showsReaderChrome
+        ) {
+            CachedRemoteImageView(
                     url: imagePage.imageURL,
                     referer: imagePage.pageURL,
                     cacheContext: imageCacheContext(for: imagePage),
                     contentMode: .fit,
-                    reloadToken: viewModel.imageReloadToken
+                    reloadToken: viewModel.imageReloadToken,
+                    onImageSizeChange: updateCurrentImageSize
                 ) {
                     ProgressView()
                         .frame(maxWidth: .infinity, minHeight: 320)
                 } failure: {
                     imageLoadFailureView
                 }
-                .id(
-                    viewModel.isCurrentImagePersistentlyStored
-                        ? "persistent-reader-image"
-                        : "reader-image-\(viewModel.imageReloadToken)"
-                )
-                .frame(
-                    width: readerImageWidth(viewportSize: geometry.size),
-                    height: readerImageHeight(viewportSize: geometry.size)
-                )
-                .contentShape(Rectangle())
-                .highPriorityGesture(readerImageSaveLongPress(for: imagePage))
-                .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: zoomLevelRaw)
-                .animation(reduceMotion ? nil : .snappy(duration: 0.12), value: activePinchScale)
-
-                Spacer(minLength: 0)
-            }
-            .padding(effectiveFitMode(viewportSize: geometry.size) == .fitPage ? 16 : 0)
-            .frame(
-                minWidth: geometry.size.width,
-                minHeight: ReaderViewportLayout.fullScreenHeight,
-                alignment: .center
+            .id(
+                viewModel.isCurrentImagePersistentlyStored
+                    ? "persistent-reader-image"
+                    : "reader-image-\(viewModel.imageReloadToken)"
             )
+            .frame(width: baseImageSize.width, height: baseImageSize.height)
+            .contentShape(Rectangle())
+            .highPriorityGesture(readerImageSaveLongPress(for: imagePage))
         }
+        .id(imagePage.imageURL)
+        .frame(width: geometry.size.width, height: geometry.size.height)
         .background(readerBackgroundColor)
         .contentShape(Rectangle())
         .simultaneousGesture(readerTapGesture(in: geometry.size))
-        .simultaneousGesture(readerPinchGesture)
     }
 
     /// Shows the reader controls when the middle tap zone reveals chrome.
@@ -371,31 +364,33 @@ struct ReaderView: View {
         return String(format: AppCopy.readerPageFormat, String(imagePage.pageNumber))
     }
 
-    /// Calculates width when the effective mode is page-fit or width-fit.
-    private func readerImageWidth(viewportSize: CGSize) -> CGFloat? {
-        let mode = effectiveFitMode(viewportSize: viewportSize)
-        guard mode != .fitHeight else { return nil }
-        let horizontalPadding: CGFloat = mode == .fitPage ? 32 : 0
-        return max(viewportSize.width - horizontalPadding, 44) * visibleZoomScale
-    }
-
-    /// Calculates height when portrait preference or landscape requires height-fit.
-    private func readerImageHeight(viewportSize: CGSize) -> CGFloat? {
-        guard effectiveFitMode(viewportSize: viewportSize) == .fitHeight else { return nil }
-        return max(ReaderViewportLayout.fullScreenHeight, 44) * visibleZoomScale
-    }
-
     /// Resolves the temporary landscape override without changing the saved preference.
     private func effectiveFitMode(viewportSize: CGSize) -> ReaderFitMode {
         ReaderViewportLayout.effectiveFitMode(savedMode: fitMode, viewportSize: viewportSize)
     }
 
     private var visibleZoomScale: CGFloat {
-        min(CGFloat(zoomLevel.rawValue) * activePinchScale, 4.0)
+        min(CGFloat(zoomLevel.rawValue) * persistedPinchScale, 4.0)
     }
 
     private var visibleZoomTitle: String {
         "\(Int((visibleZoomScale * 100).rounded()))%"
+    }
+
+    /// Synchronizes native scroll zoom back into the persisted pinch multiplier.
+    private var readerZoomScaleBinding: Binding<CGFloat> {
+        Binding {
+            visibleZoomScale
+        } set: { scale in
+            let baseScale = max(CGFloat(zoomLevel.rawValue), 1)
+            persistedPinchScale = min(max(scale / baseScale, 1), 4 / baseScale)
+        }
+    }
+
+    /// Stores decoded image dimensions so height-fit can calculate proportional width.
+    private func updateCurrentImageSize(_ imageSize: CGSize) {
+        guard imageSize.width > 0, imageSize.height > 0, currentImageSize != imageSize else { return }
+        currentImageSize = imageSize
     }
 
     /// Toggles between the default zoom and a readable close-up zoom.
@@ -414,6 +409,7 @@ struct ReaderView: View {
     private func resetTransientReaderState() {
         showsReaderChrome = false
         persistedPinchScale = 1.0
+        currentImageSize = nil
     }
 
     /// Handles left, center, and right reading tap zones.
@@ -432,17 +428,6 @@ struct ReaderView: View {
         SpatialTapGesture()
             .onEnded { value in
                 handleReaderTap(location: value.location, size: size)
-            }
-    }
-
-    /// Creates the pinch gesture used for temporary reader zoom.
-    private var readerPinchGesture: some Gesture {
-        MagnificationGesture()
-            .updating($transientPinchScale) { value, state, _ in
-                state = value
-            }
-            .onEnded { value in
-                persistedPinchScale = min(max(persistedPinchScale * value, 1.0), 4.0)
             }
     }
 
@@ -683,11 +668,250 @@ enum ReaderPageGridLayout {
 
 /// Keeps reader images centered against the full screen while chrome changes safe areas.
 enum ReaderViewportLayout {
-    @MainActor static var fullScreenHeight: CGFloat { UIScreen.main.bounds.height }
-
     /// Uses height-fit in landscape while preserving the stored portrait preference.
     static func effectiveFitMode(savedMode: ReaderFitMode, viewportSize: CGSize) -> ReaderFitMode {
         viewportSize.width > viewportSize.height ? .fitHeight : savedMode
+    }
+
+    /// Returns the physical screen-length edge used as image height in either orientation.
+    static func fitHeightExtent(viewportSize: CGSize) -> CGFloat {
+        max(max(viewportSize.width, viewportSize.height), 44)
+    }
+
+    /// Calculates the unzoomed image frame for the selected fit mode.
+    static func imageSize(imageSize: CGSize?, mode: ReaderFitMode, viewportSize: CGSize) -> CGSize {
+        let validImageSize = imageSize.flatMap { size in
+            size.width > 0 && size.height > 0 ? size : nil
+        } ?? CGSize(width: 1, height: 1)
+        let aspectRatio = validImageSize.width / validImageSize.height
+
+        switch mode {
+        case .fitHeight:
+            let height = fitHeightExtent(viewportSize: viewportSize)
+            return CGSize(width: height * aspectRatio, height: height)
+        case .fitPage, .fitWidth:
+            let horizontalPadding: CGFloat = mode == .fitPage ? 32 : 0
+            let width = max(viewportSize.width - horizontalPadding, 44)
+            return CGSize(width: width, height: width / aspectRatio)
+        }
+    }
+
+    /// Returns the unscaled content point currently displayed at the viewport center.
+    static func viewportCenterAnchor(
+        contentOffset: CGPoint,
+        viewportSize: CGSize,
+        zoomScale: CGFloat
+    ) -> CGPoint {
+        let scale = max(zoomScale, 0.001)
+        return CGPoint(
+            x: (contentOffset.x + viewportSize.width / 2) / scale,
+            y: (contentOffset.y + viewportSize.height / 2) / scale
+        )
+    }
+
+    /// Returns the content offset required to keep one unscaled point at screen center.
+    static func contentOffset(
+        centeredOn anchor: CGPoint,
+        viewportSize: CGSize,
+        zoomScale: CGFloat
+    ) -> CGPoint {
+        CGPoint(
+            x: anchor.x * zoomScale - viewportSize.width / 2,
+            y: anchor.y * zoomScale - viewportSize.height / 2
+        )
+    }
+}
+
+/// Hosts reader content in a native zoom view with system pinch anchoring.
+struct CenteredReaderZoomScrollView<Content: View>: UIViewRepresentable {
+    let contentSize: CGSize
+    @Binding var zoomScale: CGFloat
+    let minimumZoomScale: CGFloat
+    let maximumZoomScale: CGFloat
+    let showsIndicators: Bool
+    let content: Content
+
+    /// Creates a centered zoom surface for one explicitly sized reader image.
+    init(
+        contentSize: CGSize,
+        zoomScale: Binding<CGFloat>,
+        minimumZoomScale: CGFloat,
+        maximumZoomScale: CGFloat,
+        showsIndicators: Bool,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.contentSize = contentSize
+        _zoomScale = zoomScale
+        self.minimumZoomScale = minimumZoomScale
+        self.maximumZoomScale = maximumZoomScale
+        self.showsIndicators = showsIndicators
+        self.content = content()
+    }
+
+    /// Creates the UIKit scroll view and embeds the SwiftUI image content.
+    func makeUIView(context: Context) -> UIScrollView {
+        let scrollView = UIScrollView()
+        scrollView.delegate = context.coordinator
+        scrollView.backgroundColor = .clear
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.bouncesZoom = true
+        scrollView.delaysContentTouches = false
+        scrollView.addSubview(context.coordinator.hostingController.view)
+        context.coordinator.update(parent: self, scrollView: scrollView)
+        return scrollView
+    }
+
+    /// Applies content, sizing, and zoom preference updates from SwiftUI.
+    func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        context.coordinator.update(parent: self, scrollView: scrollView)
+    }
+
+    /// Creates the native scroll coordinator retained for the lifetime of this view.
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    /// Coordinates native zoom callbacks with SwiftUI reader state.
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        var parent: CenteredReaderZoomScrollView
+        let hostingController: UIHostingController<Content>
+        private var lastContentSize = CGSize.zero
+        private var lastViewportSize = CGSize.zero
+
+        /// Creates a coordinator and hosting controller for the current image content.
+        init(parent: CenteredReaderZoomScrollView) {
+            self.parent = parent
+            hostingController = UIHostingController(rootView: parent.content)
+            super.init()
+            hostingController.view.backgroundColor = .clear
+        }
+
+        /// Returns the hosted image view as the native zoom target.
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+            hostingController.view
+        }
+
+        /// Keeps smaller zoomed content centered without overriding the native pinch anchor.
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            centerContentInsets(in: scrollView)
+        }
+
+        /// Publishes the final native zoom scale after the gesture finishes.
+        func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+            parent.zoomScale = scale
+        }
+
+        /// Updates hosted content and preserves a centered viewport across layout changes.
+        func update(parent: CenteredReaderZoomScrollView, scrollView: UIScrollView) {
+            let contentSizeChanged = lastContentSize != parent.contentSize
+            let viewportSizeChanged = lastViewportSize != scrollView.bounds.size
+            let shouldResizeContent = contentSizeChanged && !scrollView.isZooming
+            let shouldCenterViewport = viewportSizeChanged && !scrollView.isZooming
+            self.parent = parent
+            hostingController.rootView = parent.content
+
+            if shouldResizeContent {
+                resizeContent(to: parent.contentSize, in: scrollView)
+            }
+
+            scrollView.minimumZoomScale = min(parent.minimumZoomScale, parent.maximumZoomScale)
+            scrollView.maximumZoomScale = max(parent.maximumZoomScale, scrollView.minimumZoomScale)
+            scrollView.showsHorizontalScrollIndicator = parent.showsIndicators
+            scrollView.showsVerticalScrollIndicator = parent.showsIndicators
+            scrollView.layoutIfNeeded()
+
+            let targetScale = min(
+                max(parent.zoomScale, scrollView.minimumZoomScale),
+                scrollView.maximumZoomScale
+            )
+            if shouldResizeContent {
+                scrollView.setZoomScale(targetScale, animated: false)
+                centerContentInsets(in: scrollView)
+            } else if !scrollView.isZooming, abs(scrollView.zoomScale - targetScale) > 0.001 {
+                let viewportCenterAnchor = viewportCenterAnchor(in: scrollView)
+                scrollView.setZoomScale(targetScale, animated: false)
+                centerContentInsets(in: scrollView)
+                preserveProgrammaticZoomAnchor(viewportCenterAnchor, in: scrollView)
+            } else {
+                centerContentInsets(in: scrollView)
+            }
+
+            if shouldResizeContent || shouldCenterViewport {
+                centerViewportOnContent(in: scrollView)
+            }
+            if shouldResizeContent {
+                lastContentSize = parent.contentSize
+            }
+            if shouldCenterViewport {
+                lastViewportSize = scrollView.bounds.size
+            }
+        }
+
+        /// Rebuilds the unscaled zoom target only when its intrinsic image size changes.
+        private func resizeContent(to size: CGSize, in scrollView: UIScrollView) {
+            scrollView.minimumZoomScale = 1
+            scrollView.setZoomScale(1, animated: false)
+            hostingController.view.frame = CGRect(origin: .zero, size: size)
+            scrollView.contentSize = size
+        }
+
+        /// Returns the unscaled image coordinate currently beneath the viewport center.
+        private func viewportCenterAnchor(in scrollView: UIScrollView) -> CGPoint {
+            ReaderViewportLayout.viewportCenterAnchor(
+                contentOffset: scrollView.contentOffset,
+                viewportSize: scrollView.bounds.size,
+                zoomScale: scrollView.zoomScale
+            )
+        }
+
+        /// Adjusts symmetric insets when scaled content is smaller than the viewport.
+        private func centerContentInsets(in scrollView: UIScrollView) {
+            let horizontalInset = max((scrollView.bounds.width - scrollView.contentSize.width) / 2, 0)
+            let verticalInset = max((scrollView.bounds.height - scrollView.contentSize.height) / 2, 0)
+            scrollView.contentInset = UIEdgeInsets(
+                top: verticalInset,
+                left: horizontalInset,
+                bottom: verticalInset,
+                right: horizontalInset
+            )
+        }
+
+        /// Keeps programmatic zoom changes centered while pinch gestures use their native centroid.
+        private func preserveProgrammaticZoomAnchor(_ anchor: CGPoint, in scrollView: UIScrollView) {
+            let desiredOffset = ReaderViewportLayout.contentOffset(
+                centeredOn: anchor,
+                viewportSize: scrollView.bounds.size,
+                zoomScale: scrollView.zoomScale
+            )
+            scrollView.contentOffset = clampedOffset(desiredOffset, in: scrollView)
+        }
+
+        /// Centers the complete image after rotation or intrinsic-size changes.
+        private func centerViewportOnContent(in scrollView: UIScrollView) {
+            let centeredOffset = CGPoint(
+                x: scrollView.contentSize.width / 2 - scrollView.bounds.midX,
+                y: scrollView.contentSize.height / 2 - scrollView.bounds.midY
+            )
+            scrollView.contentOffset = clampedOffset(centeredOffset, in: scrollView)
+        }
+
+        /// Restricts a requested content offset to the native scrollable bounds.
+        private func clampedOffset(_ offset: CGPoint, in scrollView: UIScrollView) -> CGPoint {
+            let minimumX = -scrollView.contentInset.left
+            let minimumY = -scrollView.contentInset.top
+            let maximumX = max(
+                minimumX,
+                scrollView.contentSize.width - scrollView.bounds.width + scrollView.contentInset.right
+            )
+            let maximumY = max(
+                minimumY,
+                scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom
+            )
+            return CGPoint(
+                x: min(max(offset.x, minimumX), maximumX),
+                y: min(max(offset.y, minimumY), maximumY)
+            )
+        }
     }
 }
 
@@ -843,6 +1067,7 @@ struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
     let animationMode: CachedRemoteImageAnimationMode
     let reloadToken: Int
     let decodeMaxPixelSize: Int?
+    let onImageSizeChange: ((CGSize) -> Void)?
     let placeholder: () -> Placeholder
     let failure: () -> Failure
 
@@ -858,6 +1083,7 @@ struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
         animationMode: CachedRemoteImageAnimationMode = .animated,
         reloadToken: Int = 0,
         decodeMaxPixelSize: Int? = nil,
+        onImageSizeChange: ((CGSize) -> Void)? = nil,
         @ViewBuilder placeholder: @escaping () -> Placeholder,
         @ViewBuilder failure: @escaping () -> Failure
     ) {
@@ -869,6 +1095,7 @@ struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
         self.animationMode = animationMode
         self.reloadToken = reloadToken
         self.decodeMaxPixelSize = decodeMaxPixelSize
+        self.onImageSizeChange = onImageSizeChange
         self.placeholder = placeholder
         self.failure = failure
     }
@@ -880,6 +1107,7 @@ struct CachedRemoteImageView<Placeholder: View, Failure: View>: View {
                 placeholder()
             case .success(let image):
                 AnimatedImageDataView(image: image, contentMode: contentMode.uiViewContentMode)
+                    .onAppear { onImageSizeChange?(image.size) }
             case .failure:
                 failure()
             }
@@ -1085,6 +1313,10 @@ struct AnimatedImageDataView: UIViewRepresentable {
 
         if let width = proposal.width {
             return CGSize(width: width, height: width * image.size.height / image.size.width)
+        }
+
+        if let height = proposal.height, image.size.height > 0 {
+            return CGSize(width: height * image.size.width / image.size.height, height: height)
         }
 
         return image.size
