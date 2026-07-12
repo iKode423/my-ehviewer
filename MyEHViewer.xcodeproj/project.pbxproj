@@ -120,8 +120,6 @@
 		0A1400020000000000000003 /* LibraryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStoreTests.swift; sourceTree = "<group>"; };
 		0A1500020000000000000001 /* SiteCookieStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteCookieStore.swift; sourceTree = "<group>"; };
 		0A1500020000000000000002 /* SiteCookieStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteCookieStoreTests.swift; sourceTree = "<group>"; };
-		0A1600020000000000000001 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
-		0A1600020000000000000002 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		0A1700020000000000000001 /* HitomiDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HitomiDataSource.swift; sourceTree = "<group>"; };
 		0CB362AE05291836155D070A /* SharedMediaView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedMediaView.swift; sourceTree = "<group>"; };
 		1F5E0C269F82C6C297B14FDB /* SharedMediaStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedMediaStoreTests.swift; sourceTree = "<group>"; };
@@ -167,7 +165,6 @@
 		0A0000040000000000000001 = {
 			isa = PBXGroup;
 			children = (
-				0A1600040000000000000001 /* Config */,
 				0A0000040000000000000002 /* MyEHViewer */,
 				0A0000040000000000000008 /* MyEHViewerTests */,
 				0A0000040000000000000009 /* Products */,
@@ -373,15 +370,6 @@
 				1F5E0C269F82C6C297B14FDB /* SharedMediaStoreTests.swift */,
 			);
 			path = Persistence;
-			sourceTree = "<group>";
-		};
-		0A1600040000000000000001 /* Config */ = {
-			isa = PBXGroup;
-			children = (
-				0A1600020000000000000002 /* Local.xcconfig.example */,
-				0A1600020000000000000001 /* Signing.xcconfig */,
-			);
-			path = Config;
 			sourceTree = "<group>";
 		};
 		1EEC068EC7CFC0554302A523 /* iOS */ = {
@@ -754,13 +742,13 @@
 		};
 		0A0000100000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 0A1600020000000000000001 /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MyEHViewer/App/MyEHViewer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Z4W26VKL2Q;
 				DEVELOPMENT_ASSET_PATHS = "";
 				ENABLE_DEBUG_DYLIB = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -784,13 +772,13 @@
 		};
 		0A0000100000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 0A1600020000000000000001 /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MyEHViewer/App/MyEHViewer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Z4W26VKL2Q;
 				DEVELOPMENT_ASSET_PATHS = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MyEHViewer/App/Info.plist;

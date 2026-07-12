@@ -21,7 +21,7 @@ MyEHViewer 是一个 SwiftUI iOS 阅读应用，当前主要覆盖 E-Hentai 与 
 
 1. 准备一台安装了 Xcode 的 Mac。
 2. 克隆仓库并打开 `MyEHViewer.xcodeproj`。
-3. 如需真机运行，按 `Config/Local.xcconfig.example` 创建本地签名配置 `Config/Local.xcconfig`，填入自己的开发团队 ID。
+3. 如需真机运行，在 Xcode 的 Signing & Capabilities 中确认开发团队和签名证书可用。
 4. 选择模拟器或通过数据线连接的 iPhone。
 5. 在 Xcode 中 Build/Run，或使用命令行：
 

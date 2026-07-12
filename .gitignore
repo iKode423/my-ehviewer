@@ -8,9 +8,6 @@ xcuserdata/
 # Swift Package Manager
 .build/
 
-# Local signing
-Config/Local.xcconfig
-
 # Local agent state
 .serena/
 .trellis/
