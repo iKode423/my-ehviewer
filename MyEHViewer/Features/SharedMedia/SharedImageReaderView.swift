@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Reads persistent shared images with the same tap, swipe, and favorite flow as gallery pages.
+/// Reads persistent shared images with the same tap and favorite flow as gallery pages.
 struct SharedImageReaderView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: SharedMediaStore
@@ -149,12 +149,15 @@ struct SharedImageReaderView: View {
                 Spacer(minLength: 0)
 
                 SharedLocalImageView(url: store.fileURL(for: record))
-                    .frame(width: readerImageWidth(availableWidth: geometry.size.width))
+                    .frame(
+                        width: readerImageWidth(viewportSize: geometry.size),
+                        height: readerImageHeight(viewportSize: geometry.size)
+                    )
                     .contentShape(Rectangle())
 
                 Spacer(minLength: 0)
             }
-            .padding(fitMode == .fitPage ? 16 : 0)
+            .padding(effectiveFitMode(viewportSize: geometry.size) == .fitPage ? 16 : 0)
             .frame(
                 minWidth: geometry.size.width,
                 minHeight: ReaderViewportLayout.fullScreenHeight,
@@ -165,7 +168,6 @@ struct SharedImageReaderView: View {
         .contentShape(Rectangle())
         .simultaneousGesture(readerTapGesture(in: geometry.size))
         .simultaneousGesture(readerPinchGesture)
-        .simultaneousGesture(readerSwipeGesture)
     }
 
     /// Shows page status above the image and navigation below it.
@@ -347,21 +349,6 @@ struct SharedImageReaderView: View {
             }
     }
 
-    /// Creates horizontal swipe navigation matching the gallery reader threshold.
-    private var readerSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 44)
-            .onEnded { value in
-                let horizontalDistance = value.translation.width
-                let verticalDistance = abs(value.translation.height)
-                guard abs(horizontalDistance) > 64, abs(horizontalDistance) > verticalDistance * 1.25 else { return }
-                if horizontalDistance < 0 {
-                    showNext()
-                } else {
-                    showPrevious()
-                }
-            }
-    }
-
     /// Creates temporary pinch zoom on top of the persisted zoom level.
     private var readerPinchGesture: some Gesture {
         MagnificationGesture()
@@ -409,11 +396,23 @@ struct SharedImageReaderView: View {
         showsPageJumpSheet = false
     }
 
-    /// Calculates the image width from the shared fit and zoom settings.
-    private func readerImageWidth(availableWidth: CGFloat) -> CGFloat {
-        let horizontalPadding: CGFloat = fitMode == .fitPage ? 32 : 0
-        let baseWidth = max(availableWidth - horizontalPadding, 44)
-        return baseWidth * visibleZoomScale
+    /// Calculates width when the effective mode is page-fit or width-fit.
+    private func readerImageWidth(viewportSize: CGSize) -> CGFloat? {
+        let mode = effectiveFitMode(viewportSize: viewportSize)
+        guard mode != .fitHeight else { return nil }
+        let horizontalPadding: CGFloat = mode == .fitPage ? 32 : 0
+        return max(viewportSize.width - horizontalPadding, 44) * visibleZoomScale
+    }
+
+    /// Calculates height when portrait preference or landscape requires height-fit.
+    private func readerImageHeight(viewportSize: CGSize) -> CGFloat? {
+        guard effectiveFitMode(viewportSize: viewportSize) == .fitHeight else { return nil }
+        return max(ReaderViewportLayout.fullScreenHeight, 44) * visibleZoomScale
+    }
+
+    /// Resolves the temporary landscape override without changing the saved preference.
+    private func effectiveFitMode(viewportSize: CGSize) -> ReaderFitMode {
+        ReaderViewportLayout.effectiveFitMode(savedMode: fitMode, viewportSize: viewportSize)
     }
 
     /// Restores the saved zoom level and temporary pinch scale.

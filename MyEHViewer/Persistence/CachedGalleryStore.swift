@@ -24,7 +24,7 @@ struct CachedGalleryPageInput: Sendable {
 
 @MainActor
 final class CachedGalleryStore {
-    static let shared = CachedGalleryStore()
+    static let shared = CachedGalleryStore(loadsInitialStateSynchronously: false)
 
     private var storedSummaries: [CachedGallerySummary] = []
     private var dirtySummaryGalleryIDs: Set<String> = []
@@ -65,6 +65,7 @@ final class CachedGalleryStore {
         fileManager: FileManager = .default,
         rootURL: URL? = nil,
         stagingRootURL: URL? = nil,
+        loadsInitialStateSynchronously: Bool = true,
         beforePageCommit: @escaping @Sendable (Int) async -> Void = { _ in },
         beforePreparationProjection: @escaping @Sendable () async -> Void = {},
         beforeRefreshProjection: @escaping @Sendable () async -> Void = {},
@@ -83,7 +84,9 @@ final class CachedGalleryStore {
             directoryHint: .isDirectory
         )
         prepareDirectories()
-        loadInitialState()
+        if loadsInitialStateSynchronously {
+            loadInitialState()
+        }
         _ = persistenceCoordinator
     }
 

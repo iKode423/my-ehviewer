@@ -366,7 +366,7 @@ struct CachedGallerySummary: Hashable, Identifiable, Sendable {
 /// Stores viewed image data on disk so reader pages can reopen without refetching.
 @MainActor
 final class ImageCacheStore: ObservableObject {
-    static let shared = ImageCacheStore()
+    static let shared = ImageCacheStore(refreshesOnInit: false)
 
     @Published private(set) var snapshot: ImageCacheSnapshot = .empty
     @Published private(set) var gallerySummaries: [CachedGallerySummary] = []
@@ -405,6 +405,7 @@ final class ImageCacheStore: ObservableObject {
         directoryURL: URL? = nil,
         fileManager: FileManager = .default,
         persistentGalleryStore: CachedGalleryStore? = nil,
+        refreshesOnInit: Bool = true,
         afterCacheDataWriteEnqueued: @escaping @Sendable () async -> Void = {},
         afterCacheFileWrite: @escaping @Sendable () async -> Void = {},
         beforeCacheDiskMutation: @escaping @Sendable () -> Void = {},
@@ -429,7 +430,12 @@ final class ImageCacheStore: ObservableObject {
             self.directoryURL = baseURL.appending(path: "ImageCache", directoryHint: .isDirectory)
         }
         loadIndex()
-        refresh(compactsDuplicates: false)
+        if refreshesOnInit {
+            refresh(compactsDuplicates: false)
+        } else {
+            publishGallerySummaries()
+            schedulePersistentGalleryRefresh()
+        }
     }
 
     /// Returns cached image data for the remote URL when it exists.
@@ -522,6 +528,56 @@ final class ImageCacheStore: ObservableObject {
             return
         }
         refresh(compactsDuplicates: compactsDuplicates)
+    }
+
+    /// Refreshes cache file metadata off the main actor when duplicate compaction is not requested.
+    func refreshIfNeededAsync(minimumInterval: TimeInterval = 300) async {
+        guard deferredGallerySummaryRefreshDepth == 0,
+              Date().timeIntervalSince(lastDiskRefreshAt) >= minimumInterval
+        else {
+            return
+        }
+        await refreshAsync()
+    }
+
+    /// Scans cache files on a utility executor and rejects results made stale by writes or clears.
+    func refreshAsync() async {
+        pendingGallerySummaryRefreshTask?.cancel()
+        pendingGallerySummaryRefreshTask = nil
+        let claimedWriteSequence = nextCacheWriteSequence
+        let claimedClearGeneration = cacheClearGeneration
+        let claimedScopeGenerations = cacheScopeGeneration
+        let directoryURL = directoryURL
+        let indexFileName = indexFileName
+        let snapshot = await Task.detached(priority: .utility) {
+            Self.scanCacheDirectory(
+                directoryURL: directoryURL,
+                indexFileName: indexFileName
+            )
+        }.value
+        guard claimedWriteSequence == nextCacheWriteSequence,
+              claimedClearGeneration == cacheClearGeneration,
+              claimedScopeGenerations == cacheScopeGeneration
+        else {
+            return
+        }
+
+        schedulePersistentGalleryRefresh()
+        cacheFileSizeByKey = snapshot.fileSizeByKey
+        let validCacheKeys = Set(snapshot.fileSizeByKey.keys)
+        contentDigestByCacheKey = contentDigestByCacheKey.filter { validCacheKeys.contains($0.key) }
+        rebuildContentDigestLookup()
+        if removeMissingIndexEntries(validCacheKeys: validCacheKeys) {
+            saveIndex()
+        }
+        setGallerySummaries(makeGallerySummaries())
+        lastGallerySummaryRefreshAt = Date()
+        lastDiskRefreshAt = Date()
+        self.snapshot = ImageCacheSnapshot(
+            fileCount: snapshot.fileSizeByKey.count,
+            byteCount: snapshot.byteCount,
+            galleryCount: gallerySummaries.count
+        )
     }
 
     /// Stores gallery metadata so cache management can list partially downloaded galleries.
@@ -1059,6 +1115,28 @@ final class ImageCacheStore: ObservableObject {
         setGallerySummaries(makeGallerySummaries())
         lastDiskRefreshAt = Date()
         snapshot = ImageCacheSnapshot(fileCount: uniqueFileCount, byteCount: uniqueByteCount, galleryCount: gallerySummaries.count)
+    }
+
+    /// Reads cache file sizes without touching MainActor-owned index state.
+    nonisolated private static func scanCacheDirectory(
+        directoryURL: URL,
+        indexFileName: String
+    ) -> ImageCacheDirectorySnapshot {
+        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return ImageCacheDirectorySnapshot(fileSizeByKey: [:], byteCount: 0)
+        }
+        var fileSizeByKey: [String: Int64] = [:]
+        var byteCount: Int64 = 0
+        for fileURL in fileURLs where fileURL.lastPathComponent != indexFileName {
+            let size = Int64((try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            fileSizeByKey[fileURL.lastPathComponent] = size
+            byteCount += size
+        }
+        return ImageCacheDirectorySnapshot(fileSizeByKey: fileSizeByKey, byteCount: byteCount)
     }
 
     /// Adds or updates the page index when reader page metadata is available.
@@ -2775,6 +2853,12 @@ private struct ImageCacheIndex: Codable, Sendable {
     var aliases: [String: String] = [:]
     var pages: [String: CachedImagePageRecord] = [:]
     var galleryMetadata: [String: CachedGalleryMetadata] = [:]
+}
+
+/// Carries one immutable cache-directory scan back to the main-actor projection.
+private struct ImageCacheDirectorySnapshot: Sendable {
+    let fileSizeByKey: [String: Int64]
+    let byteCount: Int64
 }
 
 /// Describes one incremental disposable-cache removal.

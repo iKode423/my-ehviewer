@@ -22,6 +22,8 @@ final class SharedMediaStoreTests: XCTestCase {
         let record = try XCTUnwrap(store.records.first)
         XCTAssertEqual(record.id, itemID)
         XCTAssertEqual(record.kind, .image)
+        XCTAssertEqual(store.galleries.count, 1)
+        XCTAssertEqual(store.galleries.first?.memberIDs, [record.id])
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.fileURL(for: record).path))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: paths.incoming.path), [])
     }
@@ -41,6 +43,7 @@ final class SharedMediaStoreTests: XCTestCase {
         await store.importIncomingAndRefresh()
 
         XCTAssertEqual(store.records.count, 1)
+        XCTAssertEqual(store.galleries.count, 2)
     }
 
     /// Confirms a folder manifest creates one gallery with persisted member order.
@@ -252,6 +255,8 @@ final class SharedMediaStoreTests: XCTestCase {
             incomingRootURL: sourcePaths.incoming
         )
         await sourceStore.importIncomingAndRefresh()
+        let sourceGallery = try XCTUnwrap(sourceStore.galleries.first)
+        sourceStore.setNote("归档备注", for: sourceGallery)
         let archiveURL = try await sourceStore.createArchive()
 
         let restoredStore = SharedMediaStore(
@@ -263,6 +268,7 @@ final class SharedMediaStoreTests: XCTestCase {
 
         let gallery = try XCTUnwrap(restoredStore.galleries.first)
         XCTAssertEqual(gallery.title, "Archive Gallery")
+        XCTAssertEqual(gallery.note, "归档备注")
         XCTAssertEqual(
             restoredStore.records(in: gallery).map(\.originalFilename),
             ["2.png", "10.png"]
@@ -284,10 +290,11 @@ final class SharedMediaStoreTests: XCTestCase {
         )
 
         XCTAssertEqual(store.records.map(\.id), [record.id])
-        XCTAssertTrue(store.galleries.isEmpty)
+        XCTAssertEqual(store.galleries.count, 1)
+        XCTAssertEqual(store.galleries.first?.memberIDs, [record.id])
     }
 
-    /// Confirms a legacy v1 archive still imports media without gallery relationships.
+    /// Confirms a legacy v1 archive imports media into a migrated batch gallery.
     func testLegacyArchiveStillImports() async throws {
         let archivePaths = try makePaths()
         let restoredPaths = try makePaths()
@@ -306,7 +313,8 @@ final class SharedMediaStoreTests: XCTestCase {
         try await store.importArchive(from: archiveURL)
 
         XCTAssertEqual(store.records.map(\.id), [record.id])
-        XCTAssertTrue(store.galleries.isEmpty)
+        XCTAssertEqual(store.galleries.count, 1)
+        XCTAssertEqual(store.galleries.first?.memberIDs, [record.id])
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.fileURL(for: store.records[0]).path))
     }
 

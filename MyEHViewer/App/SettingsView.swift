@@ -44,7 +44,7 @@ struct SettingsView: View {
             .id(accentRefreshID)
             .onAppear {
                 cookieInput = siteCookieStore.cookieHeader
-                imageCacheStore.refreshIfNeeded()
+                Task { await imageCacheStore.refreshIfNeededAsync() }
             }
             .onChange(of: accentColorHex) { _, _ in
                 accentRefreshID = UUID()
@@ -427,7 +427,7 @@ private struct LocalDataTransferAlert: Identifiable {
 }
 
 /// Lists cached galleries and opens their detail pages.
-private struct ImageCacheManagementView: View {
+struct ImageCacheManagementView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @StateObject private var imageCacheStore = ImageCacheStore.shared
     @AppStorage(ContentSite.storageKey) private var contentSiteRaw = ContentSite.eHentai.rawValue
@@ -490,7 +490,7 @@ private struct ImageCacheManagementView: View {
             Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text(AppCopy.commonOK)))
         }
         .onAppear {
-            imageCacheStore.refreshIfNeeded()
+            Task { await imageCacheStore.refreshIfNeededAsync() }
         }
     }
 
@@ -947,7 +947,7 @@ private struct CachedGalleryNoteField: View {
 }
 
 /// Opens cached galleries without requiring the remote detail page to load first.
-private struct CachedGalleryEntryView: View {
+struct CachedGalleryEntryView: View {
     let summary: CachedGallerySummary
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var appNavigationStore: AppNavigationStore
@@ -1279,7 +1279,7 @@ private struct LocalStatisticsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .onAppear {
-            imageCacheStore.refreshIfNeeded()
+            Task { await imageCacheStore.refreshIfNeededAsync() }
         }
     }
 

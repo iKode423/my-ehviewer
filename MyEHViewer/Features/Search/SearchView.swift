@@ -12,12 +12,9 @@ struct SearchView: View {
     private let chromeMode: SearchChromeMode
     private let navigationTitle: String?
     private let followsAppContentSite: Bool
+    private let onClose: (() -> Void)?
     @State private var pageJumpText = ""
     @State private var scrollToTopRequest = 0
-    @State private var showsQRCodeScanner = false
-    @State private var pendingScannedContent: String?
-    @State private var scannedGalleryResult: EHSearchResult?
-    @State private var scannerAlert: SearchScannerAlert?
 
     /// Creates a search view with an injectable view model for previews and tests.
     init(
@@ -26,7 +23,8 @@ struct SearchView: View {
         searchesOnAppear: Bool = false,
         chromeMode: SearchChromeMode = .full,
         navigationTitle: String? = AppCopy.searchTitle,
-        followsAppContentSite: Bool = true
+        followsAppContentSite: Bool = true,
+        onClose: (() -> Void)? = nil
     ) {
         _viewModel = StateObject(wrappedValue: viewModel)
         self.embedsInNavigationStack = embedsInNavigationStack
@@ -34,6 +32,7 @@ struct SearchView: View {
         self.chromeMode = chromeMode
         self.navigationTitle = navigationTitle
         self.followsAppContentSite = followsAppContentSite
+        self.onClose = onClose
     }
 
     var body: some View {
@@ -57,21 +56,17 @@ struct SearchView: View {
                 searchContent
             }
         }
-        .navigationDestination(item: $scannedGalleryResult) { result in
-            GalleryDetailView(result: result)
-        }
-        .sheet(isPresented: $showsQRCodeScanner, onDismiss: handleDismissedScanner) {
-            QRCodeScannerSheet { content in
-                pendingScannedContent = content
-                showsQRCodeScanner = false
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar {
+            if let onClose {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        onClose()
+                    } label: {
+                        Label(AppCopy.commonClose, systemImage: "xmark")
+                    }
+                }
             }
-        }
-        .alert(item: $scannerAlert) { alert in
-            Alert(
-                title: Text(alert.title),
-                message: Text(alert.message),
-                dismissButton: .default(Text(AppCopy.commonOK))
-            )
         }
     }
 
@@ -176,20 +171,6 @@ struct SearchView: View {
             .opacity(viewModel.isLoading ? 0.5 : 1)
             .accessibilityLabel(AppCopy.searchButtonTitle)
 
-            Button {
-                showsQRCodeScanner = true
-            } label: {
-                Image(systemName: "qrcode.viewfinder")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 32, height: 32)
-                    .foregroundStyle(Color.accentColor)
-                    .overlay {
-                        Circle()
-                            .stroke(Color.accentColor.opacity(0.5), lineWidth: 1)
-                    }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(AppCopy.searchScanQRCode)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -637,40 +618,6 @@ struct SearchView: View {
         appNavigationStore.consumeSearchRequest(id: request.id)
     }
 
-    /// Processes a scanned value after the camera sheet finishes dismissing.
-    private func handleDismissedScanner() {
-        guard let content = pendingScannedContent else { return }
-        pendingScannedContent = nil
-        handleScannedContent(content)
-    }
-
-    /// Opens supported gallery links and reports every other scanned value.
-    private func handleScannedContent(_ content: String) {
-        let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard
-            let url = URL(string: trimmedContent),
-            let identifier = EHGalleryIdentifier(supportedGalleryURL: url)
-        else {
-            scannerAlert = SearchScannerAlert(
-                title: AppCopy.searchScannedContentTitle,
-                message: trimmedContent.isEmpty ? AppCopy.searchScannedContentEmpty : trimmedContent
-            )
-            return
-        }
-
-        scannedGalleryResult = EHSearchResult(
-            identifier: identifier,
-            title: String(format: AppCopy.searchScannedGalleryTitleFormat, String(identifier.gid)),
-            category: identifier.site.title,
-            pageURL: identifier.url(),
-            thumbnailURL: nil,
-            uploader: nil,
-            postedText: nil,
-            pageCountText: nil,
-            tags: []
-        )
-    }
-
     /// Keeps the jump field aligned with the last successfully loaded page.
     private func syncPageJumpText() {
         pageJumpText = String(viewModel.currentPageNumber)
@@ -809,15 +756,8 @@ struct ClearableSearchTextField: View {
 }
 
 
-/// Stores one alert generated by QR code scanning.
-private struct SearchScannerAlert: Identifiable {
-    let id = UUID()
-    let title: String
-    let message: String
-}
-
 /// Presents the camera preview and scanner status inside a dismissible sheet.
-private struct QRCodeScannerSheet: View {
+struct QRCodeScannerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var errorMessage: String?
     let onCode: (String) -> Void

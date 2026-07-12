@@ -106,9 +106,16 @@ struct SharedMediaRecord: Codable, Hashable, Identifiable {
 struct SharedMediaGalleryRecord: Codable, Hashable, Identifiable {
     let id: UUID
     var title: String
+    var note: String? = nil
     var importedAt: Date
     var coverMediaID: UUID
     var memberIDs: [UUID]
+
+    /// Uses the custom note as the visible gallery name when present.
+    var displayName: String {
+        let trimmedNote = note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmedNote.isEmpty ? title : trimmedNote
+    }
 }
 
 /// Defines supported filters for the shared media management screen.

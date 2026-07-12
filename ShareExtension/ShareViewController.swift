@@ -80,7 +80,10 @@ final class ShareViewController: UIViewController {
                     progressView.progress = Float(index + 1) / Float(supportedProviders.count)
                 }
                 items = copiedItems
-                gallery = nil
+                gallery = SharedMediaIncomingGallery(
+                    title: Self.galleryTitle(for: copiedItems),
+                    memberIDs: copiedItems.map(\.id)
+                )
             }
 
             let manifest = SharedMediaIncomingManifest(
@@ -103,6 +106,12 @@ final class ShareViewController: UIViewController {
             statusLabel.text = "保存失败\n\(error.localizedDescription)"
             extensionContext?.cancelRequest(withError: error)
         }
+    }
+
+    /// Builds a compact title for one ordinary share batch.
+    private static func galleryTitle(for items: [SharedMediaIncomingItem]) -> String {
+        guard items.count != 1 else { return items[0].originalFilename }
+        return "分享媒体（\(items.count) 项）"
     }
 
     /// Classifies one item provider as an image or video attachment.

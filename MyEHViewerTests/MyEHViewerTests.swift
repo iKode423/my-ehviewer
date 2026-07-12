@@ -1328,7 +1328,7 @@ final class MyEHViewerTests: XCTestCase {
         XCTAssertNil(store.readerRoute)
     }
 
-    /// Confirms cross-screen author searches select the search tab and can be consumed once.
+    /// Confirms cross-screen searches present globally without changing the current tab.
     @MainActor
     func testAppNavigationStoreOpensAndConsumesSearchRequest() throws {
         let store = AppNavigationStore()
@@ -1338,13 +1338,117 @@ final class MyEHViewerTests: XCTestCase {
         store.openSearch(query: "demo", site: .hitomi)
 
         let request = try XCTUnwrap(store.searchRequest)
-        XCTAssertEqual(store.selectedTab, .search)
+        XCTAssertEqual(store.selectedTab, .library)
+        XCTAssertTrue(store.isSearchPresented)
         XCTAssertNotEqual(store.searchNavigationID, previousNavigationID)
         XCTAssertEqual(request.query, "demo")
         XCTAssertEqual(request.site, .hitomi)
 
         store.consumeSearchRequest(id: request.id)
         XCTAssertNil(store.searchRequest)
+        XCTAssertTrue(store.isSearchPresented)
+
+        store.openReader(initialPageURL: URL(string: "https://example.com/page")!)
+        XCTAssertFalse(store.isRootReaderPresented)
+        XCTAssertTrue(store.isSearchReaderPresented)
+
+        store.closeReader()
+        XCTAssertTrue(store.isSearchPresented)
+
+        store.closeSearch()
+        XCTAssertFalse(store.isSearchPresented)
+    }
+
+    /// Confirms discovery reveals local resources in fixed pages without repetition.
+    @MainActor
+    func testDiscoveryViewModelLoadsTwentyItemsPerPage() {
+        let model = DiscoveryViewModel(randomize: { $0.sorted() })
+        let items = (0..<45).map { index in
+            LocalDiscoveryItem.sharedGallery(SharedMediaGalleryRecord(
+                id: UUID(),
+                title: "Gallery \(index)",
+                importedAt: Date(timeIntervalSince1970: TimeInterval(index)),
+                coverMediaID: UUID(),
+                memberIDs: [UUID()]
+            ))
+        }
+
+        model.update(items: items, resetOrder: true)
+        XCTAssertEqual(model.visibleItems.count, 20)
+        XCTAssertEqual(Set(model.visibleItems.map(\.id)).count, 20)
+        XCTAssertTrue(model.hasMore)
+
+        model.loadMore()
+        XCTAssertEqual(model.visibleItems.count, 40)
+        XCTAssertEqual(Set(model.visibleItems.map(\.id)).count, 40)
+
+        model.loadMore()
+        XCTAssertEqual(model.visibleItems.count, 45)
+        XCTAssertEqual(Set(model.visibleItems.map(\.id)).count, 45)
+        XCTAssertFalse(model.hasMore)
+    }
+
+    /// Confirms landscape temporarily overrides the stored reader fit preference.
+    func testReaderFitModeUsesHeightInLandscapeOnly() {
+        XCTAssertEqual(
+            ReaderViewportLayout.effectiveFitMode(
+                savedMode: .fitWidth,
+                viewportSize: CGSize(width: 390, height: 844)
+            ),
+            .fitWidth
+        )
+        XCTAssertEqual(
+            ReaderViewportLayout.effectiveFitMode(
+                savedMode: .fitPage,
+                viewportSize: CGSize(width: 844, height: 390)
+            ),
+            .fitHeight
+        )
+    }
+
+    /// Confirms video thumbnails fall back after Quick Look and persist until record cleanup.
+    @MainActor
+    func testSharedMediaThumbnailFallbackUsesDiskCacheAndSupportsRemoval() async throws {
+        let cacheRootURL = FileManager.default.temporaryDirectory.appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: cacheRootURL) }
+        let recordID = UUID()
+        let sourceURL = cacheRootURL.appending(path: "video.mp4")
+        let fallbackImage = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(origin: .zero, size: CGSize(width: 4, height: 4)))
+        }
+        let repository = SharedMediaThumbnailRepository(
+            cacheRootURL: cacheRootURL,
+            quickLookGenerator: { _ in nil },
+            videoFrameGenerator: { _ in fallbackImage }
+        )
+
+        let generatedThumbnail = await repository.thumbnail(
+            recordID: recordID,
+            kind: .video,
+            sourceURL: sourceURL
+        )
+        XCTAssertNotNil(generatedThumbnail)
+        let cacheURL = cacheRootURL.appending(path: "\(recordID.uuidString).jpg")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cacheURL.path))
+
+        let diskOnlyRepository = SharedMediaThumbnailRepository(
+            cacheRootURL: cacheRootURL,
+            quickLookGenerator: { _ in nil },
+            videoFrameGenerator: { _ in nil }
+        )
+        let diskThumbnail = await diskOnlyRepository.thumbnail(
+            recordID: recordID,
+            kind: .video,
+            sourceURL: sourceURL
+        )
+        XCTAssertNotNil(diskThumbnail)
+
+        diskOnlyRepository.removeThumbnail(recordID: recordID)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cacheURL.path))
     }
 
     /// Confirms reader zoom persistence resolves unknown values safely.

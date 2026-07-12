@@ -3,6 +3,14 @@ import Foundation
 /// Centralizes user-facing Chinese copy used by the initial application shell.
 enum AppCopy {
     static let appName = "EH 阅读器"
+    static let discoveryTitle = "随便看看"
+    static let discoveryEmptyTitle = "还没有本地内容"
+    static let discoveryEmptyMessage = "永久保存图库或导入图片、视频后，会在这里随机展示。"
+    static let discoveryActions = "打开快捷操作"
+    static let discoveryCloseActions = "收起快捷操作"
+    static let discoveryOpenSearch = "打开搜索"
+    static let discoveryOpenCache = "打开缓存管理"
+    static let discoveryExhausted = "已经看完这一轮了"
     static let searchTitle = "搜索"
     static let readerTitle = "阅读"
     static let readerClose = "关闭阅读"
@@ -183,6 +191,7 @@ enum AppCopy {
     static let readerDisplayMode = "图片显示"
     static let readerFitPage = "适合页面"
     static let readerFitWidth = "贴合宽度"
+    static let readerFitHeight = "贴合高度"
     static let readerZoomMode = "缩放倍率"
     static let readerZoomReset = "重置缩放"
     static let readerZoomFormat = "缩放 %@"

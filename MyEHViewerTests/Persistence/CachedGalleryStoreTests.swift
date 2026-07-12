@@ -35,6 +35,31 @@ final class CachedGalleryStoreTests: XCTestCase {
         XCTAssertFalse(store.hasCompleteStagedGallery(fixture.identifier))
     }
 
+    /// Confirms production-style initialization defers manifest enumeration until async refresh.
+    func testDeferredInitialStateLoadsPermanentGalleryOnlyAfterRefresh() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.baseURL) }
+        let fixture = try makeGalleryFixture(in: environment.baseURL)
+        let writer = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL
+        )
+        try await writer.prepareGallery(summary: fixture.summary)
+        try await writer.importCachedPage(fixture.input, identifier: fixture.identifier)
+        try await writer.finalizeGallery(fixture.identifier, requireComplete: true)
+
+        let deferredStore = CachedGalleryStore(
+            rootURL: environment.rootURL,
+            stagingRootURL: environment.stagingURL,
+            loadsInitialStateSynchronously: false
+        )
+
+        XCTAssertTrue(deferredStore.summaries.isEmpty)
+        await deferredStore.refresh()
+        XCTAssertEqual(deferredStore.summaries.first?.galleryIdentifier, fixture.identifier)
+        XCTAssertEqual(deferredStore.summaries.first?.storageState, .persistent)
+    }
+
     /// Confirms durable staging counts as persistent before the gallery is finalized.
     func testStagedGallerySummaryIsPersistentAfterFirstPage() async throws {
         let environment = try makeEnvironment()

@@ -236,7 +236,10 @@ struct ReaderView: View {
                         ? "persistent-reader-image"
                         : "reader-image-\(viewModel.imageReloadToken)"
                 )
-                .frame(width: readerImageWidth(availableWidth: geometry.size.width))
+                .frame(
+                    width: readerImageWidth(viewportSize: geometry.size),
+                    height: readerImageHeight(viewportSize: geometry.size)
+                )
                 .contentShape(Rectangle())
                 .highPriorityGesture(readerImageSaveLongPress(for: imagePage))
                 .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: zoomLevelRaw)
@@ -244,7 +247,7 @@ struct ReaderView: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(fitMode == .fitPage ? 16 : 0)
+            .padding(effectiveFitMode(viewportSize: geometry.size) == .fitPage ? 16 : 0)
             .frame(
                 minWidth: geometry.size.width,
                 minHeight: ReaderViewportLayout.fullScreenHeight,
@@ -255,7 +258,6 @@ struct ReaderView: View {
         .contentShape(Rectangle())
         .simultaneousGesture(readerTapGesture(in: geometry.size))
         .simultaneousGesture(readerPinchGesture)
-        .simultaneousGesture(readerSwipeGesture)
     }
 
     /// Shows the reader controls when the middle tap zone reveals chrome.
@@ -369,11 +371,23 @@ struct ReaderView: View {
         return String(format: AppCopy.readerPageFormat, String(imagePage.pageNumber))
     }
 
-    /// Calculates the rendered image width for the current fit and zoom preferences.
-    private func readerImageWidth(availableWidth: CGFloat) -> CGFloat {
-        let horizontalPadding: CGFloat = fitMode == .fitPage ? 32 : 0
-        let baseWidth = max(availableWidth - horizontalPadding, 44)
-        return baseWidth * visibleZoomScale
+    /// Calculates width when the effective mode is page-fit or width-fit.
+    private func readerImageWidth(viewportSize: CGSize) -> CGFloat? {
+        let mode = effectiveFitMode(viewportSize: viewportSize)
+        guard mode != .fitHeight else { return nil }
+        let horizontalPadding: CGFloat = mode == .fitPage ? 32 : 0
+        return max(viewportSize.width - horizontalPadding, 44) * visibleZoomScale
+    }
+
+    /// Calculates height when portrait preference or landscape requires height-fit.
+    private func readerImageHeight(viewportSize: CGSize) -> CGFloat? {
+        guard effectiveFitMode(viewportSize: viewportSize) == .fitHeight else { return nil }
+        return max(ReaderViewportLayout.fullScreenHeight, 44) * visibleZoomScale
+    }
+
+    /// Resolves the temporary landscape override without changing the saved preference.
+    private func effectiveFitMode(viewportSize: CGSize) -> ReaderFitMode {
+        ReaderViewportLayout.effectiveFitMode(savedMode: fitMode, viewportSize: viewportSize)
     }
 
     private var visibleZoomScale: CGFloat {
@@ -418,28 +432,6 @@ struct ReaderView: View {
         SpatialTapGesture()
             .onEnded { value in
                 handleReaderTap(location: value.location, size: size)
-            }
-    }
-
-    /// Handles horizontal swipes as previous and next page commands.
-    private func handleReaderSwipe(translation: CGSize) {
-        guard !viewModel.isLoading else { return }
-        let horizontalDistance = translation.width
-        let verticalDistance = abs(translation.height)
-        guard abs(horizontalDistance) > 64, abs(horizontalDistance) > verticalDistance * 1.25 else { return }
-
-        if horizontalDistance < 0 {
-            Task { await viewModel.loadNextPage() }
-        } else {
-            Task { await viewModel.loadPreviousPage() }
-        }
-    }
-
-    /// Creates the drag gesture used for horizontal page swipes.
-    private var readerSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 44)
-            .onEnded { value in
-                handleReaderSwipe(translation: value.translation)
             }
     }
 
@@ -691,7 +683,12 @@ enum ReaderPageGridLayout {
 
 /// Keeps reader images centered against the full screen while chrome changes safe areas.
 enum ReaderViewportLayout {
-    static var fullScreenHeight: CGFloat { UIScreen.main.bounds.height }
+    @MainActor static var fullScreenHeight: CGFloat { UIScreen.main.bounds.height }
+
+    /// Uses height-fit in landscape while preserving the stored portrait preference.
+    static func effectiveFitMode(savedMode: ReaderFitMode, viewportSize: CGSize) -> ReaderFitMode {
+        viewportSize.width > viewportSize.height ? .fitHeight : savedMode
+    }
 }
 
 /// Exposes the shared reader display preferences from a toolbar menu.

@@ -575,6 +575,7 @@ enum EHSearchCursor: Hashable, Codable {
 enum ReaderFitMode: String, CaseIterable, Identifiable, Codable {
     case fitPage
     case fitWidth
+    case fitHeight
 
     static let storageKey = "Reader.fitMode"
 
@@ -584,6 +585,7 @@ enum ReaderFitMode: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .fitPage: AppCopy.readerFitPage
         case .fitWidth: AppCopy.readerFitWidth
+        case .fitHeight: AppCopy.readerFitHeight
         }
     }
 }

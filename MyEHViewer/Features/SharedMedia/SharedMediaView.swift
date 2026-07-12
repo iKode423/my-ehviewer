@@ -1,3 +1,4 @@
+@preconcurrency import AVFoundation
 import QuickLookThumbnailing
 import SwiftUI
 import UniformTypeIdentifiers
@@ -15,6 +16,7 @@ struct SharedMediaView: View {
     @State private var showsFolderImporter = false
     @State private var transferAlert: SharedMediaTransferAlert?
     @State private var editingRecord: SharedMediaRecord?
+    @State private var editingGallery: SharedMediaGalleryRecord?
     @State private var noteText = ""
     private static let scrollTopID = "shared-media-scroll-top"
 
@@ -262,6 +264,13 @@ struct SharedMediaView: View {
     private func itemActions(for item: SharedMediaDisplayItem) -> some View {
         switch item {
         case .gallery(let gallery):
+            Button {
+                editingGallery = gallery
+                noteText = gallery.note ?? ""
+            } label: {
+                Label(AppCopy.sharedMediaEditNote, systemImage: "note.text")
+            }
+
             Button(role: .destructive) {
                 store.delete(gallery)
             } label: {
@@ -317,13 +326,9 @@ struct SharedMediaView: View {
         let sourceItems: [SharedMediaDisplayItem]
         switch filter {
         case .all:
-            let galleryMemberIDs = Set(store.galleries.flatMap(\.memberIDs))
-            sourceItems = (
-                store.galleries.map(SharedMediaDisplayItem.gallery)
-                    + store.records
-                        .filter { !galleryMemberIDs.contains($0.id) }
-                        .map(SharedMediaDisplayItem.media)
-            ).sorted { $0.importedAt > $1.importedAt }
+            sourceItems = store.galleries
+                .map(SharedMediaDisplayItem.gallery)
+                .sorted { $0.importedAt > $1.importedAt }
         case .images:
             sourceItems = store.imageRecords.map(SharedMediaDisplayItem.media)
         case .videos:
@@ -338,6 +343,7 @@ struct SharedMediaView: View {
             switch item {
             case .gallery(let gallery):
                 return gallery.title.localizedCaseInsensitiveContains(trimmedFilterText)
+                    || (gallery.note?.localizedCaseInsensitiveContains(trimmedFilterText) ?? false)
                     || store.records(in: gallery).contains { record in
                         record.originalFilename.localizedCaseInsensitiveContains(trimmedFilterText)
                             || (record.note?.localizedCaseInsensitiveContains(trimmedFilterText) ?? false)
@@ -410,9 +416,12 @@ struct SharedMediaView: View {
 
     private var noteAlertBinding: Binding<Bool> {
         Binding {
-            editingRecord != nil
+            editingRecord != nil || editingGallery != nil
         } set: { isPresented in
-            if !isPresented { editingRecord = nil }
+            if !isPresented {
+                editingRecord = nil
+                editingGallery = nil
+            }
         }
     }
 
@@ -440,9 +449,13 @@ struct SharedMediaView: View {
 
     /// Persists the note edited in the compact alert.
     private func saveNote() {
-        guard let editingRecord else { return }
-        store.setNote(noteText, for: editingRecord)
+        if let editingRecord {
+            store.setNote(noteText, for: editingRecord)
+        } else if let editingGallery {
+            store.setNote(noteText, for: editingGallery)
+        }
         self.editingRecord = nil
+        self.editingGallery = nil
     }
 
     /// Creates the ZIP on a utility task before opening the document exporter.
@@ -615,7 +628,7 @@ private struct SharedMediaGalleryDetails: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 5) {
                 Image(systemName: "photo.on.rectangle.angled")
-                Text(gallery.title)
+                Text(gallery.displayName)
                     .lineLimit(2)
             }
             .font(.subheadline.weight(.semibold))
@@ -623,6 +636,13 @@ private struct SharedMediaGalleryDetails: View {
             Text("\(gallery.memberIDs.count) \(AppCopy.sharedMediaGalleryItems)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if gallery.note?.isEmpty == false {
+                Text(gallery.title)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
         }
     }
 }
@@ -718,7 +738,7 @@ private struct SharedMediaCardDetails: View {
 }
 
 /// Displays one shared folder as an ordered mixed-media gallery.
-private struct SharedMediaGalleryView: View {
+struct SharedMediaGalleryView: View {
     @EnvironmentObject private var store: SharedMediaStore
     let galleryID: UUID
     private let columns = Array(
@@ -753,7 +773,7 @@ private struct SharedMediaGalleryView: View {
                     }
                     .padding(12)
                 }
-                .navigationTitle(gallery.title)
+                .navigationTitle(gallery.displayName)
             } else {
                 ContentUnavailableView(AppCopy.sharedMediaGallery, systemImage: "photo.on.rectangle.angled")
             }
@@ -823,23 +843,145 @@ struct SharedMediaThumbnail: View {
         }
         .clipped()
         .task(id: record.id) {
-            image = await Self.thumbnail(for: store.fileURL(for: record))
+            image = await SharedMediaThumbnailRepository.shared.thumbnail(
+                recordID: record.id,
+                kind: record.kind,
+                sourceURL: store.fileURL(for: record)
+            )
         }
     }
+}
 
-    /// Requests a system thumbnail suitable for images and videos.
-    private static func thumbnail(for url: URL) async -> UIImage? {
-        await withCheckedContinuation { continuation in
+/// Coalesces and caches local media thumbnails while keeping decoding off MainActor.
+@MainActor
+final class SharedMediaThumbnailRepository {
+    typealias ThumbnailGenerator = @Sendable (URL) async -> UIImage?
+
+    static let shared = SharedMediaThumbnailRepository()
+    private var images: [UUID: UIImage] = [:]
+    private var tasks: [UUID: Task<UIImage?, Never>] = [:]
+    private var generations: [UUID: Int] = [:]
+    private let cacheRootURL: URL
+    private let quickLookGenerator: ThumbnailGenerator
+    private let videoFrameGenerator: ThumbnailGenerator
+
+    /// Creates a repository with injectable generators for deterministic fallback tests.
+    init(
+        cacheRootURL: URL? = nil,
+        quickLookGenerator: @escaping ThumbnailGenerator = { await quickLookThumbnail(for: $0) },
+        videoFrameGenerator: @escaping ThumbnailGenerator = { await videoFrameThumbnail(for: $0) }
+    ) {
+        let defaultRootURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        self.cacheRootURL = cacheRootURL
+            ?? defaultRootURL.appending(path: "SharedMediaThumbnails", directoryHint: .isDirectory)
+        self.quickLookGenerator = quickLookGenerator
+        self.videoFrameGenerator = videoFrameGenerator
+    }
+
+    /// Returns a cached preview or starts one shared generation task for the media record.
+    func thumbnail(recordID: UUID, kind: SharedMediaKind, sourceURL: URL) async -> UIImage? {
+        if let image = images[recordID] { return image }
+        if let task = tasks[recordID] { return await task.value }
+
+        let generation = generations[recordID, default: 0]
+        let cacheURL = thumbnailCacheURL(recordID: recordID)
+        let quickLookGenerator = quickLookGenerator
+        let videoFrameGenerator = videoFrameGenerator
+        let task = Task.detached(priority: .utility) {
+            await Self.generateThumbnail(
+                kind: kind,
+                sourceURL: sourceURL,
+                cacheURL: cacheURL,
+                quickLookGenerator: quickLookGenerator,
+                videoFrameGenerator: videoFrameGenerator
+            )
+        }
+        tasks[recordID] = task
+        let image = await task.value
+        guard generations[recordID, default: 0] == generation else {
+            try? FileManager.default.removeItem(at: cacheURL)
+            return nil
+        }
+        tasks[recordID] = nil
+        if let image {
+            images[recordID] = image
+        }
+        return image
+    }
+
+    /// Removes cached thumbnail state when its persistent media record is deleted.
+    func removeThumbnail(recordID: UUID) {
+        generations[recordID, default: 0] += 1
+        tasks[recordID]?.cancel()
+        tasks[recordID] = nil
+        images[recordID] = nil
+        try? FileManager.default.removeItem(at: thumbnailCacheURL(recordID: recordID))
+    }
+
+    /// Resolves disk cache, Quick Look, and a video-frame fallback in that order.
+    nonisolated private static func generateThumbnail(
+        kind: SharedMediaKind,
+        sourceURL: URL,
+        cacheURL: URL,
+        quickLookGenerator: ThumbnailGenerator,
+        videoFrameGenerator: ThumbnailGenerator
+    ) async -> UIImage? {
+        if let data = try? Data(contentsOf: cacheURL), let image = UIImage(data: data) {
+            return image
+        }
+        guard !Task.isCancelled else { return nil }
+        let quickLookImage = await quickLookGenerator(sourceURL)
+        let generatedImage: UIImage?
+        if let quickLookImage {
+            generatedImage = quickLookImage
+        } else if kind == .video {
+            generatedImage = await videoFrameGenerator(sourceURL)
+        } else {
+            generatedImage = nil
+        }
+        guard !Task.isCancelled else { return nil }
+        if let data = generatedImage?.jpegData(compressionQuality: 0.82) {
+            try? FileManager.default.createDirectory(
+                at: cacheURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? data.write(to: cacheURL, options: [.atomic])
+        }
+        return generatedImage
+    }
+
+    /// Requests the standard system thumbnail for local images and videos.
+    nonisolated private static func quickLookThumbnail(for url: URL) async -> UIImage? {
+        let screenScale = await MainActor.run { UIScreen.main.scale }
+        return await withCheckedContinuation { continuation in
             let request = QLThumbnailGenerator.Request(
                 fileAt: url,
                 size: CGSize(width: 420, height: 420),
-                scale: UIScreen.main.scale,
+                scale: screenScale,
                 representationTypes: .thumbnail
             )
             QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
                 continuation.resume(returning: representation?.uiImage)
             }
         }
+    }
+
+    /// Extracts the first decodable video frame when Quick Look has no preview.
+    nonisolated private static func videoFrameThumbnail(for url: URL) async -> UIImage? {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 840, height: 840)
+        return await withCheckedContinuation { continuation in
+            generator.generateCGImageAsynchronously(for: .zero) { image, _, _ in
+                continuation.resume(returning: image.map(UIImage.init(cgImage:)))
+            }
+        }
+    }
+
+    /// Returns the stable cache file used for one generated preview.
+    nonisolated private func thumbnailCacheURL(recordID: UUID) -> URL {
+        cacheRootURL.appending(path: "\(recordID.uuidString).jpg")
     }
 }
 

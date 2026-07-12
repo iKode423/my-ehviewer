@@ -187,14 +187,11 @@ struct LibraryView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 libraryControls
-
-                VStack(alignment: .leading, spacing: 0) {
-                    content()
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 8)
-                .padding(.bottom, 96)
+                Color.clear.frame(height: 8)
+                content()
+                Color.clear.frame(height: 96)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -370,7 +367,7 @@ struct FavoriteImagesView: View {
                 .frame(maxWidth: .infinity, minHeight: 320)
                 .padding(.horizontal)
             } else if let randomFavorites {
-                VStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(Array(randomFavorites.enumerated()), id: \.element.id) { index, favorite in
                         favoriteCard(favorite, rank: index, usesLargeImage: true)
                     }
@@ -381,7 +378,7 @@ struct FavoriteImagesView: View {
                 let topFavorites = Array(favoriteItems.prefix(5))
                 let remainingFavorites = Array(favoriteItems.dropFirst(5))
 
-                VStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(Array(topFavorites.enumerated()), id: \.element.id) { index, favorite in
                         favoriteCard(favorite, rank: index)
                     }

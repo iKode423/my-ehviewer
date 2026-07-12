@@ -171,6 +171,14 @@ final class SharedMediaStore: ObservableObject {
         saveIndex()
     }
 
+    /// Updates one local gallery note without changing its original title.
+    func setNote(_ note: String?, for gallery: SharedMediaGalleryRecord) {
+        guard let index = galleries.firstIndex(where: { $0.id == gallery.id }) else { return }
+        let trimmedNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        galleries[index].note = trimmedNote?.isEmpty == true ? nil : trimmedNote
+        saveIndex()
+    }
+
     /// Stores the latest video position and increments completed play sessions.
     func updatePlayback(_ record: SharedMediaRecord, position: Double, completed: Bool) {
         guard let index = records.firstIndex(where: { $0.id == record.id }) else { return }
@@ -185,6 +193,7 @@ final class SharedMediaStore: ObservableObject {
     /// Deletes one persistent media file and its local metadata.
     func delete(_ record: SharedMediaRecord) {
         try? fileManager.removeItem(at: fileURL(for: record))
+        SharedMediaThumbnailRepository.shared.removeThumbnail(recordID: record.id)
         records.removeAll { $0.id == record.id }
         galleries = galleries.compactMap { gallery in
             var updatedGallery = gallery
@@ -207,6 +216,7 @@ final class SharedMediaStore: ObservableObject {
         let orphanRecords = records.filter { orphanIDs.contains($0.id) }
         for record in orphanRecords {
             try? fileManager.removeItem(at: fileURL(for: record))
+            SharedMediaThumbnailRepository.shared.removeThumbnail(recordID: record.id)
         }
         records.removeAll { orphanIDs.contains($0.id) }
         normalizeFavoriteOrder(kind: .image)
@@ -362,6 +372,7 @@ final class SharedMediaStore: ObservableObject {
                 galleries.append(SharedMediaGalleryRecord(
                     id: galleryID,
                     title: importedGallery.title,
+                    note: importedGallery.note,
                     importedAt: importedGallery.importedAt,
                     coverMediaID: importedCoverMediaID.map { memberIDs.contains($0) ? $0 : coverMediaID }
                         ?? coverMediaID,
@@ -369,6 +380,7 @@ final class SharedMediaStore: ObservableObject {
                 ))
             }
         }
+        _ = migrateUngroupedBatches()
         normalizeFavoriteOrder(kind: .image)
         normalizeFavoriteOrder(kind: .video)
         saveIndex()
@@ -437,7 +449,12 @@ final class SharedMediaStore: ObservableObject {
             ))
             importedMediaIDs[item.id] = recordID
         }
-        if let incomingGallery = manifest.gallery {
+        let incomingGallery = manifest.gallery ?? SharedMediaIncomingGallery(
+            id: manifest.batchID,
+            title: Self.galleryTitle(for: manifest.items),
+            memberIDs: manifest.items.map(\.id)
+        )
+        do {
             let memberIDs = Self.uniqueIDs(
                 incomingGallery.memberIDs.compactMap { importedMediaIDs[$0] }
             )
@@ -448,6 +465,7 @@ final class SharedMediaStore: ObservableObject {
                 galleries.append(SharedMediaGalleryRecord(
                     id: galleryID,
                     title: incomingGallery.title,
+                    note: nil,
                     importedAt: manifest.importedAt,
                     coverMediaID: coverMediaID,
                     memberIDs: memberIDs
@@ -510,7 +528,12 @@ final class SharedMediaStore: ObservableObject {
                 playbackCount: 0
             ))
         }
+        let finalRecordIDs = Set(records.map(\.id))
+        for record in previousRecords where !finalRecordIDs.contains(record.id) {
+            SharedMediaThumbnailRepository.shared.removeThumbnail(recordID: record.id)
+        }
         reconcileGalleries()
+        _ = migrateUngroupedBatches()
         saveIndex()
     }
 
@@ -561,12 +584,55 @@ final class SharedMediaStore: ObservableObject {
             records = index.records
             galleries = index.galleries
             reconcileGalleries()
+            if migrateUngroupedBatches() {
+                saveIndex()
+            }
             return
         }
         if let storedRecords = try? JSONDecoder().decode([SharedMediaRecord].self, from: data) {
             records = storedRecords
             galleries = []
+            if migrateUngroupedBatches() {
+                saveIndex()
+            }
         }
+    }
+
+    /// Creates one gallery relationship for every legacy ungrouped share batch.
+    private func migrateUngroupedBatches() -> Bool {
+        let groupedRecordIDs = Set(galleries.flatMap(\.memberIDs))
+        let ungroupedRecords = records.enumerated().filter { !groupedRecordIDs.contains($0.element.id) }
+        let batches = Dictionary(grouping: ungroupedRecords, by: { $0.element.batchID })
+        guard !batches.isEmpty else { return false }
+
+        for (batchID, indexedRecords) in batches {
+            let batchRecords = indexedRecords
+                .sorted { $0.offset < $1.offset }
+                .map(\.element)
+            guard let coverRecord = batchRecords.first else { continue }
+            let galleryID = galleries.contains(where: { $0.id == batchID }) ? UUID() : batchID
+            galleries.append(SharedMediaGalleryRecord(
+                id: galleryID,
+                title: Self.galleryTitle(for: batchRecords),
+                note: nil,
+                importedAt: batchRecords.map(\.importedAt).min() ?? coverRecord.importedAt,
+                coverMediaID: coverRecord.id,
+                memberIDs: batchRecords.map(\.id)
+            ))
+        }
+        return true
+    }
+
+    /// Builds the default title for an incoming or migrated share batch.
+    nonisolated private static func galleryTitle(for items: [SharedMediaIncomingItem]) -> String {
+        guard items.count != 1 else { return items[0].originalFilename }
+        return "分享媒体（\(items.count) 项）"
+    }
+
+    /// Builds the default title for persisted records from one legacy batch.
+    nonisolated private static func galleryTitle(for records: [SharedMediaRecord]) -> String {
+        guard records.count != 1 else { return records[0].originalFilename }
+        return "分享媒体（\(records.count) 项）"
     }
 
     /// Persists the current metadata index atomically.
